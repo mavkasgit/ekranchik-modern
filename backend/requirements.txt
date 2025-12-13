@@ -9,8 +9,8 @@ aiosqlite==0.20.0
 alembic==1.14.0
 
 # Validation
-pydantic==2.10.3
-pydantic-settings==2.6.1
+pydantic>=2.7.0,<2.10
+pydantic-settings>=2.6.0
 
 # Excel parsing
 pandas==2.2.3
@@ -30,7 +30,7 @@ aiogram==3.15.0
 
 # HTTP client
 httpx==0.28.1
-aiohttp==3.11.10
+aiohttp>=3.9.0,<3.11
 
 # Environment
 python-dotenv==1.0.1

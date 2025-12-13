@@ -25,11 +25,11 @@
     - Set up environment variables
     - _Requirements: 5.1, 5.4, 5.5_
 
-  - [ ] 1.4 Create environment configuration module
+  - [x] 1.4 Create environment configuration module
     - Create `app/core/config.py` with Pydantic Settings
     - Define all configuration variables with defaults
     - _Requirements: 5.3_
-  - [ ]* 1.5 Write property test for configuration loading
+  - [ ] 1.5 Write property test for configuration loading
     - **Property 9: Configuration from Environment**
     - **Validates: Requirements 5.3**
 
@@ -61,10 +61,10 @@
     - Create `app/schemas/dashboard.py` with HangerData, UnloadEvent
     - Create `app/schemas/websocket.py` with WebSocketMessage
     - _Requirements: 9.1, 9.2_
-  - [ ]* 2.5 Write property test for Pydantic serialization round-trip
+  - [ ] 2.5 Write property test for Pydantic serialization round-trip
     - **Property 17: Pydantic Serialization Round-Trip**
     - **Validates: Requirements 9.2**
-  - [ ]* 2.6 Write property test for validation rejection
+  - [ ] 2.6 Write property test for validation rejection
     - **Property 16: Pydantic Validation Rejects Invalid Data**
     - **Validates: Requirements 9.1**
 
@@ -78,10 +78,13 @@
     - Implement Latin/Cyrillic character mapping
     - Implement transliterate_cyrillic function for filenames
     - _Requirements: 2.1, 9.4_
-  - [ ]* 3.2 Write property test for normalization idempotence
+  - [x] 3.2 Write property test for normalization idempotence
+
+
     - **Property 1: Text Normalization Idempotence**
     - **Validates: Requirements 9.4**
-  - [ ]* 3.3 Write property test for transliteration consistency
+
+  - [x] 3.3 Write property test for transliteration consistency
     - **Property 6: Filename Transliteration Consistency**
     - **Validates: Requirements 3.5**
 
@@ -92,111 +95,126 @@
 
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. Implement CatalogService
+
+
+- [x] 5. Implement CatalogService
 
 
 
-  - [ ] 5.1 Create CatalogService class
 
 
+  - [x] 5.1 Create CatalogService class
     - Create `app/services/catalog_service.py`
     - Implement search_profiles with normalized text comparison
     - Implement get_profile, create_or_update_profile methods
     - Implement get_profiles_without_photos method
     - _Requirements: 2.1, 2.2, 2.5, 8.1_
-  - [ ]* 5.2 Write property test for Latin/Cyrillic search equivalence
+  - [x] 5.2 Write property test for Latin/Cyrillic search equivalence
+
+
     - **Property 2: Latin/Cyrillic Search Equivalence**
     - **Validates: Requirements 2.1**
-  - [ ]* 5.3 Write property test for search results fields
+
+  - [x] 5.3 Write property test for search results fields
     - **Property 3: Search Results Contain Required Fields**
     - **Validates: Requirements 2.2**
-  - [ ]* 5.4 Write property test for search priority ordering
+  - [x] 5.4 Write property test for search priority ordering
     - **Property 4: Search Priority Ordering**
     - **Validates: Requirements 2.5**
-  - [ ]* 5.5 Write property test for missing photos sorting
+  - [x] 5.5 Write property test for missing photos sorting
+
+
     - **Property 13: Missing Photos Sorted by Usage**
     - **Validates: Requirements 8.1**
-  - [ ] 5.6 Implement photo upload functionality
+  - [x] 5.6 Implement photo upload functionality
+
+
     - Implement upload_photo method with thumbnail generation
     - Use PIL for image processing
     - _Requirements: 3.1, 3.2, 3.3_
-  - [ ]* 5.7 Write property test for photo upload creates both versions
+
+  - [x] 5.7 Write property test for photo upload creates both versions
     - **Property 5: Photo Upload Creates Both Versions**
     - **Validates: Requirements 3.1**
-  - [ ] 5.8 Implement fuzzy search for duplicates
+  - [x] 5.8 Implement fuzzy search for duplicates
     - Implement search_duplicates method with similarity scoring
     - _Requirements: 8.4_
-  - [ ]* 5.9 Write property test for fuzzy search similarity
+  - [x] 5.9 Write property test for fuzzy search similarity
     - **Property 15: Fuzzy Search Similarity**
     - **Validates: Requirements 8.4**
 
-- [ ] 6. Implement ExcelService
-  - [ ] 6.1 Create ExcelService class
+- [x] 6. Implement ExcelService
+  - [x] 6.1 Create ExcelService class
     - Create `app/services/excel_service.py`
     - Implement get_dataframe with caching
     - Implement cache invalidation
     - _Requirements: 6.3_
-  - [ ] 6.2 Implement Excel parsing logic
+  - [x] 6.2 Implement Excel parsing logic
     - Port parse_profile_with_processing from legacy code
     - Port split_profiles function
     - Implement get_products with filters
     - _Requirements: 1.1_
-  - [ ]* 6.3 Write property test for cache invalidation
+
+  - [x] 6.3 Write property test for cache invalidation
+
     - **Property 10: Cache Invalidation on File Change**
+
     - **Validates: Requirements 6.3**
-  - [ ] 6.4 Implement recent profiles methods
+  - [x] 6.4 Implement recent profiles methods
     - Implement get_recent_profiles with limit
     - Implement get_recent_missing_profiles with pagination
     - _Requirements: 8.2, 8.3_
-  - [ ]* 6.5 Write property test for recent records limit
+  - [x] 6.5 Write property test for recent records limit
     - **Property 14: Recent Records Limit**
     - **Validates: Requirements 8.2**
 
-- [ ] 7. Implement FTPService
-  - [ ] 7.1 Create FTPService class
+- [x] 7. Implement FTPService
+  - [x] 7.1 Create FTPService class
     - Create `app/services/ftp_service.py`
     - Implement async FTP connection
     - Implement read_today_log method
     - _Requirements: 10.1, 10.2_
-  - [ ] 7.2 Implement FTP log parsing
+  - [x] 7.2 Implement FTP log parsing
     - Implement parse_unload_events with regex
     - Port parsing logic from legacy ftp_manager.py
     - _Requirements: 10.3_
-  - [ ]* 7.3 Write property test for FTP log parsing
+  - [x] 7.3 Write property test for FTP log parsing
     - **Property 18: FTP Log Parsing Extracts Correct Data**
     - **Validates: Requirements 10.3**
-  - [ ] 7.4 Implement incremental polling
+  - [x] 7.4 Implement incremental polling
     - Implement poll_incremental with byte offset tracking
     - Implement date rollover handling
     - _Requirements: 10.5_
-  - [ ]* 7.5 Write property test for date rollover handling
+  - [x] 7.5 Write property test for date rollover handling
     - **Property 19: FTP Date Rollover Handling**
     - **Validates: Requirements 10.5**
 
-- [ ] 8. Checkpoint - Ensure all tests pass
+- [x] 8. Checkpoint - Ensure all tests pass
+
+
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 9. Implement WebSocket infrastructure
-  - [ ] 9.1 Create WebSocketManager class
+- [x] 9. Implement WebSocket infrastructure
+  - [x] 9.1 Create WebSocketManager class
     - Create `app/services/websocket_manager.py`
     - Implement connect, disconnect, broadcast methods
     - Implement connection tracking
     - _Requirements: 6.5_
-  - [ ]* 9.2 Write property test for broadcast to all clients
+  - [x] 9.2 Write property test for broadcast to all clients
     - **Property 11: WebSocket Broadcast to All Clients**
     - **Validates: Requirements 6.5**
-  - [ ] 9.3 Create WebSocket endpoint
+  - [x] 9.3 Create WebSocket endpoint
     - Create `app/api/websockets.py`
     - Implement /ws endpoint with connection handling
     - _Requirements: 1.2, 1.4_
 
-- [ ] 10. Implement background services
-  - [ ] 10.1 Create ExcelWatcher service
+- [x] 10. Implement background services
+  - [x] 10.1 Create ExcelWatcher service
     - Create `app/services/excel_watcher.py`
     - Use watchdog for file monitoring
     - Integrate with WebSocketManager for broadcasts
     - _Requirements: 1.1_
-  - [ ] 10.2 Create FTPPoller service
+  - [x] 10.2 Create FTPPoller service
     - Create `app/services/ftp_poller.py`
     - Implement async polling loop with 60s interval
     - Integrate with WebSocketManager for broadcasts
@@ -239,13 +257,13 @@
     - Port handlers from legacy bot.py
     - Integrate with CatalogService
     - _Requirements: 4.1, 4.2, 4.3_
-  - [ ]* 14.2 Write property test for multi-match limit
+  - [ ] 14.2 Write property test for multi-match limit
     - **Property 7: Telegram Bot Multi-Match Limit**
     - **Validates: Requirements 4.3**
   - [ ] 14.3 Implement authentication
     - Implement password check and user persistence
     - _Requirements: 4.4, 4.5_
-  - [ ]* 14.4 Write property test for authorization persistence
+  - [ ] 14.4 Write property test for authorization persistence
     - **Property 8: Authorization Persistence**
     - **Validates: Requirements 4.5**
 
@@ -268,7 +286,7 @@
     - Create `src/components/DataTable.tsx`
     - Implement sorting and filtering
     - _Requirements: 7.4_
-  - [ ]* 16.2 Write property test for table sorting
+  - [ ] 16.2 Write property test for table sorting
     - **Property 12: Table Sorting Consistency**
     - **Validates: Requirements 7.4**
   - [ ] 16.3 Create ProfileCard component
