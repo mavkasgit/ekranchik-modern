@@ -220,50 +220,60 @@
     - Integrate with WebSocketManager for broadcasts
     - _Requirements: 1.3, 6.4_
 
-- [ ] 11. Implement API routes
-  - [ ] 11.1 Create dashboard routes
+- [x] 11. Implement API routes
+  - [x] 11.1 Create dashboard routes
+
+
     - Create `app/api/routes/dashboard.py`
     - Implement GET /api/dashboard endpoint
     - _Requirements: 1.1, 1.2_
-  - [ ] 11.2 Create catalog routes
+
+  - [x] 11.2 Create catalog routes
+
     - Create `app/api/routes/catalog.py`
     - Implement GET /api/catalog with search
     - Implement POST /api/catalog for photo upload
     - _Requirements: 2.1, 2.2, 3.1, 3.3_
-  - [ ] 11.3 Create analysis routes
+
+
+  - [x] 11.3 Create analysis routes
     - Create `app/api/routes/analysis.py`
     - Implement GET /api/profiles/missing
     - Implement GET /api/profiles/search-duplicates
     - _Requirements: 8.1, 8.2, 8.3, 8.4_
-  - [ ] 11.4 Create signal route
+
+
+  - [x] 11.4 Create signal route
     - Create `app/api/routes/signal.py`
     - Implement POST /api/signal for FTP events
     - _Requirements: 1.3_
 
-- [ ] 12. Create FastAPI main application
-  - [ ] 12.1 Create main.py with lifespan
+- [x] 12. Create FastAPI main application
+  - [x] 12.1 Create main.py with lifespan
+
+
     - Create `app/main.py`
     - Implement lifespan context manager
     - Start ExcelWatcher, FTPPoller as background tasks
     - Mount routers and static files
     - _Requirements: 6.1_
 
-- [ ] 13. Checkpoint - Ensure all tests pass
+- [x] 13. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 14. Implement Telegram Bot
-  - [ ] 14.1 Create Telegram bot module
+- [x] 14. Implement Telegram Bot
+  - [x] 14.1 Create Telegram bot module
     - Create `app/services/telegram_bot.py`
     - Port handlers from legacy bot.py
     - Integrate with CatalogService
     - _Requirements: 4.1, 4.2, 4.3_
-  - [ ] 14.2 Write property test for multi-match limit
+  - [x] 14.2 Write property test for multi-match limit
     - **Property 7: Telegram Bot Multi-Match Limit**
     - **Validates: Requirements 4.3**
-  - [ ] 14.3 Implement authentication
+  - [x] 14.3 Implement authentication
     - Implement password check and user persistence
     - _Requirements: 4.4, 4.5_
-  - [ ] 14.4 Write property test for authorization persistence
+  - [x] 14.4 Write property test for authorization persistence
     - **Property 8: Authorization Persistence**
     - **Validates: Requirements 4.5**
 

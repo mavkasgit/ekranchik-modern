@@ -1,0 +1,106 @@
+"""
+Catalog API routes - profile search and photo management.
+"""
+from typing import Optional
+
+from fastapi import APIRouter, Query, UploadFile, File, Form, HTTPException
+
+from app.services.catalog_service import catalog_service
+from app.schemas.profile import (
+    ProfileResponse,
+    ProfileCreate,
+    ProfileSearchResult
+)
+
+router = APIRouter(prefix="/catalog", tags=["catalog"])
+
+
+@router.get("", response_model=list[ProfileSearchResult])
+async def search_profiles(
+    q: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(default=50, ge=1, le=200, description="Max results")
+):
+    """
+    Search profiles by name, notes, or numeric values.
+    
+    Supports Latin/Cyrillic equivalence - searching for 'ALS' will find 'АЛС'.
+    Results are prioritized: exact matches first, then partial matches.
+    """
+    results = await catalog_service.search_profiles(query=q, limit=limit)
+    return results
+
+
+@router.get("/all", response_model=list[ProfileResponse])
+async def get_all_profiles(
+    limit: int = Query(default=500, ge=1, le=1000, description="Max results")
+):
+    """
+    Get all profiles.
+    """
+    return await catalog_service.get_all_profiles(limit=limit)
+
+
+@router.get("/{name}", response_model=ProfileResponse)
+async def get_profile(name: str):
+    """
+    Get a profile by exact name.
+    """
+    profile = await catalog_service.get_profile(name=name)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
+
+
+@router.post("", response_model=ProfileResponse)
+async def create_or_update_profile(data: ProfileCreate):
+    """
+    Create a new profile or update existing one.
+    """
+    return await catalog_service.create_or_update_profile(data=data)
+
+
+@router.post("/{name}/photo")
+async def upload_photo(
+    name: str,
+    file: UploadFile = File(..., description="Image file")
+):
+    """
+    Upload a photo for a profile.
+    
+    Generates both thumbnail and full-size versions.
+    Supported formats: JPEG, PNG, GIF, WebP.
+    Max size: 10MB.
+    """
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    # Read file content
+    content = await file.read()
+    
+    try:
+        thumb_path, full_path = await catalog_service.upload_photo(
+            profile_name=name,
+            image_data=content,
+            filename=file.filename or "photo.jpg"
+        )
+        
+        return {
+            "success": True,
+            "thumbnail": thumb_path,
+            "full": full_path
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{name}/photo")
+async def delete_photo(name: str):
+    """
+    Delete photos for a profile.
+    """
+    deleted = await catalog_service.delete_photo(profile_name=name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    return {"success": True, "message": "Photos deleted"}

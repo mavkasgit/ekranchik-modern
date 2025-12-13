@@ -5,6 +5,7 @@ from app.services.ftp_service import FTPService, ftp_service
 from app.services.websocket_manager import WebSocketManager, websocket_manager
 from app.services.excel_watcher import ExcelWatcher, excel_watcher
 from app.services.ftp_poller import FTPPoller, ftp_poller
+from app.services.telegram_bot import TelegramBotService, telegram_bot
 
 __all__ = [
     "CatalogService", "catalog_service",
@@ -13,4 +14,5 @@ __all__ = [
     "WebSocketManager", "websocket_manager",
     "ExcelWatcher", "excel_watcher",
     "FTPPoller", "ftp_poller",
+    "TelegramBotService", "telegram_bot",
 ]
