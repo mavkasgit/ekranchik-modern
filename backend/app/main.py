@@ -84,10 +84,13 @@ app.include_router(analysis_router, prefix="/api")
 app.include_router(signal_router, prefix="/api")
 app.include_router(websocket_router)
 
-# Mount static files
-static_dir = Path(__file__).parent.parent / "static"
-if static_dir.exists():
+# Mount static files - use project root static folder
+# In development: ../static (relative to backend folder)
+# In Docker: /app/static (mounted volume)
+static_dir = settings.STATIC_PATH
+if static_dir and static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    logger.info(f"[STARTUP] Static files mounted from: {static_dir}")
 
 
 @app.get("/health")

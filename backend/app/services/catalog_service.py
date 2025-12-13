@@ -1,6 +1,7 @@
 """
 Catalog Service - handles profile search, CRUD operations, and photo management.
 """
+import io
 import os
 import uuid
 from difflib import SequenceMatcher
@@ -237,6 +238,9 @@ class CatalogService:
         """
         Update an existing profile by ID.
         
+        If name is changed and profile has photos, the photo files will be
+        renamed to match the new profile name.
+        
         Args:
             profile_id: Profile ID
             data: Update data
@@ -253,6 +257,22 @@ class CatalogService:
             if not profile:
                 return None
             
+            # Check if name is being changed and profile has photos
+            old_name = profile.name
+            new_name = data.name if data.name else old_name
+            name_changed = new_name != old_name and data.name is not None
+            
+            if name_changed and (profile.photo_thumb or profile.photo_full):
+                # Rename photo files
+                new_thumb_path, new_full_path = self._rename_photo_files(
+                    profile.photo_thumb,
+                    profile.photo_full,
+                    new_name
+                )
+                profile.photo_thumb = new_thumb_path
+                profile.photo_full = new_full_path
+            
+            # Update other fields
             for field, value in data.model_dump(exclude_unset=True).items():
                 if value is not None:
                     setattr(profile, field, value)
@@ -266,6 +286,50 @@ class CatalogService:
         else:
             async with get_session() as sess:
                 return await _update(sess)
+    
+    def _rename_photo_files(
+        self,
+        old_thumb_path: Optional[str],
+        old_full_path: Optional[str],
+        new_name: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Rename photo files when profile name changes.
+        
+        Uses format: {name}.jpg and {name}-thumb.jpg
+        
+        Args:
+            old_thumb_path: Current thumbnail path (relative)
+            old_full_path: Current full photo path (relative)
+            new_name: New profile name
+        
+        Returns:
+            Tuple of (new_thumb_path, new_full_path)
+        """
+        images_dir = settings.images_path
+        
+        new_thumb_path = old_thumb_path
+        new_full_path = old_full_path
+        
+        # Rename thumbnail: {name}-thumb.jpg
+        if old_thumb_path:
+            old_thumb_file = images_dir.parent / old_thumb_path
+            if old_thumb_file.exists():
+                new_thumb_filename = f"{new_name}-thumb.jpg"
+                new_thumb_file = images_dir / new_thumb_filename
+                old_thumb_file.rename(new_thumb_file)
+                new_thumb_path = f"images/{new_thumb_filename}"
+        
+        # Rename full photo: {name}.jpg
+        if old_full_path:
+            old_full_file = images_dir.parent / old_full_path
+            if old_full_file.exists():
+                new_full_filename = f"{new_name}.jpg"
+                new_full_file = images_dir / new_full_filename
+                old_full_file.rename(new_full_file)
+                new_full_path = f"images/{new_full_filename}"
+        
+        return new_thumb_path, new_full_path
     
     async def increment_usage(
         self,
@@ -368,6 +432,7 @@ class CatalogService:
         profile_name: str,
         image_data: bytes,
         filename: str,
+        thumbnail_data: Optional[bytes] = None,
         session: Optional[AsyncSession] = None
     ) -> Tuple[str, str]:
         """
@@ -375,8 +440,9 @@ class CatalogService:
         
         Args:
             profile_name: Name of the profile
-            image_data: Raw image bytes
+            image_data: Raw image bytes for full-size photo
             filename: Original filename
+            thumbnail_data: Optional custom thumbnail bytes (user-cropped)
             session: Optional database session
         
         Returns:
@@ -394,15 +460,13 @@ class CatalogService:
         images_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate safe filename
-        safe_name = safe_filename(profile_name)
-        unique_id = uuid.uuid4().hex[:8]
-        ext = Path(filename).suffix.lower() or '.jpg'
-        if ext not in ('.jpg', '.jpeg', '.png', '.gif', '.webp'):
-            ext = '.jpg'
+        # Use profile name directly (keep original format: name.jpg, name-thumb.jpg)
+        # safe_filename handles transliteration for Latin-only names
+        base_name = profile_name
+        ext = '.jpg'  # Always save as jpg for consistency
         
-        base_name = f"{safe_name}_{unique_id}"
-        full_filename = f"{base_name}_full{ext}"
-        thumb_filename = f"{base_name}_thumb{ext}"
+        full_filename = f"{base_name}{ext}"
+        thumb_filename = f"{base_name}-thumb{ext}"
         
         full_path = images_dir / full_filename
         thumb_path = images_dir / thumb_filename
@@ -411,16 +475,24 @@ class CatalogService:
         with open(full_path, 'wb') as f:
             f.write(image_data)
         
-        # Generate thumbnail
+        # Generate or save thumbnail
         try:
-            with Image.open(full_path) as img:
-                # Convert to RGB if necessary (for PNG with transparency)
-                if img.mode in ('RGBA', 'P'):
-                    img = img.convert('RGB')
-                
-                # Create thumbnail maintaining aspect ratio
-                img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                img.save(thumb_path, quality=85, optimize=True)
+            if thumbnail_data:
+                # Use custom thumbnail provided by user (cropped area)
+                with Image.open(io.BytesIO(thumbnail_data)) as img:
+                    if img.mode in ('RGBA', 'P'):
+                        img = img.convert('RGB')
+                    # Resize to thumbnail size if larger
+                    if img.width > settings.THUMBNAIL_SIZE[0] or img.height > settings.THUMBNAIL_SIZE[1]:
+                        img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+                    img.save(thumb_path, 'JPEG', quality=85, optimize=True)
+            else:
+                # Auto-generate thumbnail from full image
+                with Image.open(full_path) as img:
+                    if img.mode in ('RGBA', 'P'):
+                        img = img.convert('RGB')
+                    img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+                    img.save(thumb_path, 'JPEG', quality=85, optimize=True)
         except Exception as e:
             # Clean up full image if thumbnail fails
             if full_path.exists():
@@ -469,6 +541,64 @@ class CatalogService:
         
         return rel_thumb, rel_full
     
+    async def update_thumbnail(
+        self,
+        profile_name: str,
+        thumbnail_data: bytes,
+        session: Optional[AsyncSession] = None
+    ) -> str:
+        """
+        Update only the thumbnail for a profile (keeps full image).
+        
+        Args:
+            profile_name: Name of the profile
+            thumbnail_data: New thumbnail image bytes
+            session: Optional database session
+        
+        Returns:
+            Relative path to new thumbnail
+        
+        Raises:
+            ValueError: If profile not found or has no photo
+        """
+        images_dir = settings.images_path
+        images_dir.mkdir(parents=True, exist_ok=True)
+        
+        thumb_filename = f"{profile_name}-thumb.jpg"
+        thumb_path = images_dir / thumb_filename
+        rel_thumb = f"images/{thumb_filename}"
+        
+        # Save new thumbnail
+        try:
+            with Image.open(io.BytesIO(thumbnail_data)) as img:
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                if img.width > settings.THUMBNAIL_SIZE[0] or img.height > settings.THUMBNAIL_SIZE[1]:
+                    img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+                img.save(thumb_path, 'JPEG', quality=85, optimize=True)
+        except Exception as e:
+            raise ValueError(f"Failed to process thumbnail: {e}")
+        
+        # Update profile in database
+        async def _update(sess: AsyncSession) -> None:
+            stmt = select(Profile).where(Profile.name == profile_name)
+            result = await sess.execute(stmt)
+            profile = result.scalar_one_or_none()
+            
+            if not profile:
+                raise ValueError(f"Profile '{profile_name}' not found")
+            
+            profile.photo_thumb = rel_thumb
+            await sess.flush()
+        
+        if session:
+            await _update(session)
+        else:
+            async with get_session() as sess:
+                await _update(sess)
+        
+        return rel_thumb
+
     async def delete_photo(
         self,
         profile_name: str,
@@ -531,6 +661,50 @@ class CatalogService:
             return 0.0
         return SequenceMatcher(None, s1.lower(), s2.lower()).ratio()
     
+    async def delete_profile(
+        self,
+        profile_id: int,
+        session: Optional[AsyncSession] = None
+    ) -> bool:
+        """
+        Delete a profile by ID, including its photos.
+        
+        Args:
+            profile_id: Profile ID
+            session: Optional database session
+        
+        Returns:
+            True if deleted, False if not found
+        """
+        async def _delete(sess: AsyncSession) -> bool:
+            stmt = select(Profile).where(Profile.id == profile_id)
+            result = await sess.execute(stmt)
+            profile = result.scalar_one_or_none()
+            
+            if not profile:
+                return False
+            
+            # Delete photo files
+            if profile.photo_thumb:
+                thumb_path = settings.images_path.parent / profile.photo_thumb
+                if thumb_path.exists():
+                    thumb_path.unlink()
+            
+            if profile.photo_full:
+                full_path = settings.images_path.parent / profile.photo_full
+                if full_path.exists():
+                    full_path.unlink()
+            
+            await sess.delete(profile)
+            await sess.flush()
+            return True
+        
+        if session:
+            return await _delete(session)
+        else:
+            async with get_session() as sess:
+                return await _delete(sess)
+
     async def search_duplicates(
         self,
         query: str,

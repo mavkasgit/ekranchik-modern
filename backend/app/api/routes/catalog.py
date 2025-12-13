@@ -62,12 +62,15 @@ async def create_or_update_profile(data: ProfileCreate):
 @router.post("/{name}/photo")
 async def upload_photo(
     name: str,
-    file: UploadFile = File(..., description="Image file")
+    file: UploadFile = File(..., description="Full-size image file"),
+    thumbnail: UploadFile = File(None, description="Custom thumbnail (optional)")
 ):
     """
     Upload a photo for a profile.
     
-    Generates both thumbnail and full-size versions.
+    If thumbnail is provided, it will be used as-is.
+    Otherwise, thumbnail is auto-generated from full image.
+    
     Supported formats: JPEG, PNG, GIF, WebP.
     Max size: 10MB.
     """
@@ -76,13 +79,20 @@ async def upload_photo(
         raise HTTPException(status_code=400, detail="File must be an image")
     
     # Read file content
-    content = await file.read()
+    full_content = await file.read()
+    thumb_content = None
+    
+    if thumbnail:
+        if not thumbnail.content_type or not thumbnail.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="Thumbnail must be an image")
+        thumb_content = await thumbnail.read()
     
     try:
         thumb_path, full_path = await catalog_service.upload_photo(
             profile_name=name,
-            image_data=content,
-            filename=file.filename or "photo.jpg"
+            image_data=full_content,
+            filename=file.filename or "photo.jpg",
+            thumbnail_data=thumb_content
         )
         
         return {
@@ -90,6 +100,29 @@ async def upload_photo(
             "thumbnail": thumb_path,
             "full": full_path
         }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/{name}/thumbnail")
+async def update_thumbnail(
+    name: str,
+    file: UploadFile = File(..., description="New thumbnail image")
+):
+    """
+    Update only the thumbnail for a profile (keeps full image).
+    """
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    content = await file.read()
+    
+    try:
+        thumb_path = await catalog_service.update_thumbnail(
+            profile_name=name,
+            thumbnail_data=content
+        )
+        return {"success": True, "thumbnail": thumb_path}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -104,3 +137,28 @@ async def delete_photo(name: str):
         raise HTTPException(status_code=404, detail="Profile not found")
     
     return {"success": True, "message": "Photos deleted"}
+
+
+@router.put("/{profile_id}", response_model=ProfileResponse)
+async def update_profile(profile_id: int, data: ProfileCreate):
+    """
+    Update an existing profile by ID.
+    """
+    from app.schemas.profile import ProfileUpdate
+    update_data = ProfileUpdate(**data.model_dump())
+    result = await catalog_service.update_profile(profile_id=profile_id, data=update_data)
+    if not result:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return result
+
+
+@router.delete("/{profile_id}")
+async def delete_profile(profile_id: int):
+    """
+    Delete a profile by ID.
+    """
+    deleted = await catalog_service.delete_profile(profile_id=profile_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    return {"success": True, "message": "Profile deleted"}

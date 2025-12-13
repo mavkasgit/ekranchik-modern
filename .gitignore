@@ -36,6 +36,18 @@ htmlcov/
 # Database
 *.db
 *.sqlite3
+static/*.db
+
+# Data folders (keep .gitkeep)
+static/images/*
+!static/images/.gitkeep
+excel/*
+!excel/.gitkeep
+
+# Test data
+testdata/*
+!testdata/.gitkeep
+!testdata/ftp/.gitkeep
 
 # Logs
 *.log

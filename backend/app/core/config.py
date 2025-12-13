@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     BOT_PASSWORD: str = "1122"
     
     # Static files
-    STATIC_DIR: str = "static"
-    IMAGES_DIR: str = "static/images"
+    STATIC_DIR: str = "../static"  # Relative to backend folder
+    IMAGES_DIR: str = "../static/images"
     
     # Photo upload
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     def images_path(self) -> Path:
         """Get images directory path"""
         return Path(self.IMAGES_DIR)
+    
+    @property
+    def STATIC_PATH(self) -> Path | None:
+        """Get static directory path"""
+        path = Path(self.STATIC_DIR)
+        if path.exists():
+            return path
+        return None
 
 
 settings = Settings()
