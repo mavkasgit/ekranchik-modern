@@ -31,17 +31,24 @@ htmlcov/
 # Environment
 .env
 .env.local
+*.local
 
 # Database
 *.db
 *.sqlite3
 
-# Node
-node_modules/
-npm-debug.log
+# Logs
+*.log
 
-# Build
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Build outputs
 frontend/dist/
+
+# Repomix
+repomix-output.xml
 
 # OS
 .DS_Store
