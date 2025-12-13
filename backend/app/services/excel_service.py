@@ -3,6 +3,8 @@ Excel Service - handles Excel file parsing, caching, and data extraction.
 """
 import os
 import re
+import time
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
@@ -11,6 +13,8 @@ import pandas as pd
 
 from app.core.config import settings
 from app.core.text_utils import normalize_text
+
+logger = logging.getLogger(__name__)
 
 
 class ExcelService:
@@ -49,6 +53,7 @@ class ExcelService:
     def get_dataframe(
         self,
         file_path: Optional[Path] = None,
+        sheet_name: str = "Подвесы",
         full_dataset: bool = False
     ) -> pd.DataFrame:
         """
@@ -56,6 +61,7 @@ class ExcelService:
         
         Args:
             file_path: Path to Excel file (uses config default if None)
+            sheet_name: Name of the sheet to read (default: "Подвесы")
             full_dataset: If True, return all data; if False, filter recent
         
         Returns:
@@ -67,30 +73,72 @@ class ExcelService:
 
         # Check cache validity
         if self._is_cache_valid(path):
-            df = self._cache
+            logger.info(f"[CACHE HIT] Using cached data: {len(self._cache)} rows")
+            df = self._cache.copy()
         else:
-            # Read Excel file
+            # Read Excel file from specific sheet
+            # skiprows=[0, 1] - skip instruction rows
+            # usecols - specific columns matching original app.py
+            start_time = time.time()
             try:
-                df = pd.read_excel(path, engine='openpyxl')
+                # Use calamine engine for 4x faster reading (Rust-based)
+                df = pd.read_excel(
+                    path, 
+                    sheet_name=sheet_name, 
+                    skiprows=[0, 1],
+                    usecols=[3, 4, 5, 7, 10, 11, 12, 16, 19],
+                    engine='calamine'
+                )
+                read_time = time.time() - start_time
+                logger.info(f"[EXCEL READ] {len(df)} rows in {read_time:.2f}s from {path.name} (calamine)")
+                
+                # Rename columns to match expected format
+                df.columns = ['date', 'number', 'time', 'material_type', 'kpz_number', 
+                              'client', 'profile', 'color', 'lamels_qty']
+                
+                # Remove completely empty rows
+                df = df.dropna(how='all')
+                
+                # Filter: keep rows where date OR number is present
+                df = df[(pd.notna(df['date'])) | (pd.notna(df['number']))]
+                
+                logger.info(f"[EXCEL FILTERED] {len(df)} valid rows after filtering")
+                
                 self._cache = df
                 self._cache_mtime = path.stat().st_mtime
                 self._cache_path = path
             except Exception as e:
-                # Return cached data if available, empty DataFrame otherwise
-                if self._cache is not None:
-                    return self._cache
-                return pd.DataFrame()
+                logger.warning(f"[EXCEL ERROR] {e}, trying fallback...")
+                # Try without sheet name as fallback (use openpyxl as backup)
+                try:
+                    df = pd.read_excel(
+                        path, 
+                        skiprows=[0, 1],
+                        usecols=[3, 4, 5, 7, 10, 11, 12, 16, 19],
+                        engine='openpyxl'
+                    )
+                    df.columns = ['date', 'number', 'time', 'material_type', 'kpz_number', 
+                                  'client', 'profile', 'color', 'lamels_qty']
+                    df = df.dropna(how='all')
+                    df = df[(pd.notna(df['date'])) | (pd.notna(df['number']))]
+                    
+                    self._cache = df
+                    self._cache_mtime = path.stat().st_mtime
+                    self._cache_path = path
+                except Exception:
+                    if self._cache is not None:
+                        return self._cache.copy()
+                    return pd.DataFrame()
         
         if full_dataset:
             return df
         
         # Filter to recent data (last 7 days by default)
-        if 'date' in df.columns or 'Дата' in df.columns:
-            date_col = 'date' if 'date' in df.columns else 'Дата'
+        if 'date' in df.columns:
             try:
-                df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
                 cutoff = datetime.now() - timedelta(days=7)
-                df = df[df[date_col] >= cutoff]
+                df = df[df['date'] >= cutoff]
             except Exception:
                 pass
         
@@ -179,7 +227,8 @@ class ExcelService:
         self,
         limit: int = 100,
         days: int = 7,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        from_end: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Get products from Excel with optional filtering.
@@ -188,6 +237,7 @@ class ExcelService:
             limit: Maximum number of records
             days: Number of days to look back
             filters: Optional filters (client, profile, etc.)
+            from_end: If True, read last N rows (default); if False, read first N
         
         Returns:
             List of product dictionaries
@@ -196,15 +246,21 @@ class ExcelService:
         if df.empty:
             return []
         
-        # Apply date filter
-        date_col = 'date' if 'date' in df.columns else 'Дата' if 'Дата' in df.columns else None
-        if date_col:
-            try:
-                df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-                cutoff = datetime.now() - timedelta(days=days)
-                df = df[df[date_col] >= cutoff]
-            except Exception:
-                pass
+        # Get last N rows from the end of the file
+        if from_end:
+            df = df.tail(limit)
+            # Reverse to show newest first
+            df = df.iloc[::-1]
+        else:
+            # Apply date filter only when not reading from end
+            if 'date' in df.columns:
+                try:
+                    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                    cutoff = datetime.now() - timedelta(days=days)
+                    df = df[df['date'] >= cutoff]
+                except Exception:
+                    pass
+            df = df.head(limit)
         
         # Apply additional filters
         if filters:
@@ -212,9 +268,70 @@ class ExcelService:
                 if key in df.columns and value:
                     df = df[df[key].astype(str).str.contains(str(value), case=False, na=False)]
         
-        # Convert to list of dicts
-        records = df.head(limit).to_dict('records')
+        # Process and format records
+        records = self._process_dataframe(df)
         return records
+    
+    def _process_dataframe(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        Process DataFrame and return list of formatted product dicts.
+        Handles date/time formatting and lamels parsing.
+        """
+        products = []
+        for _, row in df.iterrows():
+            # Handle lamels (can be "30+30" or number)
+            lamels = row.get('lamels_qty')
+            if pd.notna(lamels):
+                try:
+                    lamels_display = int(float(lamels))
+                except (ValueError, TypeError):
+                    lamels_display = str(lamels)
+            else:
+                lamels_display = 0
+            
+            # Format time (remove seconds)
+            time_str = '—'
+            time_val = row.get('time')
+            if pd.notna(time_val):
+                if hasattr(time_val, 'strftime'):
+                    time_str = time_val.strftime('%H:%M')
+                else:
+                    time_val_str = str(time_val)
+                    if ':' in time_val_str:
+                        parts = time_val_str.split(':')
+                        time_str = f"{parts[0]}:{parts[1]}"
+                    else:
+                        time_str = time_val_str
+            
+            # Format date
+            date_str = '—'
+            date_val = row.get('date')
+            if pd.notna(date_val):
+                try:
+                    if hasattr(date_val, 'strftime'):
+                        date_str = date_val.strftime('%d.%m.%y')
+                    else:
+                        date_str = str(date_val)
+                except Exception:
+                    date_str = str(date_val)
+            
+            profile_name = row.get('profile', '—')
+            if pd.isna(profile_name) or not profile_name:
+                profile_name = '—'
+            
+            products.append({
+                'number': row.get('number') if pd.notna(row.get('number')) else '—',
+                'date': date_str,
+                'time': time_str,
+                'client': row.get('client') if pd.notna(row.get('client')) else '—',
+                'profile': str(profile_name).strip(),
+                'color': row.get('color') if pd.notna(row.get('color')) else '—',
+                'lamels_qty': lamels_display,
+                'kpz_number': row.get('kpz_number') if pd.notna(row.get('kpz_number')) else '—',
+                'material_type': row.get('material_type') if pd.notna(row.get('material_type')) else '—',
+            })
+        
+        return products
     
     def get_recent_profiles(self, limit: int = 50) -> List[Dict[str, Any]]:
         """

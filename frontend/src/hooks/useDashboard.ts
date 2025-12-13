@@ -13,7 +13,7 @@ export function useFileStatus() {
   return useQuery({
     queryKey: ['dashboard', 'fileStatus'],
     queryFn: dashboardApi.getFileStatus,
-    refetchInterval: 10000,
+    refetchInterval: 3000, // Check every 3s for file changes
   })
 }
 

@@ -50,6 +50,7 @@ class FileStatus(BaseModel):
     is_open: bool = False
     last_modified: Optional[datetime] = None
     file_name: Optional[str] = None
+    status_text: str = "Неизвестно"
     error: Optional[str] = None
 
 

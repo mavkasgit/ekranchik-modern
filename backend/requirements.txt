@@ -15,6 +15,7 @@ pydantic-settings>=2.6.0
 # Excel parsing
 pandas==2.2.3
 openpyxl==3.1.5
+python-calamine==0.6.1  # Fast Rust-based Excel reader (4x faster)
 
 # Image processing
 pillow==11.0.0

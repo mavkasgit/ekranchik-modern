@@ -764,5 +764,127 @@ class CatalogService:
                 return await _search(sess)
 
 
+    def _extract_profile_name(self, text: str) -> str:
+        """
+        Extract clean profile name by removing processing keywords.
+        
+        "СРП228 окно" → "СРП228"
+        "юп-3233 греб + сверло" → "юп-3233"
+        """
+        import re
+        if not text:
+            return ""
+        
+        text = str(text).strip()
+        
+        # Remove processing keywords
+        for keyword in ['окно', 'греб', 'гребенка', 'сверло', 'фреза', 'паз']:
+            pattern = r'\b' + re.escape(keyword) + r'\b'
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
+        # Clean up
+        text = re.sub(r'\s+', ' ', text).strip()
+        text = text.rstrip('+,;').strip()
+        
+        return text
+    
+    def _extract_digits(self, text: str) -> str:
+        """Extract all digits from text."""
+        import re
+        return ''.join(re.findall(r'\d', str(text)))
+
+    async def get_profiles_photos_batch(
+        self,
+        profile_names: List[str],
+        session: Optional[AsyncSession] = None
+    ) -> dict[str, dict]:
+        """
+        Get photo URLs for multiple profiles at once (batch lookup).
+        
+        Uses 3-stage matching like original app.py:
+        1. Exact match (case-insensitive)
+        2. Normalized match (Latin→Cyrillic)
+        3. Digits-only match (if unique)
+        
+        Args:
+            profile_names: List of profile names from Excel
+            session: Optional database session
+        
+        Returns:
+            Dict mapping profile name to photo info
+        """
+        if not profile_names:
+            return {}
+        
+        async def _get_batch(sess: AsyncSession) -> dict[str, dict]:
+            # Get all profiles with photos
+            stmt = select(Profile).where(Profile.photo_thumb.isnot(None))
+            result = await sess.execute(stmt)
+            profiles = result.scalars().all()
+            
+            # Build lookup dicts
+            exact_lookup = {}  # lowercase name → photo_info
+            normalized_lookup = {}  # normalized name → photo_info
+            digits_lookup = {}  # digits → [photo_info, ...]
+            
+            for profile in profiles:
+                photo_info = {
+                    'thumb': profile.photo_thumb,
+                    'full': profile.photo_full,
+                    'name': profile.name,
+                }
+                
+                # Exact (lowercase)
+                exact_lookup[profile.name.lower()] = photo_info
+                
+                # Normalized
+                norm_name = normalize_text(profile.name)
+                normalized_lookup[norm_name] = photo_info
+                
+                # Digits
+                digits = self._extract_digits(profile.name)
+                if digits:
+                    if digits not in digits_lookup:
+                        digits_lookup[digits] = []
+                    digits_lookup[digits].append(photo_info)
+            
+            # Match input names to profiles using 3-stage search
+            result_dict = {}
+            for name in profile_names:
+                if not name or name == '—':
+                    continue
+                
+                # Extract clean name (remove "окно", "греб", etc.)
+                clean_name = self._extract_profile_name(name)
+                if not clean_name:
+                    continue
+                
+                # Stage 1: Exact match
+                if clean_name.lower() in exact_lookup:
+                    result_dict[name] = exact_lookup[clean_name.lower()]
+                    continue
+                
+                # Stage 2: Normalized match
+                norm_input = normalize_text(clean_name)
+                if norm_input in normalized_lookup:
+                    result_dict[name] = normalized_lookup[norm_input]
+                    continue
+                
+                # Stage 3: Digits match (only if unique)
+                digits = self._extract_digits(clean_name)
+                if digits and digits in digits_lookup:
+                    matches = digits_lookup[digits]
+                    if len(matches) == 1:
+                        result_dict[name] = matches[0]
+            
+            return result_dict
+        
+        if session:
+            return await _get_batch(session)
+        else:
+            async with get_session() as sess:
+                return await _get_batch(sess)
+
+
 # Singleton instance
 catalog_service = CatalogService()

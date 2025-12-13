@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { 
-  RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server, 
-  Image, Maximize2, Minimize2, X, ZoomIn, ZoomOut 
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import {
+  RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
+  Image, Maximize2, Minimize2, X, ZoomIn, ZoomOut, Loader2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Table,
   TableBody,
@@ -16,12 +17,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+} from '@/components/ui/dialog'
+import { Checkbox } from '@/components/ui/checkbox'
+import { useToast } from '@/hooks/use-toast'
 
 import { useDashboard, useFileStatus, useFTPStatus } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
 
-// localStorage keys
 const FILTERS_KEY = 'ekranchik_filters'
 
 interface Filters {
@@ -46,7 +52,7 @@ function loadFilters(): Filters {
   try {
     const saved = localStorage.getItem(FILTERS_KEY)
     if (saved) return { ...defaultFilters, ...JSON.parse(saved) }
-  } catch {}
+  } catch { /* ignore */ }
   return defaultFilters
 }
 
@@ -54,7 +60,36 @@ function saveFilters(filters: Filters) {
   localStorage.setItem(FILTERS_KEY, JSON.stringify(filters))
 }
 
-// Photo Modal with zoom/pan
+// Color mapping - top 15 most used colors
+function getColorHex(colorName: string): string {
+  const name = colorName.toLowerCase().trim()
+  
+  const colorMap: Record<string, string> = {
+    // Top colors by usage
+    'серебро': '#C0C0C0',      // 16147 uses
+    'черный': '#1C1C1C',       // 8323 uses
+    'золото': '#FFD700',       // 1758 uses
+    'шампань': '#F7E7CE',      // 1605 uses
+    'титан': '#878681',        // 1498 uses
+    'бронза': '#8B5A2B',       // 360 uses - darker bronze
+    'медь': '#CD5C5C',         // 335 uses - more red copper
+    'растрав': '#D3D3D3',      // 127 uses
+    'rosegold': '#B76E79',     // 126 uses
+  }
+  
+  // Try exact match
+  if (colorMap[name]) return colorMap[name]
+  
+  // Try partial match
+  for (const [key, value] of Object.entries(colorMap)) {
+    if (name.includes(key) || key.includes(name)) return value
+  }
+  
+  // Default gray for unknown
+  return '#9CA3AF'
+}
+
+// Photo Modal - same as Catalog ProfileDialog view mode
 function PhotoModal({
   open,
   onClose,
@@ -66,11 +101,25 @@ function PhotoModal({
   photoUrl: string | null
   profileName: string
 }) {
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
   const [zoom, setZoom] = useState(1)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const dragStart = useRef({ x: 0, y: 0 })
-  const imgRef = useRef<HTMLImageElement>(null)
+
+  // Load image dimensions
+  useEffect(() => {
+    setImageSize(null)
+    if (!photoUrl) return
+    
+    const img = new window.Image()
+    img.onload = () => {
+      setImageSize({ width: img.naturalWidth, height: img.naturalHeight })
+    }
+    img.src = photoUrl
+    
+    return () => { img.onload = null }
+  }, [photoUrl])
 
   useEffect(() => {
     if (open) {
@@ -110,260 +159,349 @@ function PhotoModal({
     }
   }, [isDragging])
 
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false)
-  }, [])
+  const handleMouseUp = useCallback(() => setIsDragging(false), [])
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) onClose()
+  // Calculate dialog size based on image dimensions (like Catalog)
+  const dialogSize = useMemo(() => {
+    const maxDialogHeight = typeof window !== 'undefined' ? window.innerHeight - 100 : 800
+    const maxDialogWidth = typeof window !== 'undefined' ? window.innerWidth - 100 : 1200
+    const minHeight = 400
+    const minWidth = 500
+    
+    if (!imageSize) {
+      return { width: minWidth, height: minHeight }
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [open, onClose])
+    
+    let imgDisplayWidth = imageSize.width
+    let imgDisplayHeight = imageSize.height
+    
+    // Scale down if image is too tall
+    if (imgDisplayHeight > maxDialogHeight - 80) { // 80px for controls
+      const scale = (maxDialogHeight - 80) / imgDisplayHeight
+      imgDisplayWidth = imgDisplayWidth * scale
+      imgDisplayHeight = imgDisplayHeight * scale
+    }
+    
+    // Scale down if too wide
+    if (imgDisplayWidth > maxDialogWidth - 40) { // 40px padding
+      const scale = (maxDialogWidth - 40) / imgDisplayWidth
+      imgDisplayWidth = imgDisplayWidth * scale
+      imgDisplayHeight = imgDisplayHeight * scale
+    }
+    
+    return {
+      width: Math.max(minWidth, imgDisplayWidth + 40),
+      height: Math.max(minHeight, imgDisplayHeight + 100) // 100px for controls
+    }
+  }, [imageSize])
 
-  if (!open || !photoUrl) return null
+  if (!photoUrl) return null
 
   return (
-    <div 
-      className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
-      onClick={onClose}
-    >
-      <div 
-        className="relative max-w-[90vw] max-h-[90vh]"
-        onClick={e => e.stopPropagation()}
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent 
+        className="p-0 gap-0 top-[5%] translate-y-0 bg-background/95 backdrop-blur"
+        style={{ width: `${dialogSize.width}px`, height: `${dialogSize.height}px`, maxWidth: 'calc(100vw - 100px)' }}
       >
-        <button 
-          className="absolute -top-10 right-0 text-white text-4xl hover:text-red-400"
-          onClick={onClose}
+        <div
+          className="relative flex flex-col items-center justify-center h-full p-4"
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
         >
-          <X />
-        </button>
-        <img
-          ref={imgRef}
-          src={photoUrl}
-          alt={profileName}
-          className="max-w-full max-h-[85vh] rounded-lg select-none"
-          style={{
-            transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
-            cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in',
-            transition: isDragging ? 'none' : 'transform 0.15s ease-out',
-          }}
-          onDoubleClick={handleDoubleClick}
-          draggable={false}
-        />
-        <div className="absolute -bottom-10 left-0 text-white text-lg">
-          {profileName}
+          <div className="flex-1 flex items-center justify-center overflow-hidden w-full">
+            <img
+              src={photoUrl}
+              alt={profileName}
+              className="max-w-full max-h-full object-contain select-none"
+              style={{
+                transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+                cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in',
+                transition: isDragging ? 'none' : 'transform 0.15s ease-out',
+              }}
+              onDoubleClick={handleDoubleClick}
+              draggable={false}
+            />
+          </div>
+          <div className="flex items-center justify-between w-full pt-4 border-t mt-4">
+            <span className="text-lg font-medium">{profileName}</span>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => setZoom(z => Math.max(0.5, z - 0.5))}>
+                <ZoomOut className="w-4 h-4" />
+              </Button>
+              <span className="text-sm w-12 text-center">{Math.round(zoom * 100)}%</span>
+              <Button size="sm" variant="outline" onClick={() => setZoom(z => Math.min(5, z + 0.5))}>
+                <ZoomIn className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
         </div>
-        <div className="absolute -bottom-10 right-0 flex gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setZoom(z => Math.max(0.5, z - 0.5))}>
-            <ZoomOut className="w-4 h-4" />
-          </Button>
-          <span className="text-white px-2">{Math.round(zoom * 100)}%</span>
-          <Button size="sm" variant="secondary" onClick={() => setZoom(z => Math.min(5, z + 0.5))}>
-            <ZoomIn className="w-4 h-4" />
-          </Button>
-        </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
-// Profile photos cell with multiple photos support
-function PhotoCell({ 
-  hanger, 
-  onPhotoClick 
-}: { 
+// Helper to build photo URL (paths in DB already include /static/)
+function getPhotoUrl(path: string | null | undefined): string | null {
+  if (!path) return null
+  // Paths in DB are like "/static/images/..." or "images/..."
+  return path.startsWith('/') ? path : `/${path}`
+}
+
+// Photo cell - wrapping layout, max 700px width, photos wrap to new rows
+function PhotoCell({
+  hanger,
+  onPhotoClick
+}: {
   hanger: HangerData
-  onPhotoClick: (url: string, name: string) => void 
+  onPhotoClick: (url: string, name: string) => void
 }) {
   const profilesInfo = hanger.profiles_info || []
-  
+
   if (profilesInfo.length > 0) {
     return (
-      <div className="flex flex-wrap gap-2 justify-center">
+      <div className="flex flex-wrap gap-2 items-center justify-center" style={{ maxWidth: '800px' }}>
         {profilesInfo.map((prof, idx) => (
-          <ProfilePhoto 
-            key={idx} 
-            profile={prof} 
-            onPhotoClick={onPhotoClick} 
-          />
+          <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} />
         ))}
       </div>
     )
   }
 
-  // Fallback to single photo
-  if (hanger.profile_photo_thumb) {
+  const thumbUrl = getPhotoUrl(hanger.profile_photo_thumb)
+  if (thumbUrl) {
     return (
-      <img
-        src={`/static/${hanger.profile_photo_thumb}`}
-        alt={hanger.profile}
-        className="w-20 h-20 object-contain rounded cursor-pointer hover:scale-105 transition-transform border-2 border-gray-200 hover:border-blue-500"
-        onClick={() => onPhotoClick(
-          `/static/${hanger.profile_photo_full || hanger.profile_photo_thumb}`,
-          hanger.profile
-        )}
-      />
+      <div className="flex items-center justify-center" style={{ maxWidth: '800px' }}>
+        <img
+          src={thumbUrl}
+          alt={hanger.profile}
+          className="w-20 h-20 object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
+          onClick={() => onPhotoClick(
+            getPhotoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || '',
+            hanger.profile
+          )}
+        />
+      </div>
     )
   }
 
   return (
-    <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
-      <Image className="w-8 h-8 text-muted-foreground" />
+    <div className="flex items-center justify-center" style={{ maxWidth: '800px' }}>
+      <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
+        <Image className="w-8 h-8 text-muted-foreground" />
+      </div>
     </div>
   )
 }
 
-function ProfilePhoto({ 
-  profile, 
-  onPhotoClick 
-}: { 
+function ProfilePhoto({
+  profile,
+  onPhotoClick
+}: {
   profile: ProfileInfo
-  onPhotoClick: (url: string, name: string) => void 
+  onPhotoClick: (url: string, name: string) => void
 }) {
-  if (!profile.has_photo || !profile.photo_thumb) {
-    return null
-  }
+  const thumbUrl = getPhotoUrl(profile.photo_thumb)
+  const fullUrl = getPhotoUrl(profile.photo_full || profile.photo_thumb)
+  const hasPhoto = profile.has_photo && thumbUrl
 
   return (
-    <div className="text-center">
-      <img
-        src={`/static/${profile.photo_thumb}`}
-        alt={profile.name}
-        className="w-24 h-24 object-contain rounded cursor-pointer hover:scale-105 transition-transform border-2 border-gray-200 hover:border-blue-500"
-        onClick={() => onPhotoClick(
-          `/static/${profile.photo_full || profile.photo_thumb}`,
-          profile.canonical_name || profile.name
-        )}
-      />
-      <p className="text-xs text-muted-foreground mt-1 max-w-24 truncate">
-        {profile.canonical_name || profile.name}
-      </p>
-      {profile.processing && profile.processing.length > 0 && (
-        <div className="flex gap-1 justify-center mt-1 flex-wrap">
-          {profile.processing.map((proc, i) => (
-            <Badge key={i} className="text-[10px] px-1 py-0 bg-yellow-400 text-yellow-900">
-              {proc}
-            </Badge>
-          ))}
+    <div className="flex items-center gap-2">
+      {hasPhoto ? (
+        <img
+          src={thumbUrl}
+          alt={profile.name}
+          className="w-auto max-h-[80px] max-w-[140px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary flex-shrink-0"
+          onClick={() => onPhotoClick(fullUrl || '', profile.canonical_name || profile.name)}
+        />
+      ) : (
+        <div className="w-12 h-12 bg-muted rounded flex items-center justify-center flex-shrink-0">
+          <Image className="w-5 h-5 text-muted-foreground" />
         </div>
       )}
+      <div className="flex flex-col justify-center min-w-0">
+        <p className="text-xs text-muted-foreground truncate max-w-[100px]">
+          {profile.canonical_name || profile.name}
+        </p>
+        {profile.processing && profile.processing.length > 0 && (
+          <div className="flex gap-1 mt-1 flex-wrap">
+            {profile.processing.map((proc, i) => (
+              <Badge key={i} className="text-[10px] px-1 py-0 bg-yellow-400 text-yellow-900 hover:bg-yellow-500">
+                {proc}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
-// Compact status bar - Excel → FTP → WebSocket
+// Status bar
 function StatusBar() {
   const { data: fileStatus } = useFileStatus()
   const { data: ftpStatus } = useFTPStatus()
   const { isConnected } = useRealtimeData()
 
   const fileIsOpen = fileStatus?.is_open
-  
+  const statusColor = fileStatus?.error 
+    ? 'bg-yellow-500' 
+    : fileIsOpen 
+      ? 'bg-green-500' 
+      : 'bg-destructive'
+
   return (
-    <div className="bg-card rounded-lg p-3 shadow-sm border flex flex-wrap items-center gap-4 text-sm">
-      {/* Excel file */}
-      <div className="flex items-center gap-2">
-        <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
-        <div className={`w-2 h-2 rounded-full animate-pulse ${fileStatus?.error ? 'bg-yellow-500' : fileIsOpen ? 'bg-green-500' : 'bg-red-500'}`} />
-        <span className="truncate max-w-[200px]">{fileStatus?.file_name || '—'}</span>
-        {fileStatus?.last_modified && (
-          <span className="text-muted-foreground text-xs">
-            {new Date(fileStatus.last_modified).toLocaleString('ru')}
-          </span>
-        )}
-      </div>
+    <Card>
+      <CardContent className="py-3">
+        <div className="flex flex-wrap items-center gap-6 text-sm">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
+            <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+            <span className="font-medium">{fileStatus?.status_text || '—'}</span>
+            <span className="text-muted-foreground truncate max-w-[200px]">
+              {fileStatus?.file_name || ''}
+            </span>
+            {fileStatus?.last_modified && (
+              <span className="text-muted-foreground text-xs">
+                {new Date(fileStatus.last_modified).toLocaleString('ru')}
+              </span>
+            )}
+          </div>
 
-      <div className="w-px h-4 bg-border" />
+          <div className="w-px h-4 bg-border" />
 
-      {/* FTP */}
-      <div className="flex items-center gap-2">
-        <Server className="w-4 h-4 text-muted-foreground" />
-        <div className={`w-2 h-2 rounded-full ${ftpStatus?.connected ? 'bg-green-500' : 'bg-red-500'}`} />
-        <span>FTP: {ftpStatus?.connected ? 'OK' : 'Откл'}</span>
-      </div>
+          <div className="flex items-center gap-2">
+            <Server className="w-4 h-4 text-muted-foreground" />
+            <div className={`w-2 h-2 rounded-full ${ftpStatus?.connected ? 'bg-green-500' : 'bg-destructive'}`} />
+            <span>FTP: {ftpStatus?.connected ? 'OK' : 'Откл'}</span>
+          </div>
 
-      <div className="w-px h-4 bg-border" />
+          <div className="w-px h-4 bg-border" />
 
-      {/* WebSocket */}
-      <div className="flex items-center gap-2">
-        {isConnected ? (
-          <Wifi className="w-4 h-4 text-green-500" />
-        ) : (
-          <WifiOff className="w-4 h-4 text-red-500" />
-        )}
-        <span className={isConnected ? 'text-green-600' : 'text-muted-foreground'}>
-          WS: {isConnected ? 'Онлайн' : 'Офлайн'}
-        </span>
-      </div>
-    </div>
+          <div className="flex items-center gap-2">
+            {isConnected ? (
+              <Wifi className="w-4 h-4 text-green-500" />
+            ) : (
+              <WifiOff className="w-4 h-4 text-destructive" />
+            )}
+            <span>WS: {isConnected ? 'Онлайн' : 'Офлайн'}</span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
-// Data table component
-function DataTable({ 
-  data, 
+// Update row with progress bar
+function UpdateRow({ progress }: { progress: number }) {
+  return (
+    <TableRow className="bg-blue-500/10 border-blue-500/30">
+      <TableCell colSpan={10} className="py-2">
+        <div className="flex items-center justify-center gap-3">
+          <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+          <span className="text-sm font-medium text-blue-500">Обновление данных...</span>
+          <div className="w-[200px] h-2 bg-muted rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-blue-500 transition-all duration-300 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <span className="text-xs text-muted-foreground w-10">{Math.round(progress)}%</span>
+        </div>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+// Data table
+function DataTable({
+  data,
   onPhotoClick,
   highlightNew = false,
   newIds = new Set<string>(),
-}: { 
+  isUpdating = false,
+  isFullscreen = false,
+}: {
   data: HangerData[]
   onPhotoClick: (url: string, name: string) => void
   highlightNew?: boolean
   newIds?: Set<string>
+  isUpdating?: boolean
+  isFullscreen?: boolean
 }) {
+  const [progress, setProgress] = useState(0)
+  
+  // Fake progress animation
+  useEffect(() => {
+    if (isUpdating) {
+      setProgress(0)
+      const interval = setInterval(() => {
+        setProgress(p => {
+          if (p >= 90) return p // Stop at 90%, wait for real completion
+          return p + Math.random() * 15
+        })
+      }, 200)
+      return () => clearInterval(interval)
+    } else {
+      // Complete to 100% when done
+      if (progress > 0 && progress < 100) {
+        setProgress(100)
+        setTimeout(() => setProgress(0), 500)
+      }
+    }
+  }, [isUpdating])
+
   return (
-    <div className="rounded-md border overflow-auto max-h-[500px]">
+    <div className={`overflow-auto text-xs ${isFullscreen ? 'max-h-screen' : 'rounded-md border max-h-[500px]'}`}>
       <Table>
         <TableHeader className="sticky top-0 bg-muted z-10">
           <TableRow>
-            <TableHead className="w-24">Дата</TableHead>
-            <TableHead className="w-20">Время</TableHead>
-            <TableHead className="w-20">№ Подв.</TableHead>
-            <TableHead className="w-20">Тип</TableHead>
-            <TableHead className="w-24">№ КПЗ</TableHead>
-            <TableHead>Клиент</TableHead>
-            <TableHead className="max-w-[200px]">Профиль</TableHead>
-            <TableHead className="w-32">Фото</TableHead>
-            <TableHead className="w-20 text-right">Ламели</TableHead>
-            <TableHead>Цвет</TableHead>
+            <TableHead className="w-20 text-center py-1">Дата</TableHead>
+            <TableHead className="w-16 text-center py-1">Время</TableHead>
+            <TableHead className="w-16 text-center py-1">№ Подв.</TableHead>
+            <TableHead className="w-16 text-center py-1">Тип</TableHead>
+            <TableHead className="w-20 text-center py-1">№ КПЗ</TableHead>
+            <TableHead className="text-center py-1">Клиент</TableHead>
+            <TableHead className="max-w-[180px] text-center py-1">Профиль</TableHead>
+            <TableHead className="text-center py-1" style={{ maxWidth: '800px' }}>Фото</TableHead>
+            <TableHead className="w-16 text-center py-1">Ламели</TableHead>
+            <TableHead className="text-center py-1">Цвет</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
+          {isUpdating && <UpdateRow progress={progress} />}
           {data.map((hanger, idx) => {
             const rowId = `${hanger.number}-${hanger.date}-${hanger.time}`
             const isNew = highlightNew && newIds.has(rowId)
-            
+
             return (
-              <TableRow 
+              <TableRow
                 key={`${hanger.number}-${idx}`}
-                className={`
-                  ${idx % 2 === 0 ? 'bg-slate-50' : 'bg-white'}
-                  hover:bg-blue-50 transition-colors
-                  ${isNew ? 'bg-yellow-100 animate-pulse' : ''}
-                `}
+                className={isNew ? 'bg-yellow-500/20 animate-pulse' : idx % 2 === 0 ? 'bg-slate-200 dark:bg-slate-700' : ''}
               >
-                <TableCell>{hanger.date}</TableCell>
-                <TableCell>{hanger.time}</TableCell>
-                <TableCell className="font-bold">{hanger.number}</TableCell>
-                <TableCell>{hanger.material_type}</TableCell>
-                <TableCell>{hanger.kpz_number}</TableCell>
-                <TableCell className="truncate max-w-[150px]">{hanger.client}</TableCell>
-                <TableCell className="max-w-[200px]">
+                <TableCell className="text-center py-1">{hanger.date}</TableCell>
+                <TableCell className="text-center py-1">{hanger.time}</TableCell>
+                <TableCell className="text-center font-bold py-1">{hanger.number}</TableCell>
+                <TableCell className="text-center py-1">{hanger.material_type}</TableCell>
+                <TableCell className="text-center py-1">{hanger.kpz_number}</TableCell>
+                <TableCell className="text-center truncate max-w-[120px] py-1">{hanger.client}</TableCell>
+                <TableCell className="text-center max-w-[180px] py-1">
                   <span className="break-words">{hanger.profile?.replace(/\+/g, '+ ') || '—'}</span>
                 </TableCell>
-                <TableCell>
+                <TableCell className="py-1" style={{ maxWidth: '800px' }}>
                   <PhotoCell hanger={hanger} onPhotoClick={onPhotoClick} />
                 </TableCell>
-                <TableCell className="text-right font-bold">{hanger.lamels_qty}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{hanger.color}</Badge>
+                <TableCell className="text-center font-bold py-1">{hanger.lamels_qty}</TableCell>
+                <TableCell className="text-center py-1">
+                  <div className="inline-flex flex-col items-center max-w-[80px]">
+                    <span className="text-sm leading-tight text-center break-words">{hanger.color}</span>
+                    <div 
+                      className="w-full h-1.5 rounded-full mt-0.5" 
+                      style={{ backgroundColor: getColorHex(hanger.color), minWidth: '50px' }}
+                    />
+                  </div>
                 </TableCell>
               </TableRow>
             )
@@ -376,7 +514,7 @@ function DataTable({
 
 function TableSkeleton() {
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 p-4">
       {[...Array(5)].map((_, i) => (
         <Skeleton key={i} className="h-16 w-full" />
       ))}
@@ -384,7 +522,7 @@ function TableSkeleton() {
   )
 }
 
-// Filters component
+// Filters
 function FiltersPanel({
   filters,
   onChange,
@@ -397,21 +535,17 @@ function FiltersPanel({
   onReset: () => void
 }) {
   return (
-    <Card className="mb-4">
-      <CardContent className="pt-4">
+    <Card>
+      <CardContent className="py-4">
         <div className="flex flex-wrap gap-4 items-center">
-          {/* Loading filter */}
-          <div className="flex items-center gap-2 bg-blue-50 border-2 border-blue-300 rounded-lg px-3 py-2">
-            <input
-              type="checkbox"
+          {/* Loading */}
+          <div className="flex items-center gap-3 border rounded-lg px-3 py-2 border-blue-500/50 bg-blue-500/10">
+            <Checkbox
               id="show-loading"
               checked={filters.showLoading}
-              onChange={e => onChange({ ...filters, showLoading: e.target.checked })}
-              className="w-4 h-4"
+              onCheckedChange={(c) => onChange({ ...filters, showLoading: !!c })}
             />
-            <label htmlFor="show-loading" className="text-sm font-medium cursor-pointer">
-              Загрузка:
-            </label>
+            <Label htmlFor="show-loading" className="cursor-pointer">Загрузка:</Label>
             <Input
               type="number"
               value={filters.loadingLimit}
@@ -422,18 +556,14 @@ function FiltersPanel({
             />
           </div>
 
-          {/* Realtime filter */}
-          <div className="flex items-center gap-2 bg-green-50 border-2 border-green-300 rounded-lg px-3 py-2">
-            <input
-              type="checkbox"
+          {/* Realtime */}
+          <div className="flex items-center gap-3 border rounded-lg px-3 py-2 border-green-500/50 bg-green-500/10">
+            <Checkbox
               id="show-realtime"
               checked={filters.showRealtime}
-              onChange={e => onChange({ ...filters, showRealtime: e.target.checked })}
-              className="w-4 h-4"
+              onCheckedChange={(c) => onChange({ ...filters, showRealtime: !!c })}
             />
-            <label htmlFor="show-realtime" className="text-sm font-medium cursor-pointer">
-              Выгрузка:
-            </label>
+            <Label htmlFor="show-realtime" className="cursor-pointer">Выгрузка:</Label>
             <Input
               type="number"
               value={filters.realtimeLimit}
@@ -444,18 +574,14 @@ function FiltersPanel({
             />
           </div>
 
-          {/* Unloading filter */}
-          <div className="flex items-center gap-2 bg-pink-50 border-2 border-pink-300 rounded-lg px-3 py-2">
-            <input
-              type="checkbox"
+          {/* Unloading old */}
+          <div className="flex items-center gap-3 border rounded-lg px-3 py-2 border-pink-500/50 bg-pink-500/10">
+            <Checkbox
               id="show-unloading"
               checked={filters.showUnloading}
-              onChange={e => onChange({ ...filters, showUnloading: e.target.checked })}
-              className="w-4 h-4"
+              onCheckedChange={(c) => onChange({ ...filters, showUnloading: !!c })}
             />
-            <label htmlFor="show-unloading" className="text-sm font-medium cursor-pointer">
-              Выгрузка старая:
-            </label>
+            <Label htmlFor="show-unloading" className="cursor-pointer">Выгрузка старая:</Label>
             <Input
               type="number"
               value={filters.unloadingLimit}
@@ -466,11 +592,10 @@ function FiltersPanel({
             />
           </div>
 
-          {/* Quick show last 100 button */}
-          <Button 
+          <Button
             variant="outline"
-            onClick={() => onChange({ 
-              ...filters, 
+            onClick={() => onChange({
+              ...filters,
               showLoading: true,
               showRealtime: false,
               showUnloading: false,
@@ -482,7 +607,7 @@ function FiltersPanel({
 
           <div className="flex gap-2 ml-auto">
             <Button onClick={onApply}>Применить</Button>
-            <Button variant="secondary" onClick={onReset}>Сбросить</Button>
+            <Button variant="outline" onClick={onReset}>Сбросить</Button>
           </div>
         </div>
       </CardContent>
@@ -490,29 +615,53 @@ function FiltersPanel({
   )
 }
 
-// Main Dashboard component
+// Main
 export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(loadFilters)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
   const [realtimeData, setRealtimeData] = useState<HangerData[]>([])
   const [newRowIds, setNewRowIds] = useState<Set<string>>(new Set())
-  
+  const [isFileUpdating, setIsFileUpdating] = useState(false)
+  const lastModifiedRef = useRef<string | null>(null)
+
+  const { toast } = useToast()
   const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit)
-  
-  // WebSocket for realtime updates
+  const { data: fileStatus } = useFileStatus()
+
+  // Track file changes and auto-refresh
+  useEffect(() => {
+    if (fileStatus?.last_modified) {
+      const newModified = fileStatus.last_modified
+      if (lastModifiedRef.current && lastModifiedRef.current !== newModified) {
+        // File was modified - show updating state
+        setIsFileUpdating(true)
+        toast({
+          title: '📄 Файл обновлён',
+          description: 'Загрузка новых данных...',
+        })
+        
+        // Refetch data
+        refetch().then(() => {
+          setIsFileUpdating(false)
+          toast({
+            title: '✅ Данные обновлены',
+            description: `Загружено ${data?.total ?? 0} записей`,
+          })
+        })
+      }
+      lastModifiedRef.current = newModified
+    }
+  }, [fileStatus?.last_modified])
+
   useRealtimeData({
     onMessage: (msg) => {
       if (msg.type === 'unload_event' && msg.payload) {
         const newHanger = msg.payload as unknown as HangerData
         const rowId = `${newHanger.number}-${newHanger.date}-${newHanger.time}`
-        
-        setRealtimeData(prev => {
-          const updated = [newHanger, ...prev].slice(0, filters.realtimeLimit)
-          return updated
-        })
-        
-        // Highlight new row
+
+        setRealtimeData(prev => [newHanger, ...prev].slice(0, filters.realtimeLimit))
+
         setNewRowIds(prev => new Set([...prev, rowId]))
         setTimeout(() => {
           setNewRowIds(prev => {
@@ -525,12 +674,8 @@ export default function Dashboard() {
     }
   })
 
-  // Save filters on change
-  useEffect(() => {
-    saveFilters(filters)
-  }, [filters])
+  useEffect(() => { saveFilters(filters) }, [filters])
 
-  // Fullscreen handling
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen()
@@ -542,41 +687,24 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement)
-    }
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    const handler = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handler)
+    return () => document.removeEventListener('fullscreenchange', handler)
   }, [])
 
   const handlePhotoClick = useCallback((url: string, name: string) => {
     setPhotoModal({ url, name })
   }, [])
 
-  const handleApplyFilters = useCallback(() => {
-    refetch()
-  }, [refetch])
-
-  const handleResetFilters = useCallback(() => {
-    setFilters(defaultFilters)
-    refetch()
-  }, [refetch])
-
   return (
-    <div className={`${isFullscreen ? 'p-2' : 'container mx-auto p-6'} space-y-4`}>
+    <div className={`${isFullscreen ? 'p-0' : 'container mx-auto p-6 space-y-4'}`}>
       {/* Header */}
       {!isFullscreen && (
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">📊 Учет КПЗ - Подвесы</h1>
           <div className="flex items-center gap-4">
-            <div className="flex gap-2 text-sm">
-              <Badge variant="secondary">
-                📦 Всего: <strong>{data?.total_all ?? '—'}</strong>
-              </Badge>
-              <Badge variant="outline" className="bg-yellow-50">
-                🔍 Показано: <strong>{data?.total ?? '—'}</strong>
-              </Badge>
-            </div>
+            <Badge variant="secondary">Всего: {data?.total_all ?? '—'}</Badge>
+            <Badge variant="outline">Показано: {data?.total ?? '—'}</Badge>
             <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
               Обновить
@@ -589,7 +717,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Fullscreen exit button */}
       {isFullscreen && (
         <div className="fixed top-2 right-2 z-50">
           <Button variant="secondary" size="sm" onClick={toggleFullscreen}>
@@ -598,32 +725,28 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Status bar */}
       {!isFullscreen && <StatusBar />}
 
-      {/* Filters */}
       {!isFullscreen && (
         <FiltersPanel
           filters={filters}
           onChange={setFilters}
-          onApply={handleApplyFilters}
-          onReset={handleResetFilters}
+          onApply={() => refetch()}
+          onReset={() => { setFilters(defaultFilters); refetch() }}
         />
       )}
 
-      {/* Tables */}
       <div className="space-y-4">
-        {/* Loading table */}
         {filters.showLoading && (
           <Card className="border-l-4 border-l-blue-500">
-            <CardHeader className="py-3 bg-slate-50">
-              <CardTitle className="text-base">ЗАГРУЗКА</CardTitle>
-            </CardHeader>
             <CardContent className="p-0">
-              {isLoading ? (
-                <div className="p-4"><TableSkeleton /></div>
-              ) : data?.products && data.products.length > 0 ? (
-                <DataTable data={data.products} onPhotoClick={handlePhotoClick} />
+              {isLoading ? <TableSkeleton /> : data?.products?.length ? (
+                <DataTable 
+                  data={data.products} 
+                  onPhotoClick={handlePhotoClick} 
+                  isUpdating={isFetching || isFileUpdating}
+                  isFullscreen={isFullscreen}
+                />
               ) : (
                 <div className="p-8 text-center text-muted-foreground">Нет записей</div>
               )}
@@ -631,38 +754,23 @@ export default function Dashboard() {
           </Card>
         )}
 
-        {/* Realtime unloading table */}
         {filters.showRealtime && (
           <Card className="border-l-4 border-l-green-500">
-            <CardHeader className="py-3 bg-green-50">
-              <CardTitle className="text-base">ВЫГРУЗКА (реальное время)</CardTitle>
-            </CardHeader>
             <CardContent className="p-0">
               {realtimeData.length > 0 ? (
-                <DataTable 
-                  data={realtimeData} 
-                  onPhotoClick={handlePhotoClick}
-                  highlightNew
-                  newIds={newRowIds}
-                />
+                <DataTable data={realtimeData} onPhotoClick={handlePhotoClick} highlightNew newIds={newRowIds} isFullscreen={isFullscreen} />
               ) : (
-                <div className="p-8 text-center text-muted-foreground">
-                  Ожидание событий выгрузки...
-                </div>
+                <div className="p-8 text-center text-muted-foreground">Ожидание событий...</div>
               )}
             </CardContent>
           </Card>
         )}
 
-        {/* Old unloading table */}
         {filters.showUnloading && (
           <Card className="border-l-4 border-l-pink-500">
-            <CardHeader className="py-3 bg-pink-50">
-              <CardTitle className="text-base">ВЫГРУЗКА СТАРАЯ</CardTitle>
-            </CardHeader>
             <CardContent className="p-0">
-              {data?.unloading_products && data.unloading_products.length > 0 ? (
-                <DataTable data={data.unloading_products} onPhotoClick={handlePhotoClick} />
+              {data?.unloading_products?.length ? (
+                <DataTable data={data.unloading_products} onPhotoClick={handlePhotoClick} isFullscreen={isFullscreen} />
               ) : (
                 <div className="p-8 text-center text-muted-foreground">Нет записей</div>
               )}
@@ -671,7 +779,6 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Photo modal */}
       <PhotoModal
         open={!!photoModal}
         onClose={() => setPhotoModal(null)}

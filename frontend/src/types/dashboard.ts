@@ -44,6 +44,7 @@ export interface FileStatus {
   is_open: boolean
   last_modified?: string
   file_name?: string
+  status_text: string
   error?: string
 }
 

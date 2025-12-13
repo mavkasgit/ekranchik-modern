@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { 
   Search, Image, X, Upload, Grid, List, Plus, Pencil, Trash2,
-  ArrowUpDown, ArrowUp, ArrowDown, Check
+  ArrowUpDown, ArrowUp, ArrowDown
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -88,7 +88,7 @@ function ProfileCard({
         <div className="flex gap-4">
           <div className="w-20 h-20 bg-muted rounded-md flex items-center justify-center overflow-hidden flex-shrink-0">
             {photoUrl ? (
-              <img src={photoUrl} alt={profile.name} className="w-full h-full object-cover" />
+              <img src={photoUrl} alt={profile.name} className="max-w-full max-h-full object-contain" />
             ) : (
               <Image className="w-8 h-8 text-muted-foreground" />
             )}
@@ -179,15 +179,23 @@ function ProfileDialog({
 
   // Load image dimensions when previewUrl changes
   useEffect(() => {
+
+    // Reset immediately to avoid stale dimensions
+    setImageSize(null)
+    
     if (!previewUrl) {
-      setImageSize(null)
       return
     }
+    
     const img = new window.Image()
     img.onload = () => {
       setImageSize({ width: img.naturalWidth, height: img.naturalHeight })
     }
     img.src = previewUrl
+    
+    return () => {
+      img.onload = null // Cleanup to prevent setting state on unmounted component
+    }
   }, [previewUrl])
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -877,25 +885,36 @@ export default function Catalog() {
             )}
           </div>
           
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline">
-                <ArrowUpDown className="h-4 w-4 mr-2" />
-                Сортировка
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => toggleSort('name')}>
-                По алфавиту {sortField === 'name' && <Check className="h-4 w-4 ml-auto" />}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => toggleSort('updated_at')}>
-                По дате изменения {sortField === 'updated_at' && <Check className="h-4 w-4 ml-auto" />}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => toggleSort('has_photo')}>
-                С фото {sortField === 'has_photo' && <Check className="h-4 w-4 ml-auto" />}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="rounded-r-none border-r-0">
+                  <ArrowUpDown className="h-4 w-4 mr-2" />
+                  Сортировка
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => toggleSort('name')}>
+                  По алфавиту
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => toggleSort('updated_at')}>
+                  По дате изменения
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => toggleSort('has_photo')}>
+                  С фото
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button 
+              variant="outline" 
+              size="icon"
+              className="rounded-l-none"
+              onClick={() => setSortDirection(d => d === 'asc' ? 'desc' : 'asc')}
+              title={sortDirection === 'asc' ? 'По возрастанию' : 'По убыванию'}
+            >
+              {sortDirection === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+            </Button>
+          </div>
         </div>
       </div>
 
