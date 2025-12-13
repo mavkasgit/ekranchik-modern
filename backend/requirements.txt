@@ -1,0 +1,44 @@
+# FastAPI and ASGI
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.19
+
+# Database
+sqlalchemy[asyncio]==2.0.36
+aiosqlite==0.20.0
+alembic==1.14.0
+
+# Validation
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# Excel parsing
+pandas==2.2.3
+openpyxl==3.1.5
+
+# Image processing
+pillow==11.0.0
+
+# File watching
+watchdog==6.0.0
+
+# FTP
+aioftp==0.22.3
+
+# Telegram bot
+aiogram==3.15.0
+
+# HTTP client
+httpx==0.28.1
+aiohttp==3.11.10
+
+# Environment
+python-dotenv==1.0.1
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+hypothesis==6.122.1
+
+# Utilities
+python-dateutil==2.9.0.post0

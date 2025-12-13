@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ekranchik-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=sqlite+aiosqlite:///./data/ekranchik.db
+      - EXCEL_FILE_PATH=/app/excel/data.xlsm
+      - FTP_HOST=${FTP_HOST:-172.17.11.194}
+      - FTP_PORT=${FTP_PORT:-21}
+      - FTP_USER=${FTP_USER:-omron}
+      - FTP_PASSWORD=${FTP_PASSWORD:-12345678}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - BOT_PASSWORD=${BOT_PASSWORD:-1122}
+    volumes:
+      - ./data:/app/data
+      - ./static/images:/app/static/images
+      - ${EXCEL_FILE_PATH:-./excel}:/app/excel:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ekranchik-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  data:
+  images:
