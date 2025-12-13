@@ -165,12 +165,12 @@ class TestDateRollover:
            day=st.integers(min_value=1, max_value=28))
     @settings(max_examples=50)
     def test_log_filename_format(self, year: int, month: int, day: int):
-        """Log filename should follow YYMMDD.txt format."""
+        """Log filename should follow YYYY-MM-DD.txt format."""
         service = FTPService()
         
         test_date = date(year, month, day)
         filename = service._get_log_filename(test_date)
         
-        # Should be YYMMDD.txt format
-        expected = f"{year % 100:02d}{month:02d}{day:02d}.txt"
+        # Should be YYYY-MM-DD.txt format
+        expected = f"{year:04d}-{month:02d}-{day:02d}.txt"
         assert filename == expected, f"Expected {expected}, got {filename}"

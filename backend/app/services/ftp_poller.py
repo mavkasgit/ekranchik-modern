@@ -26,6 +26,7 @@ class FTPPoller:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._poll_interval = settings.FTP_POLL_INTERVAL
+        self._wake_event: Optional[asyncio.Event] = None
     
     @property
     def is_running(self) -> bool:
@@ -35,6 +36,7 @@ class FTPPoller:
     async def _poll_loop(self) -> None:
         """Main polling loop."""
         logger.info(f"FTP polling loop started, interval: {self._poll_interval}s")
+        self._wake_event = asyncio.Event()
         
         while self._running:
             try:
@@ -42,12 +44,24 @@ class FTPPoller:
             except Exception as e:
                 logger.error(f"FTP poll error: {e}")
             
-            # Wait for next poll
-            await asyncio.sleep(self._poll_interval)
+            # Use configured interval (default: 15 seconds)
+            interval = self._poll_interval
+            
+            # Wait for interval OR wake event (whichever comes first)
+            self._wake_event.clear()
+            try:
+                await asyncio.wait_for(self._wake_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass  # Normal timeout, continue polling
     
     async def _poll_once(self) -> None:
         """Perform a single poll."""
-        events, date_changed = await ftp_service.poll_incremental()
+        # Skip polling in simulation mode (events loaded all at once)
+        if ftp_service.is_simulation:
+            return
+        
+        # Read multiple days of logs (configured in settings)
+        events, date_changed = await ftp_service.poll_multiday(days=settings.FTP_DAYS_TO_READ)
         
         if date_changed:
             # Notify clients about date rollover
@@ -71,17 +85,18 @@ class FTPPoller:
                     payload={
                         "time": event.time,
                         "hanger": event.hanger,
+                        "date": event.date,
                         "timestamp": event.timestamp.isoformat() if event.timestamp else None
                     },
                     timestamp=datetime.now()
                 )
                 await websocket_manager.broadcast(message)
             
-            logger.info(f"Broadcast {len(events)} FTP events")
+            logger.info(f"Broadcast {len(events)} {'simulation' if ftp_service.is_simulation else 'FTP'} events")
         
         # Update connection status
-        if ftp_service.is_connected:
-            await self._broadcast_status("connected")
+        if ftp_service.is_connected or ftp_service.is_simulation:
+            await self._broadcast_status("connected" if not ftp_service.is_simulation else "simulation")
         else:
             await self._broadcast_status("disconnected")
     
@@ -133,6 +148,9 @@ class FTPPoller:
     async def poll_now(self) -> None:
         """Trigger an immediate poll (for manual refresh)."""
         await self._poll_once()
+        # Wake up the polling loop to use new interval (e.g., when simulation starts)
+        if self._wake_event:
+            self._wake_event.set()
 
 
 # Singleton instance

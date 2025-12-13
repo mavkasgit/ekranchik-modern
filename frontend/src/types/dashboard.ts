@@ -21,6 +21,12 @@ export interface HangerData {
   lamels_qty: number | string
   kpz_number: string
   material_type: string
+  is_defect?: boolean   // True if "брак" in defect column
+  // For realtime unload events - entry/exit times
+  entry_date?: string   // Date when loaded (from Excel)
+  entry_time?: string   // Time when loaded (from Excel)
+  exit_date?: string    // Date when unloaded (from FTP)
+  exit_time?: string    // Time when unloaded (from FTP)
 }
 
 export interface UnloadEvent {

@@ -528,7 +528,7 @@ function ProfileDialog({
                   <h2 className="text-xl font-semibold">{profile?.name}</h2>
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Кол-во на подвеске:</span>
+                      <span className="text-muted-foreground">Кол-во на подвесе:</span>
                       <span className="font-medium">{profile?.quantity_per_hanger ?? '—'}</span>
                     </div>
                     <div className="flex justify-between">
@@ -557,7 +557,7 @@ function ProfileDialog({
                   </div>
                   
                   <div className="space-y-2">
-                    <Label htmlFor="quantity">Кол-во на подвеске</Label>
+                    <Label htmlFor="quantity">Кол-во на подвесе</Label>
                     <Input
                       id="quantity"
                       type="number"

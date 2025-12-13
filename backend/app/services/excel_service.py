@@ -86,15 +86,15 @@ class ExcelService:
                     path, 
                     sheet_name=sheet_name, 
                     skiprows=[0, 1],
-                    usecols=[3, 4, 5, 7, 10, 11, 12, 16, 19],
+                    usecols=[3, 4, 5, 7, 8, 10, 11, 12, 16, 19],
                     engine='calamine'
                 )
                 read_time = time.time() - start_time
                 logger.info(f"[EXCEL READ] {len(df)} rows in {read_time:.2f}s from {path.name} (calamine)")
                 
                 # Rename columns to match expected format
-                df.columns = ['date', 'number', 'time', 'material_type', 'kpz_number', 
-                              'client', 'profile', 'color', 'lamels_qty']
+                df.columns = ['date', 'number', 'time', 'material_type', 'defect',
+                              'kpz_number', 'client', 'profile', 'color', 'lamels_qty']
                 
                 # Remove completely empty rows
                 df = df.dropna(how='all')
@@ -114,11 +114,11 @@ class ExcelService:
                     df = pd.read_excel(
                         path, 
                         skiprows=[0, 1],
-                        usecols=[3, 4, 5, 7, 10, 11, 12, 16, 19],
+                        usecols=[3, 4, 5, 7, 8, 10, 11, 12, 16, 19],
                         engine='openpyxl'
                     )
-                    df.columns = ['date', 'number', 'time', 'material_type', 'kpz_number', 
-                                  'client', 'profile', 'color', 'lamels_qty']
+                    df.columns = ['date', 'number', 'time', 'material_type', 'defect',
+                                  'kpz_number', 'client', 'profile', 'color', 'lamels_qty']
                     df = df.dropna(how='all')
                     df = df[(pd.notna(df['date'])) | (pd.notna(df['number']))]
                     
@@ -228,7 +228,8 @@ class ExcelService:
         limit: int = 100,
         days: int = 7,
         filters: Optional[Dict[str, Any]] = None,
-        from_end: bool = True
+        from_end: bool = True,
+        loading_only: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Get products from Excel with optional filtering.
@@ -238,6 +239,7 @@ class ExcelService:
             days: Number of days to look back
             filters: Optional filters (client, profile, etc.)
             from_end: If True, read last N rows (default); if False, read first N
+            loading_only: If True, only return loading rows (date+material filled, time empty)
         
         Returns:
             List of product dictionaries
@@ -247,10 +249,9 @@ class ExcelService:
             return []
         
         # Get last N rows from the end of the file
+        # Keep original order: oldest first, newest last
         if from_end:
-            df = df.tail(limit)
-            # Reverse to show newest first
-            df = df.iloc[::-1]
+            df = df.tail(limit * 3 if loading_only else limit)  # Get more rows if filtering
         else:
             # Apply date filter only when not reading from end
             if 'date' in df.columns:
@@ -260,7 +261,7 @@ class ExcelService:
                     df = df[df['date'] >= cutoff]
                 except Exception:
                     pass
-            df = df.head(limit)
+            df = df.head(limit * 3 if loading_only else limit)
         
         # Apply additional filters
         if filters:
@@ -269,16 +270,39 @@ class ExcelService:
                     df = df[df[key].astype(str).str.contains(str(value), case=False, na=False)]
         
         # Process and format records
-        records = self._process_dataframe(df)
+        records = self._process_dataframe(df, loading_only=loading_only)
+        
+        # Apply limit after filtering
+        if loading_only and len(records) > limit:
+            records = records[-limit:]  # Take last N (newest)
+        
         return records
     
-    def _process_dataframe(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+    def _process_dataframe(self, df: pd.DataFrame, loading_only: bool = False) -> List[Dict[str, Any]]:
         """
         Process DataFrame and return list of formatted product dicts.
         Handles date/time formatting and lamels parsing.
+        
+        Args:
+            loading_only: If True, only include loading rows (date+material filled, time empty)
         """
         products = []
         for _, row in df.iterrows():
+            date_val = row.get('date')
+            material_type = row.get('material_type')
+            time_val = row.get('time')
+            
+            # For loading_only mode: strict filtering
+            if loading_only:
+                # Date must be filled
+                if pd.isna(date_val) or not date_val:
+                    continue
+                # Material type must be filled
+                if pd.isna(material_type) or not material_type or str(material_type).strip() in ('', '—'):
+                    continue
+                # Time must be EMPTY (this indicates a loading row, not unloading)
+                if pd.notna(time_val) and str(time_val).strip() not in ('', '—', 'nan', 'NaT'):
+                    continue
             # Handle lamels (can be "30+30" or number)
             lamels = row.get('lamels_qty')
             if pd.notna(lamels):
@@ -319,6 +343,13 @@ class ExcelService:
             if pd.isna(profile_name) or not profile_name:
                 profile_name = '—'
             
+            # Check for defect (брак)
+            defect_val = row.get('defect')
+            is_defect = False
+            if pd.notna(defect_val):
+                defect_str = str(defect_val).lower().strip()
+                is_defect = 'брак' in defect_str
+            
             products.append({
                 'number': row.get('number') if pd.notna(row.get('number')) else '—',
                 'date': date_str,
@@ -329,6 +360,7 @@ class ExcelService:
                 'lamels_qty': lamels_display,
                 'kpz_number': row.get('kpz_number') if pd.notna(row.get('kpz_number')) else '—',
                 'material_type': row.get('material_type') if pd.notna(row.get('material_type')) else '—',
+                'is_defect': is_defect,
             })
         
         return products
@@ -361,6 +393,35 @@ class ExcelService:
         
         return df.to_dict('records')
     
+    def get_unloading_products(
+        self,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Get unloading products - rows that have time filled in.
+        
+        "Выгрузка старая" - shows rows where time column is not empty,
+        meaning the product has been unloaded from the line.
+        
+        Args:
+            limit: Maximum number of records
+        
+        Returns:
+            List of product dictionaries with time filled
+        """
+        df = self.get_dataframe(full_dataset=True)
+        if df.empty:
+            return []
+        
+        # Filter: only rows with time (выгрузка = unloaded)
+        df_with_time = df[pd.notna(df['time'])]
+        
+        # Get last N rows (most recent unloads)
+        # Keep original order: oldest first, newest last
+        df_with_time = df_with_time.tail(limit)
+        
+        return self._process_dataframe(df_with_time)
+
     def get_recent_missing_profiles(
         self,
         limit: int = 50,

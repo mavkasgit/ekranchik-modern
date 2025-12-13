@@ -24,13 +24,33 @@ class HangerData(BaseModel):
     lamels_qty: Union[int, str] = Field(default=0, description="Lamels quantity")
     kpz_number: str = Field(default="—", description="KPZ number")
     material_type: str = Field(default="—", description="Material type")
+    is_defect: bool = Field(default=False, description="True if defect/браk")
 
 
 class UnloadEvent(BaseModel):
     """FTP unload event from PLC"""
     time: str = Field(..., description="Event time HH:MM:SS")
     hanger: int = Field(..., ge=0, description="Hanger number")
+    date: Optional[str] = Field(default=None, description="Event date DD.MM.YYYY")
     timestamp: Optional[datetime] = None
+
+
+class MatchedUnloadEvent(BaseModel):
+    """Unload event matched with Excel data"""
+    # From FTP
+    exit_date: str
+    exit_time: str
+    hanger: int
+    # From Excel (if matched)
+    entry_date: Optional[str] = None
+    entry_time: Optional[str] = None
+    client: str = "—"
+    profile: str = "—"
+    profiles_info: List[ProfileInfo] = Field(default_factory=list)
+    color: str = "—"
+    lamels_qty: Union[int, str] = 0
+    kpz_number: str = "—"
+    material_type: str = "—"
 
 
 class DashboardResponse(BaseModel):

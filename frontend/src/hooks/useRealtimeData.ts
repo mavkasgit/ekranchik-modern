@@ -50,7 +50,9 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
           if (message.type === 'data_update') {
             queryClient.invalidateQueries({ queryKey: ['dashboard'] })
           } else if (message.type === 'unload_event') {
+            // Invalidate both old events and new matched events queries
             queryClient.invalidateQueries({ queryKey: ['dashboard', 'events'] })
+            queryClient.invalidateQueries({ queryKey: ['dashboard', 'unload-matched'] })
           }
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e)

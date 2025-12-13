@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { dashboardApi } from '@/api/dashboard'
 
-export function useDashboard(days = 7, limit = 100) {
+export function useDashboard(days = 7, limit = 100, unloadingLimit = 10) {
   return useQuery({
-    queryKey: ['dashboard', days, limit],
-    queryFn: () => dashboardApi.getData(days, limit),
+    queryKey: ['dashboard', days, limit, unloadingLimit],
+    queryFn: () => dashboardApi.getData(days, limit, unloadingLimit),
     refetchInterval: 30000, // Refetch every 30s
   })
 }
@@ -30,5 +30,13 @@ export function useTodayEvents() {
     queryKey: ['dashboard', 'events'],
     queryFn: dashboardApi.getTodayEvents,
     refetchInterval: 60000,
+  })
+}
+
+export function useMatchedUnloadEvents(limit = 100) {
+  return useQuery({
+    queryKey: ['dashboard', 'unload-matched', limit],
+    queryFn: () => dashboardApi.getMatchedUnloadEvents(limit),
+    refetchInterval: 30000, // Refetch every 30s
   })
 }

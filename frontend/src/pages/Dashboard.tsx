@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, ZoomIn, ZoomOut, Loader2
+  Image, Maximize2, Minimize2, X, Loader2, Play, Square
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -24,7 +24,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { useToast } from '@/hooks/use-toast'
 
-import { useDashboard, useFileStatus, useFTPStatus } from '@/hooks/useDashboard'
+import { useDashboard, useFileStatus, useFTPStatus, useMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
 
@@ -51,13 +51,43 @@ const defaultFilters: Filters = {
 function loadFilters(): Filters {
   try {
     const saved = localStorage.getItem(FILTERS_KEY)
-    if (saved) return { ...defaultFilters, ...JSON.parse(saved) }
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      return {
+        ...defaultFilters,
+        ...parsed,
+        // Ensure limits are valid (min 1)
+        loadingLimit: Math.max(1, parsed.loadingLimit || defaultFilters.loadingLimit),
+        unloadingLimit: Math.max(1, parsed.unloadingLimit || defaultFilters.unloadingLimit),
+        realtimeLimit: Math.max(1, parsed.realtimeLimit || defaultFilters.realtimeLimit),
+      }
+    }
   } catch { /* ignore */ }
   return defaultFilters
 }
 
 function saveFilters(filters: Filters) {
   localStorage.setItem(FILTERS_KEY, JSON.stringify(filters))
+}
+
+// Format time without seconds (HH:MM:SS -> HH:MM)
+function formatTime(time: string | undefined): string {
+  if (!time) return '—'
+  const parts = time.split(':')
+  if (parts.length >= 2) return `${parts[0]}:${parts[1]}`
+  return time
+}
+
+// Format date with year 2025 (DD.MM.YY -> DD.MM.2025)
+function formatDate(date: string | undefined): string {
+  if (!date) return '—'
+  // Handle formats like "28.10.25" or "29.11.2025"
+  const parts = date.split('.')
+  if (parts.length === 3) {
+    const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
+    return `${parts[0]}.${parts[1]}.${year}`
+  }
+  return date
 }
 
 // Color mapping - top 15 most used colors
@@ -89,7 +119,16 @@ function getColorHex(colorName: string): string {
   return '#9CA3AF'
 }
 
-// Photo Modal - same as Catalog ProfileDialog view mode
+// Profile data type from catalog
+interface ProfileData {
+  id: number
+  name: string
+  quantity_per_hanger: number | null
+  length: number | null
+  notes: string | null
+}
+
+// Photo Modal - exact copy of Catalog ProfileDialog view mode
 function PhotoModal({
   open,
   onClose,
@@ -102,10 +141,7 @@ function PhotoModal({
   profileName: string
 }) {
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
-  const [zoom, setZoom] = useState(1)
-  const [position, setPosition] = useState({ x: 0, y: 0 })
-  const [isDragging, setIsDragging] = useState(false)
-  const dragStart = useRef({ x: 0, y: 0 })
+  const [profileData, setProfileData] = useState<ProfileData | null>(null)
 
   // Load image dimensions
   useEffect(() => {
@@ -121,77 +157,49 @@ function PhotoModal({
     return () => { img.onload = null }
   }, [photoUrl])
 
+  // Load profile data from catalog API
   useEffect(() => {
-    if (open) {
-      setZoom(1)
-      setPosition({ x: 0, y: 0 })
-    }
-  }, [open])
+    setProfileData(null)
+    if (!open || !profileName) return
+    
+    fetch(`/api/catalog/${encodeURIComponent(profileName)}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setProfileData(data))
+      .catch(() => setProfileData(null))
+  }, [open, profileName])
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault()
-    const delta = e.deltaY > 0 ? -0.2 : 0.2
-    setZoom(z => Math.max(0.5, Math.min(5, z + delta)))
-  }, [])
-
-  const handleDoubleClick = useCallback(() => {
-    if (zoom === 1) {
-      setZoom(2.5)
-    } else {
-      setZoom(1)
-      setPosition({ x: 0, y: 0 })
-    }
-  }, [zoom])
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (zoom > 1) {
-      setIsDragging(true)
-      dragStart.current = { x: e.clientX - position.x, y: e.clientY - position.y }
-    }
-  }, [zoom, position])
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isDragging) {
-      setPosition({
-        x: e.clientX - dragStart.current.x,
-        y: e.clientY - dragStart.current.y,
-      })
-    }
-  }, [isDragging])
-
-  const handleMouseUp = useCallback(() => setIsDragging(false), [])
-
-  // Calculate dialog size based on image dimensions (like Catalog)
+  // Calculate dialog size based on actual image pixels (like Catalog)
   const dialogSize = useMemo(() => {
+    const rightPanelWidth = 280
     const maxDialogHeight = typeof window !== 'undefined' ? window.innerHeight - 100 : 800
     const maxDialogWidth = typeof window !== 'undefined' ? window.innerWidth - 100 : 1200
     const minHeight = 400
-    const minWidth = 500
     
     if (!imageSize) {
-      return { width: minWidth, height: minHeight }
+      return { width: Math.min(900, maxDialogWidth), height: minHeight }
     }
     
     let imgDisplayWidth = imageSize.width
     let imgDisplayHeight = imageSize.height
     
     // Scale down if image is too tall
-    if (imgDisplayHeight > maxDialogHeight - 80) { // 80px for controls
-      const scale = (maxDialogHeight - 80) / imgDisplayHeight
+    if (imgDisplayHeight > maxDialogHeight) {
+      const scale = maxDialogHeight / imgDisplayHeight
       imgDisplayWidth = imgDisplayWidth * scale
-      imgDisplayHeight = imgDisplayHeight * scale
+      imgDisplayHeight = maxDialogHeight
     }
     
-    // Scale down if too wide
-    if (imgDisplayWidth > maxDialogWidth - 40) { // 40px padding
-      const scale = (maxDialogWidth - 40) / imgDisplayWidth
+    // Scale down if dialog would be too wide
+    const dialogWidth = imgDisplayWidth + rightPanelWidth
+    if (dialogWidth > maxDialogWidth) {
+      const scale = (maxDialogWidth - rightPanelWidth) / imgDisplayWidth
       imgDisplayWidth = imgDisplayWidth * scale
       imgDisplayHeight = imgDisplayHeight * scale
     }
     
     return {
-      width: Math.max(minWidth, imgDisplayWidth + 40),
-      height: Math.max(minHeight, imgDisplayHeight + 100) // 100px for controls
+      width: Math.max(600, imgDisplayWidth + rightPanelWidth),
+      height: Math.max(minHeight, imgDisplayHeight)
     }
   }, [imageSize])
 
@@ -200,41 +208,42 @@ function PhotoModal({
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent 
-        className="p-0 gap-0 top-[5%] translate-y-0 bg-background/95 backdrop-blur"
+        className="p-0 gap-0 top-[5%] translate-y-0"
         style={{ width: `${dialogSize.width}px`, height: `${dialogSize.height}px`, maxWidth: 'calc(100vw - 100px)' }}
+        onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        <div
-          className="relative flex flex-col items-center justify-center h-full p-4"
-          onWheel={handleWheel}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-        >
-          <div className="flex-1 flex items-center justify-center overflow-hidden w-full">
-            <img
-              src={photoUrl}
-              alt={profileName}
-              className="max-w-full max-h-full object-contain select-none"
-              style={{
-                transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
-                cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in',
-                transition: isDragging ? 'none' : 'transform 0.15s ease-out',
-              }}
-              onDoubleClick={handleDoubleClick}
-              draggable={false}
-            />
+        <div className="flex h-full">
+          {/* Photo area - left side */}
+          <div className="flex-1 bg-muted flex items-center justify-center overflow-auto relative">
+            <div className="relative w-full h-full flex items-center justify-center select-none">
+              <img 
+                src={photoUrl} 
+                alt={profileName} 
+                className="max-w-full max-h-full object-contain pointer-events-none"
+              />
+            </div>
           </div>
-          <div className="flex items-center justify-between w-full pt-4 border-t mt-4">
-            <span className="text-lg font-medium">{profileName}</span>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => setZoom(z => Math.max(0.5, z - 0.5))}>
-                <ZoomOut className="w-4 h-4" />
-              </Button>
-              <span className="text-sm w-12 text-center">{Math.round(zoom * 100)}%</span>
-              <Button size="sm" variant="outline" onClick={() => setZoom(z => Math.min(5, z + 0.5))}>
-                <ZoomIn className="w-4 h-4" />
-              </Button>
+
+          {/* Right panel - info (like Catalog view mode) */}
+          <div className="border-l bg-background p-4 flex flex-col" style={{ width: '280px' }}>
+            <div className="flex-1 space-y-4 overflow-y-auto">
+              <h2 className="text-xl font-semibold">{profileName}</h2>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Кол-во на подвесе:</span>
+                  <span className="font-medium">{profileData?.quantity_per_hanger ?? '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Длина:</span>
+                  <span className="font-medium">{profileData?.length ? `${profileData.length} мм` : '—'}</span>
+                </div>
+              </div>
+              {profileData?.notes && (
+                <div className="pt-2 border-t">
+                  <span className="text-sm text-muted-foreground">Примечания:</span>
+                  <p className="mt-1 text-sm">{profileData.notes}</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -263,6 +272,9 @@ function PhotoCell({
   if (profilesInfo.length > 0) {
     return (
       <div className="flex flex-wrap gap-2 items-center justify-center" style={{ maxWidth: '800px' }}>
+        {hanger.is_defect && (
+          <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
+        )}
         {profilesInfo.map((prof, idx) => (
           <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} />
         ))}
@@ -273,7 +285,10 @@ function PhotoCell({
   const thumbUrl = getPhotoUrl(hanger.profile_photo_thumb)
   if (thumbUrl) {
     return (
-      <div className="flex items-center justify-center" style={{ maxWidth: '800px' }}>
+      <div className="flex items-center justify-center gap-2" style={{ maxWidth: '800px' }}>
+        {hanger.is_defect && (
+          <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
+        )}
         <img
           src={thumbUrl}
           alt={hanger.profile}
@@ -288,7 +303,10 @@ function PhotoCell({
   }
 
   return (
-    <div className="flex items-center justify-center" style={{ maxWidth: '800px' }}>
+    <div className="flex items-center justify-center gap-2" style={{ maxWidth: '800px' }}>
+      {hanger.is_defect && (
+        <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
+      )}
       <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
         <Image className="w-8 h-8 text-muted-foreground" />
       </div>
@@ -340,7 +358,7 @@ function ProfilePhoto({
 }
 
 // Status bar
-function StatusBar() {
+function StatusBar({ onSimulationToggle, isSimulating }: { onSimulationToggle: () => void, isSimulating: boolean }) {
   const { data: fileStatus } = useFileStatus()
   const { data: ftpStatus } = useFTPStatus()
   const { isConnected } = useRealtimeData()
@@ -388,6 +406,27 @@ function StatusBar() {
             )}
             <span>WS: {isConnected ? 'Онлайн' : 'Офлайн'}</span>
           </div>
+
+          <div className="w-px h-4 bg-border" />
+
+          <Button 
+            variant={isSimulating ? "destructive" : "outline"} 
+            size="sm" 
+            onClick={onSimulationToggle}
+            className="gap-1"
+          >
+            {isSimulating ? (
+              <>
+                <Square className="w-3 h-3" />
+                Стоп симуляции
+              </>
+            ) : (
+              <>
+                <Play className="w-3 h-3" />
+                Симуляция FTP
+              </>
+            )}
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -423,6 +462,7 @@ function DataTable({
   newIds = new Set<string>(),
   isUpdating = false,
   isFullscreen = false,
+  showEntryExit = false,
 }: {
   data: HangerData[]
   onPhotoClick: (url: string, name: string) => void
@@ -430,6 +470,7 @@ function DataTable({
   newIds?: Set<string>
   isUpdating?: boolean
   isFullscreen?: boolean
+  showEntryExit?: boolean
 }) {
   const [progress, setProgress] = useState(0)
   
@@ -473,7 +514,9 @@ function DataTable({
         <TableBody>
           {isUpdating && <UpdateRow progress={progress} />}
           {data.map((hanger, idx) => {
-            const rowId = `${hanger.number}-${hanger.date}-${hanger.time}`
+            const rowId = showEntryExit 
+              ? `${hanger.number}-${hanger.exit_date}-${hanger.exit_time}`
+              : `${hanger.number}-${hanger.date}-${hanger.time}`
             const isNew = highlightNew && newIds.has(rowId)
 
             return (
@@ -481,8 +524,27 @@ function DataTable({
                 key={`${hanger.number}-${idx}`}
                 className={isNew ? 'bg-yellow-500/20 animate-pulse' : idx % 2 === 0 ? 'bg-slate-200 dark:bg-slate-700' : ''}
               >
-                <TableCell className="text-center py-1">{hanger.date}</TableCell>
-                <TableCell className="text-center py-1">{hanger.time}</TableCell>
+                {showEntryExit ? (
+                  <>
+                    <TableCell className="text-center py-1 text-xs">
+                      <div className="flex flex-col">
+                        <span className="text-blue-600 dark:text-blue-400">{formatDate(hanger.entry_date)}</span>
+                        <span className="text-green-600 dark:text-green-400">{formatDate(hanger.exit_date)}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center py-1 text-xs">
+                      <div className="flex flex-col">
+                        <span className="text-blue-600 dark:text-blue-400">{formatTime(hanger.entry_time)}</span>
+                        <span className="text-green-600 dark:text-green-400">{formatTime(hanger.exit_time)}</span>
+                      </div>
+                    </TableCell>
+                  </>
+                ) : (
+                  <>
+                    <TableCell className="text-center py-1">{hanger.date}</TableCell>
+                    <TableCell className="text-center py-1">{hanger.time}</TableCell>
+                  </>
+                )}
                 <TableCell className="text-center font-bold py-1">{hanger.number}</TableCell>
                 <TableCell className="text-center py-1">{hanger.material_type}</TableCell>
                 <TableCell className="text-center py-1">{hanger.kpz_number}</TableCell>
@@ -620,14 +682,14 @@ export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(loadFilters)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
-  const [realtimeData, setRealtimeData] = useState<HangerData[]>([])
-  const [newRowIds, setNewRowIds] = useState<Set<string>>(new Set())
   const [isFileUpdating, setIsFileUpdating] = useState(false)
+  const [isSimulating, setIsSimulating] = useState(false)
   const lastModifiedRef = useRef<string | null>(null)
 
   const { toast } = useToast()
-  const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit)
+  const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, filters.unloadingLimit)
   const { data: fileStatus } = useFileStatus()
+  const { data: matchedEvents, refetch: refetchMatched } = useMatchedUnloadEvents(filters.realtimeLimit)
 
   // Track file changes and auto-refresh
   useEffect(() => {
@@ -654,22 +716,12 @@ export default function Dashboard() {
     }
   }, [fileStatus?.last_modified])
 
+  // Refetch matched events when new unload event arrives
   useRealtimeData({
     onMessage: (msg) => {
-      if (msg.type === 'unload_event' && msg.payload) {
-        const newHanger = msg.payload as unknown as HangerData
-        const rowId = `${newHanger.number}-${newHanger.date}-${newHanger.time}`
-
-        setRealtimeData(prev => [newHanger, ...prev].slice(0, filters.realtimeLimit))
-
-        setNewRowIds(prev => new Set([...prev, rowId]))
-        setTimeout(() => {
-          setNewRowIds(prev => {
-            const next = new Set(prev)
-            next.delete(rowId)
-            return next
-          })
-        }, 5000)
+      if (msg.type === 'unload_event') {
+        // New unload event - refetch matched data
+        refetchMatched()
       }
     }
   })
@@ -695,6 +747,67 @@ export default function Dashboard() {
   const handlePhotoClick = useCallback((url: string, name: string) => {
     setPhotoModal({ url, name })
   }, [])
+
+  // Track new events for highlighting
+  const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set())
+  const prevEventIdsRef = useRef<Set<string>>(new Set())
+
+  const toggleSimulation = useCallback(async () => {
+    try {
+      const { dashboardApi } = await import('@/api/dashboard')
+      if (isSimulating) {
+        await dashboardApi.stopSimulation()
+        setIsSimulating(false)
+        setNewEventIds(new Set())
+        prevEventIdsRef.current = new Set()
+        toast({ title: '⏹ Симуляция остановлена' })
+      } else {
+        await dashboardApi.startSimulation()
+        setIsSimulating(true)
+        setNewEventIds(new Set())
+        prevEventIdsRef.current = new Set()
+        toast({ title: '▶️ Симуляция запущена', description: 'События FTP будут появляться в таблице Выгрузка' })
+        // Start polling for updates during simulation
+        setTimeout(() => refetchMatched(), 1000)
+      }
+    } catch (e) {
+      toast({ title: 'Ошибка симуляции', variant: 'destructive' })
+    }
+  }, [isSimulating, toast, refetchMatched])
+  
+  // Track new events when matchedEvents changes
+  useEffect(() => {
+    if (!matchedEvents || !isSimulating) return
+    
+    const currentIds = new Set(
+      matchedEvents.map(e => `${e.hanger}-${e.exit_date}-${e.exit_time}`)
+    )
+    
+    // Find new IDs that weren't in previous set
+    const newIds = new Set<string>()
+    currentIds.forEach(id => {
+      if (!prevEventIdsRef.current.has(id)) {
+        newIds.add(id)
+      }
+    })
+    
+    if (newIds.size > 0) {
+      setNewEventIds(newIds)
+      // Clear highlight after 3 seconds
+      setTimeout(() => setNewEventIds(new Set()), 3000)
+    }
+    
+    prevEventIdsRef.current = currentIds
+  }, [matchedEvents, isSimulating])
+  
+  // Poll more frequently during simulation
+  useEffect(() => {
+    if (!isSimulating) return
+    const interval = setInterval(() => {
+      refetchMatched()
+    }, 2000) // Every 2 seconds during simulation
+    return () => clearInterval(interval)
+  }, [isSimulating, refetchMatched])
 
   return (
     <div className={`${isFullscreen ? 'p-0' : 'container mx-auto p-6 space-y-4'}`}>
@@ -725,7 +838,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!isFullscreen && <StatusBar />}
+      {!isFullscreen && <StatusBar onSimulationToggle={toggleSimulation} isSimulating={isSimulating} />}
 
       {!isFullscreen && (
         <FiltersPanel
@@ -757,10 +870,32 @@ export default function Dashboard() {
         {filters.showRealtime && (
           <Card className="border-l-4 border-l-green-500">
             <CardContent className="p-0">
-              {realtimeData.length > 0 ? (
-                <DataTable data={realtimeData} onPhotoClick={handlePhotoClick} highlightNew newIds={newRowIds} isFullscreen={isFullscreen} />
+              {matchedEvents && matchedEvents.length > 0 ? (
+                <DataTable 
+                  data={matchedEvents.map(e => ({
+                    number: String(e.hanger),
+                    date: e.exit_date,
+                    time: e.exit_time,
+                    client: e.client,
+                    profile: e.profile,
+                    profiles_info: e.profiles_info,
+                    color: e.color,
+                    lamels_qty: e.lamels_qty,
+                    kpz_number: e.kpz_number,
+                    material_type: e.material_type,
+                    entry_date: e.entry_date,
+                    entry_time: e.entry_time,
+                    exit_date: e.exit_date,
+                    exit_time: e.exit_time,
+                  }))} 
+                  onPhotoClick={handlePhotoClick} 
+                  isFullscreen={isFullscreen}
+                  showEntryExit
+                  highlightNew
+                  newIds={newEventIds}
+                />
               ) : (
-                <div className="p-8 text-center text-muted-foreground">Ожидание событий...</div>
+                <div className="p-8 text-center text-muted-foreground">Нет событий выгрузки</div>
               )}
             </CardContent>
           </Card>
