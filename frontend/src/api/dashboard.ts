@@ -51,8 +51,8 @@ export const dashboardApi = {
 export interface SimulationStatus {
   active: boolean
   file_path?: string
-  current_line: number
-  total_lines: number
+  current_event: number
+  total_events: number
   progress_percent: number
 }
 

@@ -1,0 +1,6 @@
+# Launcher dependencies
+customtkinter>=5.2.0
+Pillow>=10.0.0
+pystray>=0.19.0
+python-dotenv>=1.0.0
+pyinstaller>=6.0.0

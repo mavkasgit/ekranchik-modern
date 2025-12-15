@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Search, Image, Camera, Copy } from 'lucide-react'
+import { Search, Image, Camera, Copy, ImageOff, Clock, AlertCircle } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -286,11 +286,11 @@ function DuplicatesTab() {
 export default function Analysis() {
   const [activeTab, setActiveTab] = useState<TabType>('missing')
 
-  const tabs: { id: TabType; label: string }[] = [
-    { id: 'missing', label: 'Без фото' },
-    { id: 'recent', label: 'Недавние' },
-    { id: 'recentMissing', label: 'Недавние без фото' },
-    { id: 'duplicates', label: 'Дубликаты' },
+  const tabs: { id: TabType; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: 'missing', label: 'Без фото', icon: ImageOff },
+    { id: 'recent', label: 'Недавние', icon: Clock },
+    { id: 'recentMissing', label: 'Недавние без фото', icon: AlertCircle },
+    { id: 'duplicates', label: 'Дубликаты', icon: Copy },
   ]
 
   return (
@@ -307,6 +307,7 @@ export default function Analysis() {
                 size="sm"
                 onClick={() => setActiveTab(tab.id)}
               >
+                <tab.icon className="w-4 h-4 mr-2" />
                 {tab.label}
               </Button>
             ))}

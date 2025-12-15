@@ -2,11 +2,14 @@
 Dashboard API routes.
 """
 import re
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 
 from app.services.excel_service import excel_service
@@ -485,7 +488,11 @@ async def start_simulation(request: SimulationRequest = None):
 @router.post("/simulation/stop", response_model=SimulationStatus)
 async def stop_simulation():
     """Stop FTP simulation mode."""
-    ftp_service.stop_simulation()
+    try:
+        ftp_service.stop_simulation()
+    except Exception as e:
+        logger.error(f"Error stopping simulation: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to stop simulation: {str(e)}")
     
     return SimulationStatus(
         active=False,
@@ -510,3 +517,58 @@ async def get_simulation_status():
         total_events=total,
         progress_percent=100
     )
+
+
+# === FTP Poller Control ===
+
+class PollerStatus(BaseModel):
+    """FTP Poller status response."""
+    running: bool
+    interval: int = 15
+
+
+@router.get("/poller/status", response_model=PollerStatus)
+async def get_poller_status():
+    """Get FTP poller status."""
+    return PollerStatus(
+        running=ftp_poller.is_running,
+        interval=ftp_poller._poll_interval
+    )
+
+
+@router.post("/poller/start", response_model=PollerStatus)
+async def start_poller():
+    """Start FTP poller."""
+    if not ftp_poller.is_running:
+        await ftp_poller.start()
+        logger.info("[FTP] Poller started via API")
+    return PollerStatus(
+        running=ftp_poller.is_running,
+        interval=ftp_poller._poll_interval
+    )
+
+
+@router.post("/poller/stop", response_model=PollerStatus)
+async def stop_poller():
+    """Stop FTP poller."""
+    if ftp_poller.is_running:
+        await ftp_poller.stop()
+        logger.info("[FTP] Poller stopped via API")
+    return PollerStatus(
+        running=ftp_poller.is_running,
+        interval=ftp_poller._poll_interval
+    )
+
+
+@router.post("/poller/poll-now")
+async def poll_now(background_tasks: BackgroundTasks):
+    """Trigger immediate FTP poll (non-blocking)."""
+    import asyncio
+    
+    async def do_poll():
+        await ftp_poller.poll_now()
+    
+    # Запускаем в фоне, не ждём
+    asyncio.create_task(do_poll())
+    logger.info("[FTP] Manual poll triggered via API")
+    return {"status": "ok", "message": "Poll triggered"}

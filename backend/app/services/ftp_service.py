@@ -39,6 +39,9 @@ class FTPService:
         self._simulation_position: int = 0
         self._simulation_lines: List[str] = []
         self._simulation_line_index: int = 0
+        self._simulation_events: List[UnloadEvent] = []
+        self._simulation_event_index: int = 0
+        self._simulation_date: Optional[date] = None
     
     @property
     def is_connected(self) -> bool:

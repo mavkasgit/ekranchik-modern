@@ -35,17 +35,18 @@ class FTPPoller:
     
     async def _poll_loop(self) -> None:
         """Main polling loop."""
-        logger.info(f"FTP polling loop started, interval: {self._poll_interval}s")
+        logger.info(f"[FTP] Polling loop started, interval: {self._poll_interval}s")
         self._wake_event = asyncio.Event()
         
         while self._running:
             try:
                 await self._poll_once()
             except Exception as e:
-                logger.error(f"FTP poll error: {e}")
+                logger.error(f"[FTP] Poll error: {e}")
             
             # Use configured interval (default: 15 seconds)
             interval = self._poll_interval
+            logger.info(f"[FTP] Next poll in {interval}s...")
             
             # Wait for interval OR wake event (whichever comes first)
             self._wake_event.clear()
@@ -58,10 +59,15 @@ class FTPPoller:
         """Perform a single poll."""
         # Skip polling in simulation mode (events loaded all at once)
         if ftp_service.is_simulation:
+            logger.debug("[FTP] Skipping poll - simulation mode active")
             return
+        
+        logger.info(f"[FTP] Polling FTP server {settings.FTP_HOST}...")
         
         # Read multiple days of logs (configured in settings)
         events, date_changed = await ftp_service.poll_multiday(days=settings.FTP_DAYS_TO_READ)
+        
+        logger.info(f"[FTP] Poll complete: {len(events) if events else 0} new events, connected={ftp_service.is_connected}")
         
         if date_changed:
             # Notify clients about date rollover

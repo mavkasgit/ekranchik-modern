@@ -771,7 +771,13 @@ export default function Dashboard() {
         setTimeout(() => refetchMatched(), 1000)
       }
     } catch (e) {
-      toast({ title: 'Ошибка симуляции', variant: 'destructive' })
+      const errorMessage = e instanceof Error ? e.message : 'Неизвестная ошибка'
+      console.error('Simulation error:', e)
+      toast({ 
+        title: 'Ошибка симуляции', 
+        description: errorMessage,
+        variant: 'destructive' 
+      })
     }
   }, [isSimulating, toast, refetchMatched])
   

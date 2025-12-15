@@ -23,6 +23,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Отключаем спам логов от сетевых библиотек
+for noisy_logger in [
+    "aioftp", "aioftp.client", "aioftp.server",
+    "asyncio", "aiohttp", "aiohttp.access",
+    "httpcore", "httpx",
+    "websockets", "websockets.client", "websockets.server",
+    "uvicorn", "uvicorn.access", "uvicorn.error",
+    "watchfiles", "watchfiles.main",
+]:
+    logging.getLogger(noisy_logger).setLevel(logging.ERROR)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,12 +52,8 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("[STARTUP] Excel path not configured, ExcelWatcher not started")
     
-    # Start FTPPoller
-    if settings.FTP_HOST:
-        await ftp_poller.start()
-        logger.info("[STARTUP] FTPPoller started")
-    else:
-        logger.warning("[STARTUP] FTP not configured, FTPPoller not started")
+    # FTPPoller НЕ запускается автоматически - управляется через API
+    logger.info("[STARTUP] FTPPoller ready (start via API: POST /api/dashboard/poller/start)")
     
     yield
     
