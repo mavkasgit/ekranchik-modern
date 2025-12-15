@@ -31,11 +31,20 @@ except ImportError as e:
     HAS_TRAY = False
     print(f"GUI недоступен: {e}")
 
-# Настройки
-BASE_DIR = Path(__file__).parent.parent
+# Настройки - определяем пути с учётом PyInstaller
+if getattr(sys, 'frozen', False):
+    # Запуск из EXE - ищем относительно exe файла
+    _exe_dir = Path(sys.executable).parent
+    # EXE в launcher/dist/, проект в launcher/../
+    BASE_DIR = _exe_dir.parent.parent
+    THEME_PATH = Path(sys._MEIPASS) / "theme.json"
+else:
+    # Обычный запуск
+    BASE_DIR = Path(__file__).parent.parent
+    THEME_PATH = Path(__file__).parent / "theme.json"
+
 BACKEND_DIR = BASE_DIR / "backend"
 FRONTEND_DIR = BASE_DIR / "frontend"
-THEME_PATH = Path(__file__).parent / "theme.json"
 
 # Команды запуска
 BACKEND_CMD = [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -194,6 +203,17 @@ class ProcessManager:
 
 
 if HAS_GUI:
+    # Добавляем путь для PyInstaller
+    import sys
+    if getattr(sys, 'frozen', False):
+        # Запуск из EXE
+        _base_path = sys._MEIPASS
+    else:
+        _base_path = Path(__file__).parent
+    
+    if str(_base_path) not in sys.path:
+        sys.path.insert(0, str(_base_path))
+    
     from icons import (
         get_ctk_image, get_status_image,
         icon_play, icon_stop, icon_restart, icon_copy, icon_trash,
