@@ -233,15 +233,27 @@ class FTPService:
         
         for day_offset in range(days):
             file_date = today - timedelta(days=day_offset)
-            try:
-                content = await self.read_log_for_date(file_date)
-                if content:
-                    # Устанавливаем дату для парсера
-                    self._current_parse_date = file_date.strftime("%d.%m.%Y")
-                    events = self.parse_unload_events_cj2m(content)
-                    all_events.extend(events)
-            except Exception as e:
-                logger.error(f"[FTP] Error reading log for {file_date}: {e}")
+            # Try up to 3 times for each file (in case of "busy")
+            for attempt in range(3):
+                try:
+                    content = await self.read_log_for_date(file_date)
+                    if content:
+                        # Устанавливаем дату для парсера
+                        self._current_parse_date = file_date.strftime("%d.%m.%Y")
+                        events = self.parse_unload_events_cj2m(content)
+                        all_events.extend(events)
+                        logger.debug(f"[FTP] Read {len(events)} events for {file_date}")
+                        break  # Success, move to next file
+                    else:
+                        # Empty content, might be busy - retry
+                        if attempt < 2:
+                            logger.warning(f"[FTP] Empty content for {file_date}, retry {attempt + 1}/3")
+                            await asyncio.sleep(0.5)
+                        continue
+                except Exception as e:
+                    logger.error(f"[FTP] Error reading log for {file_date}: {e}")
+                    if attempt < 2:
+                        await asyncio.sleep(0.5)
         
         if all_events:
             logger.info(f"[FTP] Read {len(all_events)} events from {days} days")
