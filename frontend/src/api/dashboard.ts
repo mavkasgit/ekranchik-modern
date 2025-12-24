@@ -46,6 +46,42 @@ export const dashboardApi = {
     const { data } = await api.get<SimulationStatus>('/dashboard/simulation/status')
     return data
   },
+
+  // Debug API
+  getDebugRawData: async (limit = 100): Promise<DebugRawData> => {
+    const { data } = await api.get<DebugRawData>('/dashboard/debug/raw-data', {
+      params: { limit },
+    })
+    return data
+  },
+}
+
+export interface DebugRawData {
+  ftp: {
+    source: string
+    total_cached: number
+    showing: number
+    events: Array<{
+      date: string
+      time: string
+      hanger: number
+      timestamp: string | null
+    }>
+  }
+  excel: {
+    total: number
+    showing: number
+    products: Array<{
+      date: string
+      time: string
+      number: string
+      client: string
+      profile: string
+      color: string
+    }>
+  }
+  today: string
+  note: string
 }
 
 export interface SimulationStatus {

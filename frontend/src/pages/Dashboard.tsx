@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, Loader2, Play, Square
+  Image, Maximize2, Minimize2, X, Loader2, Play, Square, Bug
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -27,6 +27,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useDashboard, useFileStatus, useFTPStatus, useMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
+import { dashboardApi, type DebugRawData } from '@/api/dashboard'
 
 const FILTERS_KEY = 'ekranchik_filters'
 
@@ -358,7 +359,7 @@ function ProfilePhoto({
 }
 
 // Status bar
-function StatusBar({ onSimulationToggle, isSimulating }: { onSimulationToggle: () => void, isSimulating: boolean }) {
+function StatusBar({ onSimulationToggle, isSimulating, onDebugClick }: { onSimulationToggle: () => void, isSimulating: boolean, onDebugClick: () => void }) {
   const { data: fileStatus } = useFileStatus()
   const { data: ftpStatus } = useFTPStatus()
   const { isConnected } = useRealtimeData()
@@ -427,9 +428,143 @@ function StatusBar({ onSimulationToggle, isSimulating }: { onSimulationToggle: (
               </>
             )}
           </Button>
+
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={onDebugClick}
+            className="gap-1"
+          >
+            <Bug className="w-3 h-3" />
+            DEBUG
+          </Button>
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+// Debug Modal
+function DebugModal({ open, onClose }: { open: boolean, onClose: () => void }) {
+  const [data, setData] = useState<DebugRawData | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (open) {
+      setLoading(true)
+      setError(null)
+      dashboardApi.getDebugRawData(50)
+        .then(setData)
+        .catch(e => setError(e.message))
+        .finally(() => setLoading(false))
+    }
+  }, [open])
+
+  const refresh = () => {
+    setLoading(true)
+    setError(null)
+    dashboardApi.getDebugRawData(50)
+      .then(setData)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-hidden p-0">
+        <div className="p-4 border-b flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h2 className="text-lg font-bold">🔧 DEBUG: Сырые данные</h2>
+            {data && <Badge>Сегодня: {data.today}</Badge>}
+          </div>
+          <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+            <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+            Обновить
+          </Button>
+        </div>
+        
+        {loading && (
+          <div className="p-8 text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+            Загрузка...
+          </div>
+        )}
+        
+        {error && (
+          <div className="p-8 text-center text-red-500">
+            Ошибка: {error}
+          </div>
+        )}
+        
+        {data && !loading && (
+          <div className="flex gap-4 p-4 overflow-auto max-h-[calc(90vh-80px)]">
+            {/* FTP Events */}
+            <div className="flex-1 min-w-[400px]">
+              <div className="mb-2 flex items-center gap-2">
+                <h3 className="font-bold text-green-600">📡 FTP События</h3>
+                <Badge variant="outline">{data.ftp.source}</Badge>
+                <Badge>{data.ftp.showing} / {data.ftp.total_cached}</Badge>
+              </div>
+              <div className="border rounded max-h-[60vh] overflow-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-muted">
+                    <TableRow>
+                      <TableHead className="text-xs py-1">Дата</TableHead>
+                      <TableHead className="text-xs py-1">Время</TableHead>
+                      <TableHead className="text-xs py-1">№ Подв</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.ftp.events.map((e, i) => (
+                      <TableRow key={i} className={i % 2 === 0 ? 'bg-green-50 dark:bg-green-950' : ''}>
+                        <TableCell className="text-xs py-1 font-mono">{e.date}</TableCell>
+                        <TableCell className="text-xs py-1 font-mono">{e.time}</TableCell>
+                        <TableCell className="text-xs py-1 font-bold">{e.hanger}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            {/* Excel Products */}
+            <div className="flex-1 min-w-[500px]">
+              <div className="mb-2 flex items-center gap-2">
+                <h3 className="font-bold text-blue-600">📊 Excel Записи</h3>
+                <Badge>{data.excel.showing} / {data.excel.total}</Badge>
+              </div>
+              <div className="border rounded max-h-[60vh] overflow-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-muted">
+                    <TableRow>
+                      <TableHead className="text-xs py-1">Дата</TableHead>
+                      <TableHead className="text-xs py-1">Время</TableHead>
+                      <TableHead className="text-xs py-1">№</TableHead>
+                      <TableHead className="text-xs py-1">Клиент</TableHead>
+                      <TableHead className="text-xs py-1">Профиль</TableHead>
+                      <TableHead className="text-xs py-1">Цвет</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.excel.products.map((p, i) => (
+                      <TableRow key={i} className={i % 2 === 0 ? 'bg-blue-50 dark:bg-blue-950' : ''}>
+                        <TableCell className="text-xs py-1 font-mono">{p.date}</TableCell>
+                        <TableCell className="text-xs py-1 font-mono">{p.time}</TableCell>
+                        <TableCell className="text-xs py-1 font-bold">{p.number}</TableCell>
+                        <TableCell className="text-xs py-1 truncate max-w-[100px]">{p.client}</TableCell>
+                        <TableCell className="text-xs py-1 truncate max-w-[120px]">{p.profile}</TableCell>
+                        <TableCell className="text-xs py-1">{p.color}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -684,6 +819,7 @@ export default function Dashboard() {
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
   const [isFileUpdating, setIsFileUpdating] = useState(false)
   const [isSimulating, setIsSimulating] = useState(false)
+  const [showDebug, setShowDebug] = useState(false)
   const lastModifiedRef = useRef<string | null>(null)
 
   const { toast } = useToast()
@@ -844,7 +980,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!isFullscreen && <StatusBar onSimulationToggle={toggleSimulation} isSimulating={isSimulating} />}
+      {!isFullscreen && <StatusBar onSimulationToggle={toggleSimulation} isSimulating={isSimulating} onDebugClick={() => setShowDebug(true)} />}
 
       {!isFullscreen && (
         <FiltersPanel
@@ -926,6 +1062,8 @@ export default function Dashboard() {
         photoUrl={photoModal?.url || null}
         profileName={photoModal?.name || ''}
       />
+
+      <DebugModal open={showDebug} onClose={() => setShowDebug(false)} />
     </div>
   )
 }
