@@ -460,7 +460,7 @@ function DebugModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         const data = await dashboardApi.getDebugRawData(50)
         setRawData(data)
       } else {
-        const data = await dashboardApi.getDebugMatching(30)
+        const data = await dashboardApi.getDebugMatching(15)
         setMatchData(data)
       }
     } catch (e) {

@@ -695,7 +695,7 @@ async def get_debug_raw_data(
 
 @router.get("/debug/matching")
 async def get_debug_matching(
-    limit: int = Query(default=30, ge=1, le=100, description="Number of events to match")
+    limit: int = Query(default=20, ge=1, le=50, description="Number of events to match")
 ):
     """
     DEBUG: Show matching process step by step.
@@ -722,8 +722,8 @@ async def get_debug_matching(
                 "error": "No FTP events in cache"
             }
         
-        # Get Excel products
-        products = excel_service.get_products(limit=1000, days=30)
+        # Get Excel products - only last 3 days, limit 500
+        products = excel_service.get_products(limit=500, days=3)
         
         if not products:
             return {
