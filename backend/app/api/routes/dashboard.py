@@ -629,3 +629,65 @@ async def poll_now(background_tasks: BackgroundTasks):
     asyncio.create_task(do_poll())
     logger.info("[FTP] Manual poll triggered via API")
     return {"status": "ok", "message": "Poll triggered"}
+
+
+# ==================== DEBUG ENDPOINTS ====================
+
+@router.get("/debug/raw-data")
+async def get_debug_raw_data(
+    limit: int = Query(default=100, ge=1, le=500, description="Number of records")
+):
+    """
+    DEBUG: Get raw FTP events and Excel data for comparison.
+    Shows last N records from both sources sorted by date/time (newest first).
+    """
+    from datetime import date
+    
+    # Get FTP events (from cache or simulation)
+    if ftp_service.is_simulation:
+        ftp_events = ftp_service.get_all_simulation_events()
+        ftp_source = "simulation"
+    else:
+        ftp_events = ftp_poller.cached_events
+        ftp_source = "ftp_cache"
+    
+    # Get Excel products
+    excel_products = excel_service.get_products(limit=limit, days=7)
+    
+    # Format FTP events (newest first)
+    ftp_data = []
+    for e in reversed(ftp_events[-limit:]):
+        ftp_data.append({
+            "date": e.date,
+            "time": e.time,
+            "hanger": e.hanger,
+            "timestamp": e.timestamp.isoformat() if e.timestamp else None
+        })
+    
+    # Format Excel data (already sorted by date desc in service)
+    excel_data = []
+    for p in excel_products[:limit]:
+        excel_data.append({
+            "date": p.get('date', ''),
+            "time": p.get('time', ''),
+            "number": p.get('number', ''),
+            "client": p.get('client', ''),
+            "profile": p.get('profile', ''),
+            "color": p.get('color', ''),
+        })
+    
+    return {
+        "ftp": {
+            "source": ftp_source,
+            "total_cached": len(ftp_events),
+            "showing": len(ftp_data),
+            "events": ftp_data
+        },
+        "excel": {
+            "total": len(excel_products),
+            "showing": len(excel_data),
+            "products": excel_data
+        },
+        "today": date.today().strftime("%d.%m.%Y"),
+        "note": "FTP events sorted newest first, Excel products sorted by date desc"
+    }
