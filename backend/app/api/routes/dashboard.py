@@ -358,29 +358,85 @@ async def get_matched_unload_events(
                 pass
             return (0, 0, 0)
         
-        # Match events with products
+        def parse_time(time_str: str) -> tuple:
+            """Parse HH:MM:SS or HH:MM to (hour, minute, second) tuple."""
+            if not time_str:
+                return (0, 0, 0)
+            try:
+                parts = time_str.split(':')
+                hour = int(parts[0]) if len(parts) > 0 else 0
+                minute = int(parts[1]) if len(parts) > 1 else 0
+                second = int(parts[2]) if len(parts) > 2 else 0
+                return (hour, minute, second)
+            except:
+                pass
+            return (0, 0, 0)
+        
+        def date_to_days(date_tuple: tuple) -> int:
+            """Convert date tuple to days for comparison."""
+            year, month, day = date_tuple
+            return year * 365 + month * 30 + day
+        
+        def datetime_to_seconds(date_tuple: tuple, time_tuple: tuple) -> float:
+            """Convert date+time to total seconds for comparison."""
+            days = date_to_days(date_tuple)
+            secs = time_tuple[0] * 3600 + time_tuple[1] * 60 + time_tuple[2]
+            return days * 86400 + secs
+        
+        def make_product_key(p: dict) -> str:
+            """Create unique key for product to track used entries."""
+            return f"{p.get('date', '')}|{p.get('time', '')}|{p.get('number', '')}"
+        
+        # Track used entries to avoid matching same entry twice
+        used_entries: set = set()
+        
+        # Sort events by time (oldest first) for greedy matching
+        events_to_match = sorted(
+            events[-limit:],
+            key=lambda e: datetime_to_seconds(
+                parse_date(e.date or event_date or ""),
+                parse_time(e.time)
+            )
+        )
+        
+        # Match events with products (greedy: oldest exit first)
         matched = []
-        for event in events[-limit:]:  # Take last N events (newest)
+        for event in events_to_match:
             hanger_num = str(event.hanger)
             candidates = products_by_hanger.get(hanger_num, [])
             
-            # Find best match: entry_date <= exit_date, closest to exit_date
+            # Find best match: closest entry to exit (in both directions within 2 days)
             exit_date_tuple = parse_date(event.date or event_date or "")
+            exit_time_tuple = parse_time(event.time)
+            exit_seconds = datetime_to_seconds(exit_date_tuple, exit_time_tuple)
+            
             product = None
             best_diff = None
             
             for p in candidates:
+                # Skip already used entries
+                p_key = make_product_key(p)
+                if p_key in used_entries:
+                    continue
+                
                 entry_date_tuple = parse_date(str(p.get('date', '')))
-                if entry_date_tuple <= exit_date_tuple:
-                    # Calculate difference (smaller is better)
-                    diff = (
-                        (exit_date_tuple[0] - entry_date_tuple[0]) * 365 +
-                        (exit_date_tuple[1] - entry_date_tuple[1]) * 30 +
-                        (exit_date_tuple[2] - entry_date_tuple[2])
-                    )
-                    if best_diff is None or diff < best_diff:
-                        best_diff = diff
-                        product = p
+                entry_time_tuple = parse_time(str(p.get('time', '')))
+                entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
+                
+                # Calculate absolute difference in seconds
+                diff = abs(exit_seconds - entry_seconds)
+                
+                # Skip if more than 2 days apart
+                if diff > 2 * 86400:
+                    continue
+                
+                if best_diff is None or diff < best_diff:
+                    best_diff = diff
+                    product = p
+            
+            # Mark entry as used
+            if product:
+                used_entries.add(make_product_key(product))
             
             # Build profiles_info
             profiles_info = []
