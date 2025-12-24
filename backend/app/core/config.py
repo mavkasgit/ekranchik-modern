@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     FTP_USER: str = "omron"
     FTP_PASSWORD: str = "12345678"
     FTP_BASE_PATH: str = "/MEMCARD1/messages/"
-    FTP_POLL_INTERVAL: int = 15  # Seconds between polls
+    FTP_POLL_INTERVAL: int = 30  # Seconds between polls (PLC needs time)
     FTP_DAYS_TO_READ: int = 2  # Number of days to read (today + yesterday)
     
     # Telegram Bot

@@ -226,6 +226,8 @@ class FTPService:
         Читает логи за N дней и возвращает все события.
         Прошлые дни кешируются (они не меняются).
         Только сегодняшний файл читается каждый раз.
+        
+        Агрессивный retry: 5 попыток с увеличивающимися паузами.
         """
         today = date.today()
         date_changed = False
@@ -233,11 +235,14 @@ class FTPService:
         if self._last_date and self._last_date != today:
             logger.info(f"[FTP] Date changed: {self._last_date} -> {today}")
             date_changed = True
-            # При смене дня очищаем кеш (вчерашний "сегодня" теперь прошлый день)
             self._past_days_cache.clear()
         
         self._last_date = today
         all_events = []
+        
+        # Retry delays: 2, 3, 4, 5, 6 seconds (increasing)
+        RETRY_DELAYS = [2.0, 3.0, 4.0, 5.0, 6.0]
+        MAX_ATTEMPTS = len(RETRY_DELAYS) + 1  # 6 attempts total
         
         for day_offset in range(days):
             file_date = today - timedelta(days=day_offset)
@@ -246,40 +251,44 @@ class FTPService:
             if file_date < today and file_date in self._past_days_cache:
                 cached_events = self._past_days_cache[file_date]
                 all_events.extend(cached_events)
-                logger.debug(f"[FTP] Cache hit for {file_date}: {len(cached_events)} events")
                 continue
             
-            # Читаем файл (сегодня - всегда, прошлые - если нет в кеше)
-            for attempt in range(3):
+            # Читаем файл с агрессивным retry
+            success = False
+            for attempt in range(MAX_ATTEMPTS):
                 try:
+                    # Disconnect before each attempt for fresh connection
+                    await self.disconnect()
+                    
+                    # Wait before retry (except first attempt)
+                    if attempt > 0:
+                        delay = RETRY_DELAYS[attempt - 1]
+                        logger.info(f"[FTP] Retry {attempt}/{MAX_ATTEMPTS-1} for {file_date}, waiting {delay}s...")
+                        await asyncio.sleep(delay)
+                    
                     content = await self.read_log_for_date(file_date)
                     if content:
                         self._current_parse_date = file_date.strftime("%d.%m.%Y")
                         events = self.parse_unload_events_cj2m(content)
                         all_events.extend(events)
                         
-                        # Кешируем прошлые дни
                         if file_date < today:
                             self._past_days_cache[file_date] = events
                             logger.info(f"[FTP] Cached {len(events)} events for {file_date}")
                         else:
                             logger.info(f"[FTP] Read {len(events)} events for {file_date} (today)")
+                        success = True
                         break
                     else:
-                        if attempt < 2:
-                            logger.warning(f"[FTP] Empty content for {file_date}, retry {attempt + 1}/3")
-                            await self.disconnect()
-                            await asyncio.sleep(2.5)
-                        continue
+                        logger.warning(f"[FTP] Empty content for {file_date} (attempt {attempt + 1}/{MAX_ATTEMPTS})")
                 except Exception as e:
-                    logger.error(f"[FTP] Error reading log for {file_date}: {e}")
-                    await self.disconnect()
-                    if attempt < 2:
-                        await asyncio.sleep(2.5)
+                    logger.error(f"[FTP] Error reading {file_date}: {e}")
             
-            # Закрываем соединение после каждого файла
+            if not success:
+                logger.error(f"[FTP] Failed to read {file_date} after {MAX_ATTEMPTS} attempts")
+            
+            # Disconnect after each file
             await self.disconnect()
-            await asyncio.sleep(0.5)
         
         if all_events:
             logger.info(f"[FTP] Total: {len(all_events)} events from {days} days")
