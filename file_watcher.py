@@ -13,6 +13,37 @@ from typing import List, NamedTuple, Optional, Tuple
 from enum import Enum
 
 
+def load_env_file():
+    """Загружает переменные из .env файла (backend/.env)."""
+    env_paths = [
+        Path("backend/.env"),
+        Path(".env"),
+        Path(__file__).parent / "backend" / ".env",
+    ]
+    
+    for env_path in env_paths:
+        if env_path.exists():
+            try:
+                with open(env_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#') and '=' in line:
+                            key, _, value = line.partition('=')
+                            key = key.strip()
+                            value = value.strip().strip('"').strip("'")
+                            # Не перезаписываем если уже есть в окружении
+                            if key not in os.environ:
+                                os.environ[key] = value
+                return True
+            except Exception:
+                pass
+    return False
+
+
+# Загружаем .env при импорте
+load_env_file()
+
+
 class FileStatus(Enum):
     OK = "ok"
     NOT_FOUND = "not_found"
@@ -333,24 +364,28 @@ def watch_file(file_path: str, count: int = 10, interval: float = 2.0):
 
 
 def main():
-    # Дефолтные значения
-    default_dir = "testdata/ftp"
+    # Загружаем дефолты из .env
+    default_dir = os.environ.get("FTP_LOG_DIR", "testdata/ftp")
     count = 10
-    interval = 2.0
+    interval = float(os.environ.get("FTP_POLL_INTERVAL", "2.0"))
     file_path = None
     
     # Простой парсинг аргументов
     args = sys.argv[1:]
     
     if '--help' in args or '-h' in args:
-        print("""
+        print(f"""
 Использование: python file_watcher.py [файл] [опции]
 
 Опции:
-  -d, --dir DIR      Директория с файлами (по умолчанию: testdata/ftp)
+  -d, --dir DIR      Директория с файлами (из .env: {default_dir})
   -n, --count N      Количество последних событий (по умолчанию: 10)
-  -i, --interval N   Интервал обновления в секундах (по умолчанию: 2.0)
+  -i, --interval N   Интервал обновления в секундах (из .env: {interval})
   -h, --help         Показать эту справку
+
+Переменные окружения (backend/.env):
+  FTP_LOG_DIR        Директория с лог-файлами
+  FTP_POLL_INTERVAL  Интервал обновления
 
 Примеры:
   python file_watcher.py                              # Меню выбора файла
