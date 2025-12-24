@@ -83,6 +83,92 @@ else:
     CREATE_NO_WINDOW = 0
 
 
+def kill_process_on_port(port: int) -> list:
+    """
+    Убивает все процессы, занимающие указанный порт.
+    Возвращает список убитых PID.
+    """
+    killed = []
+    if sys.platform != 'win32':
+        return killed
+    
+    try:
+        # Получаем список процессов на порту
+        result = subprocess.run(
+            ['netstat', '-ano'],
+            capture_output=True,
+            text=True,
+            creationflags=CREATE_NO_WINDOW
+        )
+        
+        pids_to_kill = set()
+        for line in result.stdout.split('\n'):
+            if f':{port}' in line and 'LISTENING' in line:
+                parts = line.split()
+                if parts:
+                    try:
+                        pid = int(parts[-1])
+                        if pid > 0:
+                            pids_to_kill.add(pid)
+                    except ValueError:
+                        pass
+        
+        # Убиваем найденные процессы
+        for pid in pids_to_kill:
+            try:
+                subprocess.run(
+                    ['taskkill', '/PID', str(pid), '/F'],
+                    capture_output=True,
+                    creationflags=CREATE_NO_WINDOW
+                )
+                killed.append(pid)
+            except Exception:
+                pass
+                
+    except Exception:
+        pass
+    
+    return killed
+
+
+def kill_process_by_name(name_pattern: str) -> list:
+    """
+    Убивает процессы по имени (частичное совпадение).
+    Возвращает список убитых PID.
+    """
+    killed = []
+    if sys.platform != 'win32':
+        return killed
+    
+    try:
+        # Получаем список процессов
+        result = subprocess.run(
+            ['tasklist', '/FO', 'CSV'],
+            capture_output=True,
+            text=True,
+            creationflags=CREATE_NO_WINDOW
+        )
+        
+        for line in result.stdout.split('\n')[1:]:  # Пропускаем заголовок
+            if name_pattern.lower() in line.lower():
+                parts = line.strip('"').split('","')
+                if len(parts) >= 2:
+                    try:
+                        pid = int(parts[1].strip('"'))
+                        subprocess.run(
+                            ['taskkill', '/PID', str(pid), '/F'],
+                            capture_output=True,
+                            creationflags=CREATE_NO_WINDOW
+                        )
+                        killed.append(pid)
+                    except (ValueError, Exception):
+                        pass
+    except Exception:
+        pass
+    
+    return killed
+
+
 def get_hidden_subprocess_args():
     """Возвращает аргументы для скрытого запуска subprocess на Windows"""
     if sys.platform == 'win32':
@@ -150,6 +236,19 @@ class ProcessManager:
     def start(self) -> bool:
         if self.is_running:
             return False
+        
+        # ОБЯЗАТЕЛЬНО убиваем предыдущие процессы на нужных портах
+        if "backend" in self.name.lower() or "8000" in str(self.cmd):
+            killed = kill_process_on_port(8000)
+            if killed:
+                self.output_queue.put(f"[SYSTEM] Убиты предыдущие процессы на порту 8000: {killed}")
+                time.sleep(1)  # Даём время освободить порт
+        
+        if "frontend" in self.name.lower() or "5173" in str(self.cmd) or "npm" in str(self.cmd):
+            killed = kill_process_on_port(5173)
+            if killed:
+                self.output_queue.put(f"[SYSTEM] Убиты предыдущие процессы на порту 5173: {killed}")
+                time.sleep(0.5)
             
         try:
             # Получаем аргументы для скрытого запуска
@@ -713,6 +812,10 @@ if HAS_GUI:
             self.utils_popup.add_command(label="Сегодняшний файл", command=self.today_file)
             self.utils_popup.add_command(label="Выбор строк", command=self.select_lines)
             self.utils_popup.add_separator()
+            self.utils_popup.add_command(label="📊 Статус соединений", command=self.show_connections_status)
+            self.utils_popup.add_command(label="🔌 Закрыть соединения", command=self.close_all_connections)
+            self.utils_popup.add_command(label="⏳ Дождаться FTP", command=self.wait_for_ftp)
+            self.utils_popup.add_separator()
             self.utils_popup.add_command(label="Realtime ВСЕ", command=self.toggle_realtime_all)
             self.utils_popup.add_command(label="Realtime РАЗГР", command=self.toggle_realtime_unload)
             
@@ -748,6 +851,113 @@ if HAS_GUI:
                     ftp.quit()
                 else:
                     self.log.append("[ERROR] Не удалось подключиться")
+            except Exception as e:
+                self.log.append(f"[ERROR] {e}")
+        
+        def show_connections_status(self):
+            """Показать статус FTP соединений"""
+            self._run_in_thread(self._show_connections_status_impl)
+        
+        def _show_connections_status_impl(self):
+            from ftp_utils import get_ftp_connections_status
+            self.log.add_separator("СТАТУС FTP СОЕДИНЕНИЙ")
+            self.log.append(f"[SYSTEM] Анализ соединений к {FTP_HOST}:{FTP_PORT}...")
+            
+            try:
+                status = get_ftp_connections_status(FTP_HOST, FTP_PORT)
+                
+                if status['error']:
+                    self.log.append(f"[ERROR] {status['error']}")
+                    return
+                
+                self.log.append(f"[FTP] Всего соединений: {status['total']}")
+                self.log.append(f"[FTP]   ESTABLISHED (активные): {status['established']}")
+                self.log.append(f"[FTP]   TIME_WAIT (закрываются): {status['time_wait']}")
+                self.log.append(f"[FTP]   CLOSE_WAIT (ожидают): {status['close_wait']}")
+                self.log.append(f"[FTP]   FIN_WAIT: {status['fin_wait']}")
+                
+                if status['total'] == 0:
+                    self.log.append("[SYSTEM] ✅ Нет активных соединений - FTP свободен!")
+                elif status['established'] > 0:
+                    self.log.append(f"[WARNING] ⚠️ {status['established']} активных соединений!")
+                    for conn in status['connections']:
+                        if 'ESTABLISHED' in conn.get('state', ''):
+                            self.log.append(f"  PID {conn['pid']}: {conn['local']} -> {conn['remote']}")
+                else:
+                    self.log.append("[SYSTEM] Соединения закрываются, подождите...")
+                    
+            except Exception as e:
+                self.log.append(f"[ERROR] {e}")
+        
+        def close_all_connections(self):
+            """Закрыть все FTP соединения"""
+            self._run_in_thread(self._close_all_connections_impl)
+        
+        def _close_all_connections_impl(self):
+            from ftp_utils import get_ftp_connections_status, close_ftp_connections
+            self.log.add_separator("ЗАКРЫТИЕ FTP СОЕДИНЕНИЙ")
+            
+            # Сначала показываем текущий статус
+            status = get_ftp_connections_status(FTP_HOST, FTP_PORT)
+            self.log.append(f"[SYSTEM] Найдено соединений: {status['total']}")
+            
+            if status['total'] == 0:
+                self.log.append("[SYSTEM] Нет соединений для закрытия")
+                return
+            
+            self.log.append(f"[SYSTEM] Закрываем {status['established']} активных соединений...")
+            
+            try:
+                result = close_ftp_connections(FTP_HOST, FTP_PORT)
+                
+                if result['closed'] > 0:
+                    self.log.append(f"[SYSTEM] ✅ Закрыто соединений: {result['closed']}")
+                    self.log.append(f"[SYSTEM] Убитые PID: {result['killed_pids']}")
+                else:
+                    self.log.append("[SYSTEM] Нет процессов для завершения")
+                
+                if result['errors']:
+                    for err in result['errors']:
+                        self.log.append(f"[ERROR] {err}")
+                
+                # Проверяем результат
+                time.sleep(1)
+                new_status = get_ftp_connections_status(FTP_HOST, FTP_PORT)
+                self.log.append(f"[SYSTEM] Осталось соединений: {new_status['total']}")
+                
+            except Exception as e:
+                self.log.append(f"[ERROR] {e}")
+        
+        def wait_for_ftp(self):
+            """Дождаться доступности FTP"""
+            self._run_in_thread(self._wait_for_ftp_impl)
+        
+        def _wait_for_ftp_impl(self):
+            from ftp_utils import wait_for_ftp_available, get_ftp_connections_status
+            self.log.add_separator("ОЖИДАНИЕ FTP")
+            
+            # Показываем текущий статус
+            status = get_ftp_connections_status(FTP_HOST, FTP_PORT)
+            self.log.append(f"[SYSTEM] Текущих соединений: {status['total']} (активных: {status['established']})")
+            self.log.append(f"[SYSTEM] Ожидаем доступность FTP (макс 30 сек)...")
+            
+            try:
+                result = wait_for_ftp_available(
+                    FTP_HOST, FTP_PORT, FTP_USER, FTP_PASSWORD, FTP_BASE_PATH,
+                    max_wait=30,
+                    close_existing=True
+                )
+                
+                if result['success']:
+                    self.log.append(f"[SYSTEM] ✅ FTP доступен!")
+                    self.log.append(f"[SYSTEM] Время ожидания: {result['wait_time']:.1f} сек")
+                    self.log.append(f"[SYSTEM] Попыток: {result['attempts']}")
+                    if result['closed_connections'] > 0:
+                        self.log.append(f"[SYSTEM] Закрыто старых соединений: {result['closed_connections']}")
+                else:
+                    self.log.append(f"[ERROR] FTP недоступен: {result['error']}")
+                    self.log.append(f"[SYSTEM] Попыток: {result['attempts']}, время: {result['wait_time']:.1f} сек")
+                    
             except Exception as e:
                 self.log.append(f"[ERROR] {e}")
         
@@ -977,6 +1187,19 @@ if HAS_GUI:
         def _start_poller_impl(self):
             try:
                 import urllib.request
+                
+                # ОБЯЗАТЕЛЬНО сначала останавливаем предыдущий поллинг
+                try:
+                    stop_req = urllib.request.Request(
+                        "http://127.0.0.1:8000/api/dashboard/poller/stop",
+                        method="POST", data=b""
+                    )
+                    urllib.request.urlopen(stop_req, timeout=3)
+                    self.log.append("[SYSTEM] Предыдущий поллинг остановлен")
+                    time.sleep(0.5)  # Даём время закрыть FTP соединение
+                except Exception:
+                    pass  # Поллинг мог быть уже остановлен
+                
                 req = urllib.request.Request(
                     "http://127.0.0.1:8000/api/dashboard/poller/start",
                     method="POST", data=b""
@@ -1180,6 +1403,21 @@ if HAS_GUI:
             self.current_page = page_name
         
         def _start_all(self):
+            # ОБЯЗАТЕЛЬНО сначала останавливаем всё
+            self._stop_all()
+            time.sleep(1)  # Даём время освободить ресурсы
+            
+            # Принудительно убиваем процессы на портах
+            killed_8000 = kill_process_on_port(8000)
+            killed_5173 = kill_process_on_port(5173)
+            if killed_8000:
+                self.pages["backend"].log.append(f"[SYSTEM] Убиты процессы на порту 8000: {killed_8000}")
+            if killed_5173:
+                self.pages["frontend"].log.append(f"[SYSTEM] Убиты процессы на порту 5173: {killed_5173}")
+            
+            if killed_8000 or killed_5173:
+                time.sleep(1)  # Даём время освободить порты
+            
             # Запускаем бэкенд
             if not self.backend_manager.is_running:
                 self.pages["backend"].start()
@@ -1202,13 +1440,22 @@ if HAS_GUI:
         
         def _stop_all(self):
             # Сначала останавливаем поллинг
-            self.pages["ftp"].stop_poller()
-            self.pages["ftp"].stop_all_realtime()
+            try:
+                self.pages["ftp"].stop_poller()
+                self.pages["ftp"].stop_all_realtime()
+            except Exception:
+                pass
+            
             # Потом сервисы
             if self.frontend_manager.is_running:
                 self.pages["frontend"].stop()
             if self.backend_manager.is_running:
                 self.pages["backend"].stop()
+            
+            # Принудительно убиваем оставшиеся процессы на портах
+            time.sleep(0.5)
+            kill_process_on_port(8000)
+            kill_process_on_port(5173)
         
         def _open_website(self):
             """Открыть сайт в браузере"""

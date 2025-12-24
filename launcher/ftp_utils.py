@@ -296,3 +296,230 @@ def test_connection(host: str, port: int, user: str, password: str, base_path: s
     
     result['latency_ms'] = int((time.time() - start_time) * 1000)
     return result
+
+
+def get_ftp_connections_status(ftp_host: str, ftp_port: int = 21) -> dict:
+    """
+    Получить статус FTP соединений с данного хоста.
+    
+    Использует netstat для анализа TCP соединений к FTP серверу.
+    
+    Returns:
+        Dict с информацией о соединениях:
+        - total: общее количество соединений
+        - established: активные соединения
+        - time_wait: соединения в TIME_WAIT
+        - close_wait: соединения в CLOSE_WAIT
+        - connections: список всех соединений с деталями
+    """
+    import subprocess
+    import sys
+    
+    result = {
+        'host': ftp_host,
+        'port': ftp_port,
+        'total': 0,
+        'established': 0,
+        'time_wait': 0,
+        'close_wait': 0,
+        'fin_wait': 0,
+        'listening': 0,
+        'connections': [],
+        'error': None
+    }
+    
+    if sys.platform != 'win32':
+        result['error'] = 'Only Windows supported'
+        return result
+    
+    try:
+        # Запускаем netstat
+        proc = subprocess.run(
+            ['netstat', '-ano'],
+            capture_output=True,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        
+        for line in proc.stdout.split('\n'):
+            # Ищем соединения к FTP серверу
+            if f'{ftp_host}:{ftp_port}' in line or f'{ftp_host}:21' in line:
+                parts = line.split()
+                if len(parts) >= 4:
+                    conn_info = {
+                        'local': parts[1] if len(parts) > 1 else '',
+                        'remote': parts[2] if len(parts) > 2 else '',
+                        'state': parts[3] if len(parts) > 3 else '',
+                        'pid': parts[4] if len(parts) > 4 else ''
+                    }
+                    result['connections'].append(conn_info)
+                    result['total'] += 1
+                    
+                    state = conn_info['state'].upper()
+                    if 'ESTABLISHED' in state:
+                        result['established'] += 1
+                    elif 'TIME_WAIT' in state:
+                        result['time_wait'] += 1
+                    elif 'CLOSE_WAIT' in state:
+                        result['close_wait'] += 1
+                    elif 'FIN_WAIT' in state:
+                        result['fin_wait'] += 1
+                    elif 'LISTENING' in state:
+                        result['listening'] += 1
+                        
+    except Exception as e:
+        result['error'] = str(e)
+    
+    return result
+
+
+def close_ftp_connections(ftp_host: str, ftp_port: int = 21) -> dict:
+    """
+    Закрыть все FTP соединения к указанному хосту.
+    
+    Убивает процессы, которые держат соединения к FTP серверу.
+    ВНИМАНИЕ: Это принудительное закрытие, используйте осторожно!
+    
+    Returns:
+        Dict с результатами:
+        - closed: количество закрытых соединений
+        - killed_pids: список убитых PID
+        - errors: список ошибок
+    """
+    import subprocess
+    import sys
+    
+    result = {
+        'closed': 0,
+        'killed_pids': [],
+        'errors': [],
+        'skipped_pids': []  # PID которые не убивали (системные)
+    }
+    
+    if sys.platform != 'win32':
+        result['errors'].append('Only Windows supported')
+        return result
+    
+    # Получаем текущие соединения
+    status = get_ftp_connections_status(ftp_host, ftp_port)
+    
+    if status['error']:
+        result['errors'].append(status['error'])
+        return result
+    
+    # Собираем уникальные PID (кроме 0 и системных)
+    pids_to_kill = set()
+    current_pid = str(subprocess.os.getpid())
+    
+    for conn in status['connections']:
+        pid = conn.get('pid', '0')
+        if pid and pid != '0' and pid != current_pid:
+            # Не убиваем системные процессы
+            try:
+                pid_int = int(pid)
+                if pid_int > 4:  # PID 0-4 обычно системные
+                    pids_to_kill.add(pid)
+            except ValueError:
+                pass
+    
+    # Убиваем процессы
+    for pid in pids_to_kill:
+        try:
+            subprocess.run(
+                ['taskkill', '/PID', pid, '/F'],
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            result['killed_pids'].append(int(pid))
+            result['closed'] += 1
+        except Exception as e:
+            result['errors'].append(f"Failed to kill PID {pid}: {e}")
+    
+    return result
+
+
+def wait_for_ftp_available(
+    host: str, 
+    port: int, 
+    user: str, 
+    password: str, 
+    base_path: str,
+    max_wait: int = 30,
+    close_existing: bool = True
+) -> dict:
+    """
+    Дождаться доступности FTP сервера.
+    
+    Если сервер занят (550/421), опционально закрывает существующие соединения
+    и ждёт освобождения.
+    
+    Args:
+        host: FTP хост
+        port: FTP порт
+        user: Пользователь
+        password: Пароль
+        base_path: Базовый путь
+        max_wait: Максимальное время ожидания (секунды)
+        close_existing: Закрывать существующие соединения
+    
+    Returns:
+        Dict с результатом:
+        - success: удалось ли подключиться
+        - wait_time: время ожидания
+        - closed_connections: количество закрытых соединений
+        - error: ошибка если не удалось
+    """
+    result = {
+        'success': False,
+        'wait_time': 0,
+        'closed_connections': 0,
+        'attempts': 0,
+        'error': None
+    }
+    
+    start_time = time.time()
+    
+    # Сначала проверяем текущие соединения
+    if close_existing:
+        status = get_ftp_connections_status(host, port)
+        if status['total'] > 0:
+            print(f"[FTP] Найдено {status['total']} существующих соединений, закрываем...")
+            close_result = close_ftp_connections(host, port)
+            result['closed_connections'] = close_result['closed']
+            if close_result['closed'] > 0:
+                time.sleep(1)  # Даём время закрыться
+    
+    # Пробуем подключиться
+    while (time.time() - start_time) < max_wait:
+        result['attempts'] += 1
+        
+        try:
+            ftp = FTP()
+            ftp.connect(host, port, timeout=CONNECTION_TIMEOUT)
+            ftp.login(user, password)
+            ftp.cwd(base_path)
+            ftp.quit()
+            
+            result['success'] = True
+            result['wait_time'] = time.time() - start_time
+            return result
+            
+        except (error_temp, error_perm) as e:
+            error_str = str(e)
+            if "550" in error_str or "421" in error_str or "busy" in error_str.lower():
+                # Сервер занят, ждём
+                time.sleep(2)
+                continue
+            else:
+                result['error'] = str(e)
+                break
+                
+        except Exception as e:
+            result['error'] = str(e)
+            break
+    
+    result['wait_time'] = time.time() - start_time
+    if not result['error']:
+        result['error'] = f"Timeout after {max_wait}s"
+    
+    return result

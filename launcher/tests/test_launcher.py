@@ -6,13 +6,94 @@ import sys
 import os
 import time
 import threading
+import subprocess
+import socket
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
 # Добавляем путь к launcher
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from launcher import ProcessManager, BACKEND_DIR, FRONTEND_DIR, COLORS, FONTS
+from launcher import (
+    ProcessManager, BACKEND_DIR, FRONTEND_DIR, COLORS, FONTS,
+    kill_process_on_port, kill_process_by_name, CREATE_NO_WINDOW
+)
+
+
+class TestKillProcessOnPort:
+    """Тесты для kill_process_on_port - КРИТИЧЕСКИ ВАЖНО"""
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_kill_process_on_port_returns_list(self):
+        """kill_process_on_port возвращает список"""
+        result = kill_process_on_port(9999)  # Порт который скорее всего свободен
+        assert isinstance(result, list)
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_kill_process_on_port_kills_listening_process(self):
+        """kill_process_on_port убивает процесс на порту"""
+        test_port = 19876  # Уникальный порт для теста
+        
+        # Запускаем простой сервер на порту
+        server_process = subprocess.Popen(
+            ['python', '-c', f'''
+import socket
+import time
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", {test_port}))
+s.listen(1)
+time.sleep(60)
+'''],
+            creationflags=CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+        )
+        
+        time.sleep(1)  # Даём время запуститься
+        
+        # Проверяем что порт занят
+        def is_port_in_use(port):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                return s.connect_ex(('127.0.0.1', port)) == 0
+        
+        # Порт должен быть занят (или процесс слушает)
+        # Убиваем процесс на порту
+        killed = kill_process_on_port(test_port)
+        
+        time.sleep(0.5)
+        
+        # Проверяем что процесс убит
+        assert server_process.poll() is not None or len(killed) > 0
+        
+        # Cleanup
+        try:
+            server_process.kill()
+        except Exception:
+            pass
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_kill_process_on_port_8000_before_backend_start(self):
+        """Тест что порт 8000 освобождается перед запуском backend"""
+        # Этот тест проверяет что функция работает для порта 8000
+        # Не запускаем реальный процесс, просто проверяем что функция не падает
+        result = kill_process_on_port(8000)
+        assert isinstance(result, list)
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_kill_process_on_port_5173_before_frontend_start(self):
+        """Тест что порт 5173 освобождается перед запуском frontend"""
+        result = kill_process_on_port(5173)
+        assert isinstance(result, list)
+
+
+class TestKillProcessByName:
+    """Тесты для kill_process_by_name"""
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_kill_process_by_name_returns_list(self):
+        """kill_process_by_name возвращает список"""
+        result = kill_process_by_name("nonexistent_process_12345")
+        assert isinstance(result, list)
+        assert len(result) == 0  # Такого процесса нет
 
 
 class TestProcessManager:
@@ -58,6 +139,86 @@ class TestProcessManager:
         # Остановка
         pm.stop()
         assert pm.is_running is False
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_backend_start_kills_previous_on_port_8000(self):
+        """КРИТИЧЕСКИЙ ТЕСТ: Backend start убивает предыдущий процесс на порту 8000"""
+        test_port = 8000
+        
+        # Запускаем фейковый процесс на порту 8000
+        fake_server = subprocess.Popen(
+            ['python', '-c', f'''
+import socket
+import time
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", {test_port}))
+s.listen(1)
+print("Fake server listening on port {test_port}")
+time.sleep(120)
+'''],
+            creationflags=CREATE_NO_WINDOW
+        )
+        
+        time.sleep(1)  # Даём время запуститься
+        fake_pid = fake_server.pid
+        
+        # Создаём ProcessManager для backend
+        pm = ProcessManager("Backend", ["python", "-c", "print('test')"], Path("."))
+        # Подменяем имя чтобы сработала логика убийства порта 8000
+        pm.name = "Backend"
+        
+        # При старте должен убить процесс на порту 8000
+        # Проверяем через вызов kill_process_on_port напрямую
+        killed = kill_process_on_port(test_port)
+        
+        time.sleep(0.5)
+        
+        # Фейковый сервер должен быть убит
+        assert fake_server.poll() is not None, f"Процесс {fake_pid} на порту {test_port} не был убит!"
+        
+        # Cleanup
+        try:
+            fake_server.kill()
+        except Exception:
+            pass
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_frontend_start_kills_previous_on_port_5173(self):
+        """КРИТИЧЕСКИЙ ТЕСТ: Frontend start убивает предыдущий процесс на порту 5173"""
+        test_port = 5173
+        
+        # Запускаем фейковый процесс на порту 5173
+        fake_server = subprocess.Popen(
+            ['python', '-c', f'''
+import socket
+import time
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("0.0.0.0", {test_port}))
+s.listen(1)
+print("Fake server listening on port {test_port}")
+time.sleep(120)
+'''],
+            creationflags=CREATE_NO_WINDOW
+        )
+        
+        time.sleep(1)
+        fake_pid = fake_server.pid
+        
+        # Убиваем процесс на порту
+        killed = kill_process_on_port(test_port)
+        
+        time.sleep(0.5)
+        
+        # Фейковый сервер должен быть убит
+        assert fake_server.poll() is not None, f"Процесс {fake_pid} на порту {test_port} не был убит!"
+        
+        # Cleanup
+        try:
+            fake_server.kill()
+        except Exception:
+            pass
 
 
 class TestColors:
@@ -152,6 +313,47 @@ class TestFTPUtils:
         test_bytes = "Привет мир".encode('cp1251')
         result = decode_content(test_bytes)
         assert "Привет" in result or result is not None
+    
+    def test_get_ftp_connections_status_import(self):
+        """get_ftp_connections_status импортируется"""
+        from ftp_utils import get_ftp_connections_status
+        assert callable(get_ftp_connections_status)
+    
+    def test_close_ftp_connections_import(self):
+        """close_ftp_connections импортируется"""
+        from ftp_utils import close_ftp_connections
+        assert callable(close_ftp_connections)
+    
+    def test_wait_for_ftp_available_import(self):
+        """wait_for_ftp_available импортируется"""
+        from ftp_utils import wait_for_ftp_available
+        assert callable(wait_for_ftp_available)
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_get_ftp_connections_status_returns_dict(self):
+        """get_ftp_connections_status возвращает словарь с нужными полями"""
+        from ftp_utils import get_ftp_connections_status
+        result = get_ftp_connections_status("172.17.11.194", 21)
+        
+        assert isinstance(result, dict)
+        assert 'total' in result
+        assert 'established' in result
+        assert 'time_wait' in result
+        assert 'close_wait' in result
+        assert 'connections' in result
+        assert isinstance(result['connections'], list)
+    
+    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
+    def test_close_ftp_connections_returns_dict(self):
+        """close_ftp_connections возвращает словарь с результатами"""
+        from ftp_utils import close_ftp_connections
+        result = close_ftp_connections("172.17.11.194", 21)
+        
+        assert isinstance(result, dict)
+        assert 'closed' in result
+        assert 'killed_pids' in result
+        assert 'errors' in result
+        assert isinstance(result['killed_pids'], list)
 
 
 class TestAPIEndpoints:

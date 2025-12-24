@@ -189,6 +189,9 @@ class FTPPoller:
                 pass
             self._task = None
         
+        # Закрываем FTP соединение
+        await ftp_service.disconnect()
+        
         logger.info("FTPPoller stopped")
     
     async def poll_now(self) -> None:

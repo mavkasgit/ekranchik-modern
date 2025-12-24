@@ -37,12 +37,14 @@ class FTPService:
     """
     FTP Service с использованием синхронного ftplib.
     Все операции выполняются в thread pool executor.
+    Переиспользует соединение для уменьшения нагрузки на сервер.
     """
     
     MAX_RETRIES = 3
     RETRY_BASE_DELAY = 2.0
     CONNECTION_TIMEOUT = 15
     ENCODINGS = ['utf-8', 'cp1251', 'cp866', 'latin-1']
+    CONNECTION_REUSE_TIME = 60  # Держим соединение открытым 60 секунд
     
     def __init__(self):
         self._last_position: int = 0
@@ -50,6 +52,9 @@ class FTPService:
         self._connected: bool = False
         self._state: FTPConnectionState = FTPConnectionState.DISCONNECTED
         self._lock = asyncio.Lock()
+        self._ftp: Optional[FTP] = None
+        self._ftp_last_used: float = 0
+        self._ftp_lock = asyncio.Lock()
         
         self._stats = {
             'connections': 0,
@@ -100,6 +105,20 @@ class FTPService:
     
     def _sync_connect(self) -> Optional[FTP]:
         """Синхронное подключение к FTP (вызывается в executor)."""
+        # Проверяем существующее соединение
+        if self._ftp:
+            try:
+                self._ftp.voidcmd("NOOP")  # Проверка что соединение живое
+                self._ftp_last_used = time.time()
+                return self._ftp
+            except Exception:
+                # Соединение умерло, закрываем
+                try:
+                    self._ftp.quit()
+                except Exception:
+                    pass
+                self._ftp = None
+        
         for attempt in range(self.MAX_RETRIES):
             try:
                 ftp = FTP()
@@ -117,6 +136,8 @@ class FTPService:
                 self._connected = True
                 self._state = FTPConnectionState.CONNECTED
                 self._stats['connections'] += 1
+                self._ftp = ftp
+                self._ftp_last_used = time.time()
                 logger.info(f"[FTP] Connected to {settings.FTP_HOST}")
                 return ftp
                 
@@ -138,10 +159,21 @@ class FTPService:
         
         self._connected = False
         self._state = FTPConnectionState.ERROR
+        self._ftp = None
         return None
     
+    def _sync_disconnect(self) -> None:
+        """Закрыть FTP соединение."""
+        if self._ftp:
+            try:
+                self._ftp.quit()
+            except Exception:
+                pass
+            self._ftp = None
+            self._connected = False
+    
     def _sync_read_file(self, filename: str) -> bytes:
-        """Синхронное чтение файла (вызывается в executor)."""
+        """Синхронное чтение файла (вызывается в executor). Переиспользует соединение."""
         ftp = self._sync_connect()
         if not ftp:
             return b""
@@ -151,21 +183,27 @@ class FTPService:
             ftp.retrbinary(f'RETR {filename}', buffer.write)
             content = buffer.getvalue()
             self._stats['bytes_read'] += len(content)
+            self._ftp_last_used = time.time()
             return content
         except (error_temp, error_perm) as e:
-            if "550" in str(e):
-                logger.warning(f"[FTP] File not found: {filename}")
+            error_str = str(e)
+            if "550" in error_str:
+                # 550 может быть "file not found" или "server busy"
+                if "busy" in error_str.lower():
+                    self._stats['errors_550'] += 1
+                    logger.warning(f"[FTP] Server busy reading {filename}")
+                    # Закрываем соединение при busy
+                    self._sync_disconnect()
+                else:
+                    logger.warning(f"[FTP] File not found: {filename}")
             else:
                 logger.error(f"[FTP] Read error: {e}")
+                self._sync_disconnect()
             return b""
         except Exception as e:
             logger.error(f"[FTP] Read error: {e}")
+            self._sync_disconnect()
             return b""
-        finally:
-            try:
-                ftp.quit()
-            except Exception:
-                pass
     
     async def read_log_for_date(self, for_date: date) -> str:
         """Асинхронное чтение лога за дату."""
@@ -217,6 +255,11 @@ class FTPService:
     def reset_position(self) -> None:
         self._last_position = 0
         self._last_date = None
+    
+    async def disconnect(self) -> None:
+        """Закрыть FTP соединение асинхронно."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(_ftp_executor, self._sync_disconnect)
     
     def get_diagnostics(self) -> dict:
         return {

@@ -22,10 +22,20 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
+  const onMessageRef = useRef(onMessage)
   const queryClient = useQueryClient()
+  
+  // Keep onMessage ref updated without triggering reconnects
+  useEffect(() => {
+    onMessageRef.current = onMessage
+  }, [onMessage])
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
+    // Prevent multiple connections
+    if (wsRef.current?.readyState === WebSocket.OPEN || 
+        wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return
+    }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host}/ws`
@@ -47,7 +57,7 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
           const message: WebSocketMessage = JSON.parse(event.data)
           console.log('[WS] Received:', message.type, message.payload)
           setLastMessage(message)
-          onMessage?.(message)
+          onMessageRef.current?.(message)
 
           // Invalidate and refetch queries based on message type
           if (message.type === 'data_update') {
@@ -81,7 +91,7 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
       setStatus('error')
       console.error('[WS] Connection error:', e)
     }
-  }, [onMessage, autoReconnect, reconnectInterval, queryClient])
+  }, [autoReconnect, reconnectInterval, queryClient])
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
