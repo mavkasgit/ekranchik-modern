@@ -176,37 +176,19 @@ class FTPService:
             self._ftp = None
             self._connected = False
     
-    def _sync_read_file_with_size_check(self, filename: str) -> bytes:
-        """
-        Чтение файла с предварительной проверкой SIZE.
-        Если SIZE работает - файл доступен для чтения.
-        """
+    def _sync_read_file(self, filename: str) -> bytes:
+        """Синхронное чтение файла (вызывается в executor)."""
         ftp = self._sync_connect()
         if not ftp:
             return b""
         
         try:
-            # Сначала проверяем SIZE - если работает, файл доступен
-            try:
-                size = ftp.size(filename)
-                if size is None or size == 0:
-                    logger.warning(f"[FTP] File {filename} has size 0 or unavailable")
-                    return b""
-                logger.debug(f"[FTP] File {filename} size: {size} bytes")
-            except Exception as e:
-                # SIZE не работает - файл может быть занят
-                logger.warning(f"[FTP] SIZE failed for {filename}: {e}")
-                self._sync_disconnect()
-                return b""
-            
-            # SIZE прошёл - читаем файл
             buffer = io.BytesIO()
             ftp.retrbinary(f'RETR {filename}', buffer.write)
             content = buffer.getvalue()
             self._stats['bytes_read'] += len(content)
             self._ftp_last_used = time.time()
             return content
-            
         except (error_temp, error_perm) as e:
             error_str = str(e)
             if "550" in error_str:
@@ -214,7 +196,7 @@ class FTPService:
                     self._stats['errors_550'] += 1
                     logger.warning(f"[FTP] Server busy reading {filename}")
                 else:
-                    logger.warning(f"[FTP] File not found: {filename}")
+                    logger.warning(f"[FTP] Error 550: {filename} - {e}")
             else:
                 logger.error(f"[FTP] Read error: {e}")
             self._sync_disconnect()
@@ -223,10 +205,6 @@ class FTPService:
             logger.error(f"[FTP] Read error: {e}")
             self._sync_disconnect()
             return b""
-
-    def _sync_read_file(self, filename: str) -> bytes:
-        """Синхронное чтение файла с SIZE проверкой."""
-        return self._sync_read_file_with_size_check(filename)
     
     async def read_log_for_date(self, for_date: date) -> str:
         """Асинхронное чтение лога за дату."""
