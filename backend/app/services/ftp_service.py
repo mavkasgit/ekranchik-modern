@@ -220,6 +220,7 @@ class FTPService:
     async def poll_multiday(self, days: int = 2) -> Tuple[List[UnloadEvent], bool]:
         """
         Читает логи за N дней и возвращает все события.
+        Закрывает соединение между файлами чтобы избежать busy.
         """
         today = date.today()
         date_changed = False
@@ -233,6 +234,7 @@ class FTPService:
         
         for day_offset in range(days):
             file_date = today - timedelta(days=day_offset)
+            
             # Try up to 3 times for each file (in case of "busy")
             for attempt in range(3):
                 try:
@@ -242,21 +244,28 @@ class FTPService:
                         self._current_parse_date = file_date.strftime("%d.%m.%Y")
                         events = self.parse_unload_events_cj2m(content)
                         all_events.extend(events)
-                        logger.debug(f"[FTP] Read {len(events)} events for {file_date}")
+                        logger.info(f"[FTP] Read {len(events)} events for {file_date}")
                         break  # Success, move to next file
                     else:
-                        # Empty content, might be busy - retry
+                        # Empty content, might be busy - disconnect and retry
                         if attempt < 2:
-                            logger.warning(f"[FTP] Empty content for {file_date}, retry {attempt + 1}/3")
-                            await asyncio.sleep(0.5)
+                            logger.warning(f"[FTP] Empty content for {file_date}, disconnect and retry {attempt + 1}/3")
+                            await self.disconnect()
+                            await asyncio.sleep(1.0)
                         continue
                 except Exception as e:
                     logger.error(f"[FTP] Error reading log for {file_date}: {e}")
+                    await self.disconnect()
                     if attempt < 2:
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(1.0)
+            
+            # ВАЖНО: Закрываем соединение после каждого файла
+            # ПЛК не любит когда читают несколько файлов подряд
+            await self.disconnect()
+            await asyncio.sleep(0.3)  # Небольшая пауза между файлами
         
         if all_events:
-            logger.info(f"[FTP] Read {len(all_events)} events from {days} days")
+            logger.info(f"[FTP] Total: {len(all_events)} events from {days} days")
         
         return all_events, date_changed
     
