@@ -1,14 +1,16 @@
 """
-Простой скрипт для мониторинга файла с событиями разгрузки.
-Читает файл и показывает последние N событий.
+Скрипт для мониторинга файла с событиями разгрузки по FTP.
+Читает файл с FTP сервера и показывает последние N событий.
+Использует настройки из backend/.env
 """
 import re
 import time
 import sys
 import os
-import errno
+import io
 from datetime import datetime
 from pathlib import Path
+from ftplib import FTP, error_temp, error_perm
 from typing import List, NamedTuple, Optional, Tuple
 from enum import Enum
 
@@ -31,7 +33,6 @@ def load_env_file():
                             key, _, value = line.partition('=')
                             key = key.strip()
                             value = value.strip().strip('"').strip("'")
-                            # Не перезаписываем если уже есть в окружении
                             if key not in os.environ:
                                 os.environ[key] = value
                 return True
@@ -40,7 +41,6 @@ def load_env_file():
     return False
 
 
-# Загружаем .env при импорте
 load_env_file()
 
 
@@ -51,23 +51,22 @@ class FileStatus(Enum):
     FILE_BUSY = "file_busy"
     FILE_LOCKED = "file_locked"
     NETWORK_ERROR = "network_error"
-    DISK_ERROR = "disk_error"
-    ENCODING_ERROR = "encoding_error"
+    CONNECTION_REFUSED = "connection_refused"
     TIMEOUT = "timeout"
+    FTP_ERROR = "ftp_error"
     UNKNOWN_ERROR = "unknown_error"
 
 
-# Сообщения об ошибках
 ERROR_MESSAGES = {
-    FileStatus.OK: "✓ Файл доступен",
-    FileStatus.NOT_FOUND: "✗ Файл не найден",
-    FileStatus.PERMISSION_DENIED: "✗ Нет доступа к файлу (Permission Denied)",
-    FileStatus.FILE_BUSY: "⏳ Файл занят другим процессом (Busy)",
-    FileStatus.FILE_LOCKED: "🔒 Файл заблокирован (Locked)",
-    FileStatus.NETWORK_ERROR: "🌐 Сетевая ошибка (Network Error)",
-    FileStatus.DISK_ERROR: "💾 Ошибка диска (Disk I/O Error)",
-    FileStatus.ENCODING_ERROR: "📝 Ошибка кодировки файла",
-    FileStatus.TIMEOUT: "⏱ Таймаут при чтении файла",
+    FileStatus.OK: "✓ Подключено",
+    FileStatus.NOT_FOUND: "✗ Файл не найден на FTP",
+    FileStatus.PERMISSION_DENIED: "✗ Нет доступа (Permission Denied)",
+    FileStatus.FILE_BUSY: "⏳ Сервер занят (Busy)",
+    FileStatus.FILE_LOCKED: "🔒 Файл заблокирован",
+    FileStatus.NETWORK_ERROR: "🌐 Сетевая ошибка",
+    FileStatus.CONNECTION_REFUSED: "🚫 Соединение отклонено",
+    FileStatus.TIMEOUT: "⏱ Таймаут соединения",
+    FileStatus.FTP_ERROR: "📡 Ошибка FTP",
     FileStatus.UNKNOWN_ERROR: "❓ Неизвестная ошибка",
 }
 
@@ -78,88 +77,103 @@ class UnloadEvent(NamedTuple):
     raw_line: str
 
 
-def classify_error(e: Exception) -> FileStatus:
-    """Классифицирует исключение и возвращает статус."""
+class FTPConfig:
+    """Конфигурация FTP из переменных окружения."""
+    def __init__(self):
+        self.host = os.environ.get("FTP_HOST", "127.0.0.1")
+        self.port = int(os.environ.get("FTP_PORT", "21"))
+        self.user = os.environ.get("FTP_USER", "anonymous")
+        self.password = os.environ.get("FTP_PASSWORD", "")
+        self.base_path = os.environ.get("FTP_BASE_PATH", "/")
+        self.poll_interval = float(os.environ.get("FTP_POLL_INTERVAL", "5"))
+    
+    def __str__(self):
+        return f"ftp://{self.user}@{self.host}:{self.port}{self.base_path}"
+
+
+def classify_ftp_error(e: Exception) -> FileStatus:
+    """Классифицирует FTP ошибку."""
     error_str = str(e).lower()
     
-    # OSError / IOError с errno
-    if isinstance(e, OSError):
-        if e.errno == errno.ENOENT:
+    if isinstance(e, (error_temp, error_perm)):
+        code = str(e)[:3] if len(str(e)) >= 3 else ""
+        if code == "550":
+            if "busy" in error_str:
+                return FileStatus.FILE_BUSY
             return FileStatus.NOT_FOUND
-        elif e.errno == errno.EACCES:
+        if code == "530":
             return FileStatus.PERMISSION_DENIED
-        elif e.errno == errno.EBUSY:
+        if code == "421":
             return FileStatus.FILE_BUSY
-        elif e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-            return FileStatus.FILE_LOCKED
-        elif e.errno == errno.ENETDOWN or e.errno == errno.ENETUNREACH:
-            return FileStatus.NETWORK_ERROR
-        elif e.errno == errno.EIO:
-            return FileStatus.DISK_ERROR
-        elif e.errno == errno.ETIMEDOUT:
-            return FileStatus.TIMEOUT
+        return FileStatus.FTP_ERROR
     
-    # FileNotFoundError
-    if isinstance(e, FileNotFoundError):
-        return FileStatus.NOT_FOUND
-    
-    # PermissionError
-    if isinstance(e, PermissionError):
-        return FileStatus.PERMISSION_DENIED
-    
-    # По тексту ошибки
-    if 'permission' in error_str or 'access' in error_str or 'denied' in error_str:
-        return FileStatus.PERMISSION_DENIED
-    if 'busy' in error_str or 'in use' in error_str or 'being used' in error_str:
-        return FileStatus.FILE_BUSY
-    if 'locked' in error_str or 'lock' in error_str:
-        return FileStatus.FILE_LOCKED
-    if 'network' in error_str or 'connection' in error_str or 'unreachable' in error_str:
-        return FileStatus.NETWORK_ERROR
-    if 'timeout' in error_str or 'timed out' in error_str:
+    if "timeout" in error_str or "timed out" in error_str:
         return FileStatus.TIMEOUT
-    if 'disk' in error_str or 'i/o' in error_str or 'io error' in error_str:
-        return FileStatus.DISK_ERROR
-    if 'encoding' in error_str or 'decode' in error_str or 'codec' in error_str:
-        return FileStatus.ENCODING_ERROR
-    if 'not found' in error_str or 'no such file' in error_str:
-        return FileStatus.NOT_FOUND
+    if "refused" in error_str:
+        return FileStatus.CONNECTION_REFUSED
+    if "network" in error_str or "unreachable" in error_str:
+        return FileStatus.NETWORK_ERROR
+    if "permission" in error_str or "denied" in error_str:
+        return FileStatus.PERMISSION_DENIED
     
     return FileStatus.UNKNOWN_ERROR
 
 
-def read_file_safe(path: Path) -> Tuple[Optional[str], FileStatus, Optional[str]]:
-    """
-    Безопасное чтение файла с обработкой всех ошибок.
-    Возвращает: (содержимое, статус, детали_ошибки)
-    """
-    if not path.exists():
-        return None, FileStatus.NOT_FOUND, f"Путь: {path}"
-    
+def ftp_list_files(config: FTPConfig) -> Tuple[List[str], FileStatus, Optional[str]]:
+    """Получает список .txt файлов с FTP."""
     try:
-        # Пробуем разные кодировки
-        encodings = ['utf-8', 'cp1251', 'cp866', 'latin-1']
-        content = None
+        ftp = FTP()
+        ftp.connect(config.host, config.port, timeout=10)
+        ftp.login(config.user, config.password)
+        ftp.set_pasv(True)
         
-        for encoding in encodings:
+        if config.base_path and config.base_path != "/":
+            ftp.cwd(config.base_path)
+        
+        files = []
+        ftp.retrlines('NLST', files.append)
+        ftp.quit()
+        
+        # Фильтруем только .txt файлы
+        txt_files = [f for f in files if f.endswith('.txt')]
+        # Сортируем от новых к старым
+        txt_files.sort(reverse=True)
+        
+        return txt_files, FileStatus.OK, None
+        
+    except Exception as e:
+        status = classify_ftp_error(e)
+        return [], status, f"{type(e).__name__}: {e}"
+
+
+def ftp_read_file(config: FTPConfig, filename: str) -> Tuple[Optional[str], FileStatus, Optional[str]]:
+    """Читает файл с FTP сервера."""
+    try:
+        ftp = FTP()
+        ftp.connect(config.host, config.port, timeout=10)
+        ftp.login(config.user, config.password)
+        ftp.set_pasv(True)
+        
+        if config.base_path and config.base_path != "/":
+            ftp.cwd(config.base_path)
+        
+        buffer = io.BytesIO()
+        ftp.retrbinary(f'RETR {filename}', buffer.write)
+        ftp.quit()
+        
+        # Пробуем разные кодировки
+        data = buffer.getvalue()
+        for encoding in ['utf-8', 'cp1251', 'cp866', 'latin-1']:
             try:
-                with open(path, 'r', encoding=encoding) as f:
-                    content = f.read()
-                break
+                return data.decode(encoding), FileStatus.OK, None
             except UnicodeDecodeError:
                 continue
         
-        if content is None:
-            # Последняя попытка с игнорированием ошибок
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-        
-        return content, FileStatus.OK, None
+        return data.decode('utf-8', errors='ignore'), FileStatus.OK, None
         
     except Exception as e:
-        status = classify_error(e)
-        details = f"{type(e).__name__}: {e}"
-        return None, status, details
+        status = classify_ftp_error(e)
+        return None, status, f"{type(e).__name__}: {e}"
 
 
 def parse_events(content: str) -> List[UnloadEvent]:
@@ -182,58 +196,51 @@ def parse_events(content: str) -> List[UnloadEvent]:
 
 
 def clear_screen():
-    """Очистка консоли."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 
-def get_log_files(directory: str) -> List[Path]:
-    """
-    Получает список .txt файлов из директории.
-    Сортирует от новых к старым (по имени файла, т.к. формат YYYY-MM-DD).
-    """
-    dir_path = Path(directory)
-    if not dir_path.exists():
-        return []
-    
-    files = list(dir_path.glob("*.txt"))
-    # Сортируем по имени в обратном порядке (новые первые)
-    files.sort(key=lambda f: f.name, reverse=True)
-    return files
-
-
-def select_file_menu(directory: str = "testdata/ftp") -> Optional[Path]:
-    """
-    Показывает меню выбора файла.
-    Возвращает выбранный файл или None.
-    """
+def select_file_menu_ftp(config: FTPConfig) -> Optional[str]:
+    """Показывает меню выбора файла с FTP."""
     clear_screen()
     
     print("=" * 60)
-    print("  ВЫБОР ФАЙЛА ДЛЯ МОНИТОРИНГА")
-    print(f"  Директория: {directory}")
+    print("  ВЫБОР ФАЙЛА ДЛЯ МОНИТОРИНГА (FTP)")
+    print(f"  Сервер: {config}")
+    print("=" * 60)
+    print()
+    print("  Загрузка списка файлов...")
+    
+    files, status, error = ftp_list_files(config)
+    
+    clear_screen()
+    print("=" * 60)
+    print("  ВЫБОР ФАЙЛА ДЛЯ МОНИТОРИНГА (FTP)")
+    print(f"  Сервер: {config}")
+    print(f"  Статус: {ERROR_MESSAGES.get(status, 'Неизвестно')}")
     print("=" * 60)
     print()
     
-    files = get_log_files(directory)
+    if status != FileStatus.OK:
+        print(f"  {ERROR_MESSAGES.get(status, 'Ошибка')}")
+        if error:
+            print(f"  {error}")
+        print()
+        input("  Нажмите Enter для выхода...")
+        return None
     
     if not files:
-        print("  Файлы не найдены в директории!")
+        print("  Файлы не найдены!")
         print()
         input("  Нажмите Enter для выхода...")
         return None
     
     print(f"  Найдено файлов: {len(files)}")
     print("-" * 40)
-    print(f"  {'№':<4} {'Файл':<25} {'Размер':<10}")
+    print(f"  {'№':<4} {'Файл':<30}")
     print("-" * 40)
     
     for i, f in enumerate(files, 1):
-        try:
-            size = f.stat().st_size
-            size_str = f"{size:,} б" if size < 1024 else f"{size/1024:.1f} КБ"
-        except:
-            size_str = "?"
-        print(f"  {i:<4} {f.name:<25} {size_str:<10}")
+        print(f"  {i:<4} {f:<30}")
     
     print("-" * 40)
     print()
@@ -249,7 +256,7 @@ def select_file_menu(directory: str = "testdata/ftp") -> Optional[Path]:
                 return None
             
             if choice == 'r':
-                return select_file_menu(directory)  # Рекурсивно обновляем
+                return select_file_menu_ftp(config)
             
             num = int(choice)
             if 1 <= num <= len(files):
@@ -262,12 +269,16 @@ def select_file_menu(directory: str = "testdata/ftp") -> Optional[Path]:
             return None
 
 
-def display_events(events: List[UnloadEvent], count: int = 10, file_path: str = "", status: FileStatus = FileStatus.OK, error_details: str = None):
+
+def display_events(events: List[UnloadEvent], count: int, file_path: str, 
+                   status: FileStatus, error_details: str = None, config: FTPConfig = None):
     """Отображает последние N событий."""
     clear_screen()
     
     print("=" * 60)
-    print(f"  МОНИТОР РАЗГРУЗКИ ПОДВЕСОВ")
+    print("  МОНИТОР РАЗГРУЗКИ ПОДВЕСОВ (FTP)")
+    if config:
+        print(f"  Сервер: {config.host}:{config.port}")
     print(f"  Файл: {file_path}")
     print(f"  Обновлено: {datetime.now().strftime('%H:%M:%S')}")
     print(f"  Статус: {ERROR_MESSAGES.get(status, 'Неизвестно')}")
@@ -293,7 +304,6 @@ def display_events(events: List[UnloadEvent], count: int = 10, file_path: str = 
         print("  Нажмите Ctrl+C для выхода")
         return
     
-    # Берём последние N
     last_events = events[-count:]
     
     print(f"  Последние {len(last_events)} событий:")
@@ -310,10 +320,7 @@ def display_events(events: List[UnloadEvent], count: int = 10, file_path: str = 
 
 
 def countdown_sleep(seconds: float):
-    """
-    Ожидание с обратным отсчётом в одной строке.
-    Показывает оставшееся время до обновления.
-    """
+    """Ожидание с обратным отсчётом."""
     start = time.time()
     end = start + seconds
     
@@ -322,55 +329,44 @@ def countdown_sleep(seconds: float):
         if remaining <= 0:
             break
         
-        # Формируем строку с таймером
         bar_width = 20
         progress = 1 - (remaining / seconds)
         filled = int(bar_width * progress)
         bar = "█" * filled + "░" * (bar_width - filled)
         
-        # \r возвращает курсор в начало строки
         print(f"\r  Обновление через: {remaining:.1f} сек [{bar}]  ", end="", flush=True)
-        
         time.sleep(0.1)
     
-    # Очищаем строку таймера
     print("\r" + " " * 60 + "\r", end="", flush=True)
 
 
-def watch_file(file_path: str, count: int = 10, interval: float = 2.0):
-    """Основной цикл мониторинга файла."""
-    path = Path(file_path)
-    
-    print(f"Запуск мониторинга: {file_path}")
-    print(f"Интервал обновления: {interval} сек")
-    print(f"Показывать последних: {count} событий")
+def watch_file_ftp(config: FTPConfig, filename: str, count: int = 10):
+    """Основной цикл мониторинга файла по FTP."""
+    print(f"Запуск мониторинга: {filename}")
+    print(f"Сервер: {config}")
+    print(f"Интервал: {config.poll_interval} сек")
     print()
     
     try:
         while True:
-            content, status, error_details = read_file_safe(path)
+            content, status, error_details = ftp_read_file(config, filename)
             
             events = []
             if content:
                 events = parse_events(content)
             
-            display_events(events, count, str(path), status, error_details)
-            
-            # Обратный отсчёт вместо простого sleep
-            countdown_sleep(interval)
+            display_events(events, count, filename, status, error_details, config)
+            countdown_sleep(config.poll_interval)
             
     except KeyboardInterrupt:
         print("\n\nМониторинг остановлен.")
 
 
 def main():
-    # Загружаем дефолты из .env
-    default_dir = os.environ.get("FTP_LOG_DIR", "testdata/ftp")
+    config = FTPConfig()
     count = 10
-    interval = float(os.environ.get("FTP_POLL_INTERVAL", "2.0"))
-    file_path = None
+    filename = None
     
-    # Простой парсинг аргументов
     args = sys.argv[1:]
     
     if '--help' in args or '-h' in args:
@@ -378,19 +374,20 @@ def main():
 Использование: python file_watcher.py [файл] [опции]
 
 Опции:
-  -d, --dir DIR      Директория с файлами (из .env: {default_dir})
   -n, --count N      Количество последних событий (по умолчанию: 10)
-  -i, --interval N   Интервал обновления в секундах (из .env: {interval})
   -h, --help         Показать эту справку
 
-Переменные окружения (backend/.env):
-  FTP_LOG_DIR        Директория с лог-файлами
-  FTP_POLL_INTERVAL  Интервал обновления
+Настройки FTP из backend/.env:
+  FTP_HOST           {config.host}
+  FTP_PORT           {config.port}
+  FTP_USER           {config.user}
+  FTP_BASE_PATH      {config.base_path}
+  FTP_POLL_INTERVAL  {config.poll_interval} сек
 
 Примеры:
-  python file_watcher.py                              # Меню выбора файла
-  python file_watcher.py testdata/ftp/2025-11-29.txt  # Конкретный файл
-  python file_watcher.py -d C:/logs -n 5 -i 1         # Другая директория
+  python file_watcher.py                    # Меню выбора файла
+  python file_watcher.py 2025-12-24.txt     # Конкретный файл
+  python file_watcher.py -n 5               # Показать 5 событий
 """)
         sys.exit(0)
     
@@ -401,28 +398,19 @@ def main():
         if arg in ('-n', '--count') and i + 1 < len(args):
             count = int(args[i + 1])
             i += 2
-        elif arg in ('-i', '--interval') and i + 1 < len(args):
-            interval = float(args[i + 1])
-            i += 2
-        elif arg in ('-d', '--dir') and i + 1 < len(args):
-            default_dir = args[i + 1]
-            i += 2
         elif not arg.startswith('-'):
-            file_path = arg
+            filename = arg
             i += 1
         else:
             i += 1
     
-    # Если файл не указан - показываем меню выбора
-    if not file_path:
-        selected = select_file_menu(default_dir)
-        if selected:
-            file_path = str(selected)
-        else:
+    if not filename:
+        filename = select_file_menu_ftp(config)
+        if not filename:
             print("Файл не выбран. Выход.")
             sys.exit(0)
     
-    watch_file(file_path, count, interval)
+    watch_file_ftp(config, filename, count)
 
 
 if __name__ == "__main__":
