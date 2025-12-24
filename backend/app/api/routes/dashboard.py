@@ -405,7 +405,7 @@ async def get_matched_unload_events(
             hanger_num = str(event.hanger)
             candidates = products_by_hanger.get(hanger_num, [])
             
-            # Find best match: closest entry to exit (in both directions within 2 days)
+            # Find best match: entry must be BEFORE exit, closest to exit
             exit_date_tuple = parse_date(event.date or event_date or "")
             exit_time_tuple = parse_time(event.time)
             exit_seconds = datetime_to_seconds(exit_date_tuple, exit_time_tuple)
@@ -419,17 +419,29 @@ async def get_matched_unload_events(
                 if p_key in used_entries:
                     continue
                 
-                entry_date_tuple = parse_date(str(p.get('date', '')))
-                entry_time_tuple = parse_time(str(p.get('time', '')))
+                entry_date = str(p.get('date', ''))
+                entry_time = str(p.get('time', ''))
+                
+                # Skip entries without time (not yet started)
+                if not entry_time or entry_time == '—':
+                    continue
+                
+                entry_date_tuple = parse_date(entry_date)
+                entry_time_tuple = parse_time(entry_time)
                 entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
                 
-                # Calculate absolute difference in seconds
-                diff = abs(exit_seconds - entry_seconds)
+                # Entry must be BEFORE exit (подвес не может выйти раньше чем вошёл)
+                if entry_seconds >= exit_seconds:
+                    continue
+                
+                # Calculate difference (exit - entry, always positive now)
+                diff = exit_seconds - entry_seconds
                 
                 # Skip if more than 2 days apart
                 if diff > 2 * 86400:
                     continue
                 
+                # Take the closest entry (smallest diff)
                 if best_diff is None or diff < best_diff:
                     best_diff = diff
                     product = p
@@ -815,19 +827,31 @@ async def get_debug_matching(
                 p_key = make_product_key(p)
                 entry_date = str(p.get('date', ''))
                 entry_time = str(p.get('time', ''))
+                
+                # Check if entry has time
+                has_time = entry_time and entry_time != '—'
+                
                 entry_date_tuple = parse_date(entry_date)
-                entry_time_tuple = parse_time(entry_time)
+                entry_time_tuple = parse_time(entry_time) if has_time else (0, 0, 0)
                 entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
                 
-                diff = abs(exit_seconds - entry_seconds)
-                diff_hours = diff / 3600
+                # Entry must be BEFORE exit
+                is_after_exit = entry_seconds >= exit_seconds
+                
+                diff = exit_seconds - entry_seconds if not is_after_exit else -(entry_seconds - exit_seconds)
+                diff_hours = abs(diff) / 3600
                 
                 is_used = p_key in used_entries
-                is_too_far = diff > 2 * 86400
+                is_too_far = abs(diff) > 2 * 86400
+                is_no_time = not has_time
                 
                 status = "OK"
                 if is_used:
                     status = "USED"
+                elif is_no_time:
+                    status = "NO_TIME"
+                elif is_after_exit:
+                    status = "AFTER_EXIT"
                 elif is_too_far:
                     status = "TOO_FAR"
                 
@@ -840,7 +864,8 @@ async def get_debug_matching(
                     "status": status,
                 })
                 
-                if not is_used and not is_too_far:
+                # Only match if: has time, before exit, not used, not too far
+                if not is_used and not is_too_far and not is_no_time and not is_after_exit:
                     if best_diff is None or diff < best_diff:
                         best_diff = diff
                         best_product = p
