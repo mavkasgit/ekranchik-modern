@@ -54,6 +54,13 @@ export const dashboardApi = {
     })
     return data
   },
+
+  getDebugMatching: async (limit = 30): Promise<DebugMatchingData> => {
+    const { data } = await api.get<DebugMatchingData>('/dashboard/debug/matching', {
+      params: { limit },
+    })
+    return data
+  },
 }
 
 export interface DebugRawData {
@@ -82,6 +89,36 @@ export interface DebugRawData {
   }
   today: string
   note: string
+}
+
+export interface DebugMatchingData {
+  today: string
+  total_ftp_events: number
+  total_excel_products: number
+  showing: number
+  matches: Array<{
+    ftp_event: {
+      date: string
+      time: string
+      hanger: number
+    }
+    candidates_count: number
+    candidates: Array<{
+      entry_date: string
+      entry_time: string
+      client: string
+      profile: string
+      diff_hours: number
+      status: string
+    }>
+    matched: {
+      entry_date: string | null
+      entry_time: string | null
+      client: string | null
+      profile: string | null
+      diff_hours: number | null
+    } | null
+  }>
 }
 
 export interface SimulationStatus {

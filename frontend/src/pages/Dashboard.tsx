@@ -27,7 +27,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useDashboard, useFileStatus, useFTPStatus, useMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
-import { dashboardApi, type DebugRawData } from '@/api/dashboard'
+import { dashboardApi, type DebugRawData, type DebugMatchingData } from '@/api/dashboard'
 
 const FILTERS_KEY = 'ekranchik_filters'
 
@@ -445,66 +445,166 @@ function StatusBar({ onSimulationToggle, isSimulating, onDebugClick }: { onSimul
 }
 
 // Debug Modal
-function DebugModal({ open, onClose }: { open: boolean, onClose: () => void }) {
-  const [data, setData] = useState<DebugRawData | null>(null)
+function DebugModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [tab, setTab] = useState<'raw' | 'matching'>('matching')
+  const [rawData, setRawData] = useState<DebugRawData | null>(null)
+  const [matchData, setMatchData] = useState<DebugMatchingData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (open) {
-      setLoading(true)
-      setError(null)
-      dashboardApi.getDebugRawData(50)
-        .then(setData)
-        .catch(e => setError(e.message))
-        .finally(() => setLoading(false))
-    }
-  }, [open])
-
-  const refresh = () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
-    dashboardApi.getDebugRawData(50)
-      .then(setData)
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false))
-  }
+    try {
+      if (tab === 'raw') {
+        const data = await dashboardApi.getDebugRawData(50)
+        setRawData(data)
+      } else {
+        const data = await dashboardApi.getDebugMatching(30)
+        setMatchData(data)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unknown error')
+    } finally {
+      setLoading(false)
+    }
+  }, [tab])
+
+  useEffect(() => {
+    if (open) {
+      loadData()
+    }
+  }, [open, tab, loadData])
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-hidden p-0">
         <div className="p-4 border-b flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h2 className="text-lg font-bold">🔧 DEBUG: Сырые данные</h2>
-            {data && <Badge>Сегодня: {data.today}</Badge>}
+            <h2 className="text-lg font-bold">🔧 DEBUG</h2>
+            <div className="flex gap-1">
+              <Button
+                variant={tab === 'matching' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setTab('matching')}
+              >
+                🔗 Матчинг
+              </Button>
+              <Button
+                variant={tab === 'raw' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setTab('raw')}
+              >
+                📊 Сырые данные
+              </Button>
+            </div>
+            {matchData && tab === 'matching' && <Badge>Сегодня: {matchData.today}</Badge>}
+            {rawData && tab === 'raw' && <Badge>Сегодня: {rawData.today}</Badge>}
           </div>
-          <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
             <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
             Обновить
           </Button>
         </div>
-        
+
         {loading && (
           <div className="p-8 text-center">
             <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
             Загрузка...
           </div>
         )}
-        
+
         {error && (
-          <div className="p-8 text-center text-red-500">
-            Ошибка: {error}
+          <div className="p-8 text-center text-red-500">Ошибка: {error}</div>
+        )}
+
+        {/* Matching Tab */}
+        {tab === 'matching' && matchData && !loading && (
+          <div className="p-4 overflow-auto max-h-[calc(90vh-80px)]">
+            <div className="mb-2 text-sm text-muted-foreground">
+              FTP: {matchData.total_ftp_events} событий | Excel: {matchData.total_excel_products} записей | Показано: {matchData.showing}
+            </div>
+            <div className="space-y-3">
+              {matchData.matches.map((m, i) => (
+                <div key={i} className="border rounded p-3 bg-card">
+                  <div className="flex items-start gap-4">
+                    {/* FTP Event */}
+                    <div className="bg-green-100 dark:bg-green-900 rounded p-2 min-w-[150px]">
+                      <div className="text-xs text-green-700 dark:text-green-300 font-bold mb-1">📡 FTP ВЫХОД</div>
+                      <div className="font-mono text-sm">
+                        <div>Дата: <b>{m.ftp_event.date}</b></div>
+                        <div>Время: <b>{m.ftp_event.time}</b></div>
+                        <div>Подвес: <b className="text-lg">{m.ftp_event.hanger}</b></div>
+                      </div>
+                    </div>
+
+                    {/* Arrow */}
+                    <div className="text-2xl self-center">→</div>
+
+                    {/* Matched Result */}
+                    <div className={`rounded p-2 min-w-[200px] ${m.matched ? 'bg-blue-100 dark:bg-blue-900' : 'bg-red-100 dark:bg-red-900'}`}>
+                      <div className={`text-xs font-bold mb-1 ${m.matched ? 'text-blue-700 dark:text-blue-300' : 'text-red-700 dark:text-red-300'}`}>
+                        {m.matched ? '✅ СМАТЧЕНО' : '❌ НЕ НАЙДЕНО'}
+                      </div>
+                      {m.matched ? (
+                        <div className="font-mono text-sm">
+                          <div>Дата: <b>{m.matched.entry_date}</b></div>
+                          <div>Время: <b>{m.matched.entry_time}</b></div>
+                          <div>Разница: <b>{m.matched.diff_hours}ч</b></div>
+                          <div className="truncate max-w-[180px]">Клиент: {m.matched.client}</div>
+                          <div className="truncate max-w-[180px]">Профиль: {m.matched.profile}</div>
+                        </div>
+                      ) : (
+                        <div className="text-sm">Кандидатов: {m.candidates_count}</div>
+                      )}
+                    </div>
+
+                    {/* Candidates */}
+                    {m.candidates.length > 0 && (
+                      <div className="flex-1 min-w-[300px]">
+                        <div className="text-xs text-muted-foreground mb-1">
+                          Кандидаты ({m.candidates_count}):
+                        </div>
+                        <div className="text-xs space-y-1 max-h-[100px] overflow-auto">
+                          {m.candidates.map((c, j) => (
+                            <div
+                              key={j}
+                              className={`font-mono px-1 rounded ${
+                                c.status === 'OK'
+                                  ? 'bg-green-50 dark:bg-green-950'
+                                  : c.status === 'USED'
+                                  ? 'bg-yellow-50 dark:bg-yellow-950 line-through'
+                                  : 'bg-red-50 dark:bg-red-950 line-through'
+                              }`}
+                            >
+                              {c.entry_date} {c.entry_time} | {c.diff_hours}ч |{' '}
+                              <span className={c.status !== 'OK' ? 'text-muted-foreground' : ''}>
+                                {c.status}
+                              </span>{' '}
+                              | {c.client?.slice(0, 15)}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
-        
-        {data && !loading && (
+
+        {/* Raw Data Tab */}
+        {tab === 'raw' && rawData && !loading && (
           <div className="flex gap-4 p-4 overflow-auto max-h-[calc(90vh-80px)]">
             {/* FTP Events */}
             <div className="flex-1 min-w-[400px]">
               <div className="mb-2 flex items-center gap-2">
                 <h3 className="font-bold text-green-600">📡 FTP События</h3>
-                <Badge variant="outline">{data.ftp.source}</Badge>
-                <Badge>{data.ftp.showing} / {data.ftp.total_cached}</Badge>
+                <Badge variant="outline">{rawData.ftp.source}</Badge>
+                <Badge>
+                  {rawData.ftp.showing} / {rawData.ftp.total_cached}
+                </Badge>
               </div>
               <div className="border rounded max-h-[60vh] overflow-auto">
                 <Table>
@@ -516,7 +616,7 @@ function DebugModal({ open, onClose }: { open: boolean, onClose: () => void }) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.ftp.events.map((e, i) => (
+                    {rawData.ftp.events.map((e, i) => (
                       <TableRow key={i} className={i % 2 === 0 ? 'bg-green-50 dark:bg-green-950' : ''}>
                         <TableCell className="text-xs py-1 font-mono">{e.date}</TableCell>
                         <TableCell className="text-xs py-1 font-mono">{e.time}</TableCell>
@@ -532,7 +632,9 @@ function DebugModal({ open, onClose }: { open: boolean, onClose: () => void }) {
             <div className="flex-1 min-w-[500px]">
               <div className="mb-2 flex items-center gap-2">
                 <h3 className="font-bold text-blue-600">📊 Excel Записи</h3>
-                <Badge>{data.excel.showing} / {data.excel.total}</Badge>
+                <Badge>
+                  {rawData.excel.showing} / {rawData.excel.total}
+                </Badge>
               </div>
               <div className="border rounded max-h-[60vh] overflow-auto">
                 <Table>
@@ -547,7 +649,7 @@ function DebugModal({ open, onClose }: { open: boolean, onClose: () => void }) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.excel.products.map((p, i) => (
+                    {rawData.excel.products.map((p, i) => (
                       <TableRow key={i} className={i % 2 === 0 ? 'bg-blue-50 dark:bg-blue-950' : ''}>
                         <TableCell className="text-xs py-1 font-mono">{p.date}</TableCell>
                         <TableCell className="text-xs py-1 font-mono">{p.time}</TableCell>

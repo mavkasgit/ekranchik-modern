@@ -691,3 +691,170 @@ async def get_debug_raw_data(
         "today": date.today().strftime("%d.%m.%Y"),
         "note": "FTP events sorted newest first, Excel products sorted by date desc"
     }
+
+
+@router.get("/debug/matching")
+async def get_debug_matching(
+    limit: int = Query(default=30, ge=1, le=100, description="Number of events to match")
+):
+    """
+    DEBUG: Show matching process step by step.
+    For each FTP event shows all candidates and why one was chosen.
+    """
+    from datetime import date
+    
+    # Get FTP events
+    if ftp_service.is_simulation:
+        events = ftp_service.get_all_simulation_events()
+        event_date = ftp_service._simulation_date
+    else:
+        events = ftp_poller.cached_events
+        event_date = None
+    
+    if not events:
+        return {"error": "No FTP events", "matches": []}
+    
+    # Get Excel products
+    products = excel_service.get_products(limit=1000, days=30)
+    
+    # Build lookup by hanger
+    products_by_hanger: dict[str, list] = {}
+    for p in products:
+        num = str(p.get('number', ''))
+        if num:
+            if num not in products_by_hanger:
+                products_by_hanger[num] = []
+            products_by_hanger[num].append(p)
+    
+    # Helper functions
+    def parse_date(date_str: str) -> tuple:
+        if not date_str:
+            return (0, 0, 0)
+        try:
+            parts = date_str.split('.')
+            if len(parts) == 3:
+                day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
+                if year < 100:
+                    year += 2000
+                return (year, month, day)
+        except:
+            pass
+        return (0, 0, 0)
+    
+    def parse_time(time_str: str) -> tuple:
+        if not time_str:
+            return (0, 0, 0)
+        try:
+            parts = time_str.split(':')
+            hour = int(parts[0]) if len(parts) > 0 else 0
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            second = int(parts[2]) if len(parts) > 2 else 0
+            return (hour, minute, second)
+        except:
+            pass
+        return (0, 0, 0)
+    
+    def date_to_days(date_tuple: tuple) -> int:
+        year, month, day = date_tuple
+        return year * 365 + month * 30 + day
+    
+    def datetime_to_seconds(date_tuple: tuple, time_tuple: tuple) -> float:
+        days = date_to_days(date_tuple)
+        secs = time_tuple[0] * 3600 + time_tuple[1] * 60 + time_tuple[2]
+        return days * 86400 + secs
+    
+    def make_product_key(p: dict) -> str:
+        return f"{p.get('date', '')}|{p.get('time', '')}|{p.get('number', '')}"
+    
+    # Track used entries
+    used_entries: set = set()
+    
+    # Sort events by time (oldest first)
+    events_to_match = sorted(
+        events[-limit:],
+        key=lambda e: datetime_to_seconds(
+            parse_date(e.date or event_date or ""),
+            parse_time(e.time)
+        )
+    )
+    
+    matches = []
+    for event in events_to_match:
+        hanger_num = str(event.hanger)
+        candidates = products_by_hanger.get(hanger_num, [])
+        
+        exit_date = event.date or event_date or ""
+        exit_date_tuple = parse_date(exit_date)
+        exit_time_tuple = parse_time(event.time)
+        exit_seconds = datetime_to_seconds(exit_date_tuple, exit_time_tuple)
+        
+        # Evaluate all candidates
+        candidate_info = []
+        best_product = None
+        best_diff = None
+        
+        for p in candidates:
+            p_key = make_product_key(p)
+            entry_date = str(p.get('date', ''))
+            entry_time = str(p.get('time', ''))
+            entry_date_tuple = parse_date(entry_date)
+            entry_time_tuple = parse_time(entry_time)
+            entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
+            
+            diff = abs(exit_seconds - entry_seconds)
+            diff_hours = diff / 3600
+            
+            is_used = p_key in used_entries
+            is_too_far = diff > 2 * 86400
+            
+            status = "OK"
+            if is_used:
+                status = "USED"
+            elif is_too_far:
+                status = "TOO_FAR"
+            
+            candidate_info.append({
+                "entry_date": entry_date,
+                "entry_time": entry_time,
+                "client": p.get('client', ''),
+                "profile": p.get('profile', ''),
+                "diff_hours": round(diff_hours, 2),
+                "status": status,
+            })
+            
+            if not is_used and not is_too_far:
+                if best_diff is None or diff < best_diff:
+                    best_diff = diff
+                    best_product = p
+        
+        # Mark as used
+        if best_product:
+            used_entries.add(make_product_key(best_product))
+        
+        matches.append({
+            "ftp_event": {
+                "date": exit_date,
+                "time": event.time,
+                "hanger": event.hanger,
+            },
+            "candidates_count": len(candidates),
+            "candidates": candidate_info[:10],  # Limit to 10 candidates
+            "matched": {
+                "entry_date": str(best_product.get('date', '')) if best_product else None,
+                "entry_time": str(best_product.get('time', '')) if best_product else None,
+                "client": best_product.get('client', '') if best_product else None,
+                "profile": best_product.get('profile', '') if best_product else None,
+                "diff_hours": round(best_diff / 3600, 2) if best_diff else None,
+            } if best_product else None,
+        })
+    
+    # Reverse to show newest first
+    matches.reverse()
+    
+    return {
+        "today": date.today().strftime("%d.%m.%Y"),
+        "total_ftp_events": len(events),
+        "total_excel_products": len(products),
+        "showing": len(matches),
+        "matches": matches,
+    }
