@@ -1,15 +1,22 @@
 """
 FTP Poller Service - polls FTP server for new unload events.
+
+Двухдневный режим:
+- Всегда читает 2 файла целиком (сегодня + вчера)
+- Кэширует события для определения новых
+- WebSocket отправляет только новые события
+- API отдаёт все события из кэша
 """
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Set, List
 from datetime import datetime
 
 from app.core.config import settings
 from app.services.ftp_service import ftp_service
 from app.services.websocket_manager import websocket_manager
 from app.schemas.websocket import WebSocketMessage
+from app.schemas.dashboard import UnloadEvent
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +25,11 @@ class FTPPoller:
     """
     Service for polling FTP server for new events.
     
-    Runs an async polling loop that checks for new unload events
-    and broadcasts them via WebSocket.
+    Двухдневный режим работы:
+    - Читает 2 файла целиком каждый poll
+    - Хранит кэш всех событий
+    - Определяет новые события по уникальному ключу (date+time+hanger)
+    - Отправляет через WebSocket только новые
     """
     
     def __init__(self):
@@ -27,11 +37,29 @@ class FTPPoller:
         self._task: Optional[asyncio.Task] = None
         self._poll_interval = settings.FTP_POLL_INTERVAL
         self._wake_event: Optional[asyncio.Event] = None
+        
+        # Кэш событий для определения новых
+        self._events_cache: List[UnloadEvent] = []
+        self._seen_keys: Set[str] = set()  # "date|time|hanger"
     
     @property
     def is_running(self) -> bool:
         """Check if poller is running."""
         return self._running
+    
+    @property
+    def cached_events(self) -> List[UnloadEvent]:
+        """Get all cached events."""
+        return self._events_cache.copy()
+    
+    @property
+    def events_count(self) -> int:
+        """Get count of cached events."""
+        return len(self._events_cache)
+    
+    def _make_event_key(self, event: UnloadEvent) -> str:
+        """Create unique key for event deduplication."""
+        return f"{event.date}|{event.time}|{event.hanger}"
     
     async def _poll_loop(self) -> None:
         """Main polling loop."""
@@ -64,10 +92,10 @@ class FTPPoller:
         
         logger.info(f"[FTP] Polling FTP server {settings.FTP_HOST}...")
         
-        # Read multiple days of logs (configured in settings)
-        events, date_changed = await ftp_service.poll_multiday(days=settings.FTP_DAYS_TO_READ)
+        # ВСЕГДА читаем 2 дня целиком (сегодня + вчера)
+        all_events, date_changed = await ftp_service.poll_multiday(days=settings.FTP_DAYS_TO_READ)
         
-        logger.info(f"[FTP] Poll complete: {len(events) if events else 0} new events, connected={ftp_service.is_connected}")
+        logger.info(f"[FTP] Poll complete: {len(all_events) if all_events else 0} events from {settings.FTP_DAYS_TO_READ} days, connected={ftp_service.is_connected}")
         
         if date_changed:
             # Notify clients about date rollover
@@ -83,9 +111,21 @@ class FTPPoller:
             await websocket_manager.broadcast(message)
             logger.info("FTP date rollover detected")
         
-        if events:
-            # Broadcast each event
-            for event in events:
+        # Определяем НОВЫЕ события (которых не было в кэше)
+        new_events = []
+        if all_events:
+            for event in all_events:
+                key = self._make_event_key(event)
+                if key not in self._seen_keys:
+                    self._seen_keys.add(key)
+                    new_events.append(event)
+            
+            # Обновляем кэш всеми событиями
+            self._events_cache = all_events
+        
+        # Отправляем через WebSocket только НОВЫЕ события
+        if new_events:
+            for event in new_events:
                 message = WebSocketMessage(
                     type="unload_event",
                     payload={
@@ -98,7 +138,7 @@ class FTPPoller:
                 )
                 await websocket_manager.broadcast(message)
             
-            logger.info(f"Broadcast {len(events)} {'simulation' if ftp_service.is_simulation else 'FTP'} events")
+            logger.info(f"[FTP] Broadcast {len(new_events)} NEW events (total cached: {len(self._events_cache)})")
         
         # Update connection status
         if ftp_service.is_connected or ftp_service.is_simulation:

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Ekranchik Modern - System Launcher v2
 Модернизированный дизайн по 10 советам
 """
@@ -47,7 +47,15 @@ BACKEND_DIR = BASE_DIR / "backend"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
 # Команды запуска
-BACKEND_CMD = [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# При запуске из EXE используем системный Python, иначе текущий интерпретатор
+if getattr(sys, 'frozen', False):
+    # Запуск из EXE - ищем Python в системе
+    import shutil
+    PYTHON_EXE = shutil.which("python") or shutil.which("python3") or "python"
+else:
+    PYTHON_EXE = sys.executable
+
+BACKEND_CMD = [PYTHON_EXE, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 FRONTEND_CMD = ["npm", "run", "dev"]
 
 # FTP настройки
@@ -73,6 +81,19 @@ if sys.platform == 'win32':
     CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW
 else:
     CREATE_NO_WINDOW = 0
+
+
+def get_hidden_subprocess_args():
+    """Возвращает аргументы для скрытого запуска subprocess на Windows"""
+    if sys.platform == 'win32':
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        return {
+            'creationflags': CREATE_NO_WINDOW,
+            'startupinfo': startupinfo
+        }
+    return {}
 
 
 # === Цветовая палитра ===
@@ -131,6 +152,9 @@ class ProcessManager:
             return False
             
         try:
+            # Получаем аргументы для скрытого запуска
+            hidden_args = get_hidden_subprocess_args()
+            
             self.process = subprocess.Popen(
                 self.cmd,
                 cwd=self.cwd,
@@ -139,7 +163,7 @@ class ProcessManager:
                 text=True,
                 bufsize=1,
                 shell=True if "npm" in self.cmd[0] else False,
-                creationflags=CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                **hidden_args
             )
             
             self._stop_reading.clear()
@@ -1108,6 +1132,14 @@ if HAS_GUI:
                 corner_radius=6, command=self._stop_all
             ).pack(side="left", padx=(0, 8))
             
+            # Кнопка открытия сайта
+            ctk.CTkButton(
+                status_frame, text="🌐 Открыть", width=90, height=32,
+                font=ctk.CTkFont(family=FONTS['small'][0], size=11),
+                fg_color=COLORS['border'], hover_color=COLORS['accent'],
+                corner_radius=6, command=self._open_website
+            ).pack(side="left", padx=(0, 8))
+            
             # Кнопка выхода
             ctk.CTkButton(
                 status_frame, text="Выход ✕", width=80, height=32,
@@ -1177,6 +1209,19 @@ if HAS_GUI:
                 self.pages["frontend"].stop()
             if self.backend_manager.is_running:
                 self.pages["backend"].stop()
+        
+        def _open_website(self):
+            """Открыть сайт в браузере"""
+            import webbrowser
+            url = "http://ktm.local"
+            try:
+                webbrowser.open(url)
+            except Exception as e:
+                # Fallback на localhost если ktm.local не работает
+                try:
+                    webbrowser.open("http://localhost:5173")
+                except Exception:
+                    pass
         
         def _start_log_updates(self):
             def update():
@@ -1296,19 +1341,288 @@ class ConsoleMode:
             print("Система остановлена")
 
 
+def run_startup_diagnostics() -> dict:
+    """
+    Запускает диагностику системы при старте.
+    Возвращает словарь с результатами проверок.
+    """
+    import shutil
+    
+    results = {
+        'errors': [],
+        'warnings': [],
+        'info': [],
+        'checks': {}
+    }
+    
+    # === 1. Режим запуска ===
+    is_frozen = getattr(sys, 'frozen', False)
+    results['info'].append(f"Режим запуска: {'EXE (PyInstaller)' if is_frozen else 'Python скрипт'}")
+    results['info'].append(f"sys.executable: {sys.executable}")
+    results['checks']['frozen'] = is_frozen
+    
+    if is_frozen:
+        results['info'].append(f"_MEIPASS: {getattr(sys, '_MEIPASS', 'N/A')}")
+    
+    # === 2. Пути ===
+    results['info'].append(f"BASE_DIR: {BASE_DIR}")
+    results['info'].append(f"BACKEND_DIR: {BACKEND_DIR}")
+    results['info'].append(f"FRONTEND_DIR: {FRONTEND_DIR}")
+    
+    # === 3. Проверка директорий ===
+    if not BASE_DIR.exists():
+        results['errors'].append(f"BASE_DIR не существует: {BASE_DIR}")
+        results['checks']['base_dir'] = False
+    else:
+        results['checks']['base_dir'] = True
+    
+    if not BACKEND_DIR.exists():
+        results['errors'].append(f"BACKEND_DIR не существует: {BACKEND_DIR}")
+        results['checks']['backend_dir'] = False
+    else:
+        results['checks']['backend_dir'] = True
+        # Проверяем структуру бэкенда
+        app_main = BACKEND_DIR / "app" / "main.py"
+        if not app_main.exists():
+            results['warnings'].append(f"app/main.py не найден в {BACKEND_DIR}")
+        requirements = BACKEND_DIR / "requirements.txt"
+        if not requirements.exists():
+            results['warnings'].append(f"requirements.txt не найден в {BACKEND_DIR}")
+    
+    if not FRONTEND_DIR.exists():
+        results['errors'].append(f"FRONTEND_DIR не существует: {FRONTEND_DIR}")
+        results['checks']['frontend_dir'] = False
+    else:
+        results['checks']['frontend_dir'] = True
+        # Проверяем структуру фронтенда
+        package_json = FRONTEND_DIR / "package.json"
+        if not package_json.exists():
+            results['warnings'].append(f"package.json не найден в {FRONTEND_DIR}")
+        node_modules = FRONTEND_DIR / "node_modules"
+        if not node_modules.exists():
+            results['warnings'].append(f"node_modules не найден - нужен npm install")
+    
+    # === 4. Проверка Python ===
+    results['info'].append(f"PYTHON_EXE: {PYTHON_EXE}")
+    
+    python_found = shutil.which(PYTHON_EXE) if is_frozen else True
+    if is_frozen and not python_found:
+        # Пробуем найти Python разными способами
+        python_paths = [
+            shutil.which("python"),
+            shutil.which("python3"),
+            shutil.which("py"),
+        ]
+        python_found = any(python_paths)
+        if python_found:
+            found_path = next(p for p in python_paths if p)
+            results['info'].append(f"Python найден: {found_path}")
+        else:
+            results['errors'].append("Python не найден в PATH! Бэкенд не запустится.")
+            results['errors'].append("Установите Python и добавьте в PATH")
+    
+    results['checks']['python'] = bool(python_found)
+    
+    # Аргументы для скрытого запуска
+    hidden_args = get_hidden_subprocess_args()
+    
+    # Проверяем версию Python
+    try:
+        if is_frozen:
+            proc = subprocess.run(
+                [PYTHON_EXE, "--version"],
+                capture_output=True, text=True, timeout=5,
+                **hidden_args
+            )
+            if proc.returncode == 0:
+                results['info'].append(f"Python версия: {proc.stdout.strip()}")
+            else:
+                results['warnings'].append(f"Не удалось получить версию Python: {proc.stderr}")
+        else:
+            results['info'].append(f"Python версия: {sys.version.split()[0]}")
+    except Exception as e:
+        results['warnings'].append(f"Ошибка проверки версии Python: {e}")
+    
+    # === 5. Проверка uvicorn ===
+    try:
+        proc = subprocess.run(
+            [PYTHON_EXE, "-c", "import uvicorn; print(uvicorn.__version__)"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(BACKEND_DIR),
+            **hidden_args
+        )
+        if proc.returncode == 0:
+            results['info'].append(f"uvicorn версия: {proc.stdout.strip()}")
+            results['checks']['uvicorn'] = True
+        else:
+            results['errors'].append(f"uvicorn не установлен: {proc.stderr.strip()}")
+            results['errors'].append("Выполните: pip install uvicorn")
+            results['checks']['uvicorn'] = False
+    except subprocess.TimeoutExpired:
+        results['warnings'].append("Таймаут проверки uvicorn")
+        results['checks']['uvicorn'] = None
+    except Exception as e:
+        results['warnings'].append(f"Ошибка проверки uvicorn: {e}")
+        results['checks']['uvicorn'] = None
+    
+    # === 6. Проверка npm ===
+    npm_path = shutil.which("npm")
+    if npm_path:
+        results['info'].append(f"npm найден: {npm_path}")
+        results['checks']['npm'] = True
+        try:
+            proc = subprocess.run(
+                ["npm", "--version"],
+                capture_output=True, text=True, timeout=5,
+                shell=True,
+                **hidden_args
+            )
+            if proc.returncode == 0:
+                results['info'].append(f"npm версия: {proc.stdout.strip()}")
+        except:
+            pass
+    else:
+        results['warnings'].append("npm не найден в PATH - фронтенд не запустится")
+        results['checks']['npm'] = False
+    
+    # === 7. Проверка .env ===
+    env_file = BACKEND_DIR / ".env"
+    if env_file.exists():
+        results['info'].append(f".env файл найден: {env_file}")
+        results['checks']['env_file'] = True
+    else:
+        results['warnings'].append(f".env файл не найден: {env_file}")
+        env_example = BACKEND_DIR / ".env.example"
+        if env_example.exists():
+            results['warnings'].append("Скопируйте .env.example в .env")
+        results['checks']['env_file'] = False
+    
+    # === 8. Проверка GUI ===
+    results['checks']['gui'] = HAS_GUI
+    results['checks']['tray'] = HAS_TRAY
+    if not HAS_GUI:
+        results['warnings'].append("GUI библиотеки недоступны (customtkinter, PIL)")
+    
+    # === 9. Проверка theme.json ===
+    if THEME_PATH.exists():
+        results['info'].append(f"theme.json найден: {THEME_PATH}")
+        results['checks']['theme'] = True
+    else:
+        results['warnings'].append(f"theme.json не найден: {THEME_PATH}")
+        results['checks']['theme'] = False
+    
+    return results
+
+
+def print_diagnostics(results: dict):
+    """Выводит результаты диагностики в консоль"""
+    print("\n" + "=" * 60)
+    print("  ДИАГНОСТИКА EKRANCHIK LAUNCHER")
+    print("=" * 60)
+    
+    print("\n[INFO] Информация о системе:")
+    for info in results['info']:
+        print(f"  • {info}")
+    
+    if results['warnings']:
+        print("\n[WARNING] Предупреждения:")
+        for warn in results['warnings']:
+            print(f"  ⚠ {warn}")
+    
+    if results['errors']:
+        print("\n[ERROR] Ошибки:")
+        for err in results['errors']:
+            print(f"  ✗ {err}")
+    
+    print("\n[CHECKS] Статус проверок:")
+    for check, status in results['checks'].items():
+        icon = "✓" if status else ("?" if status is None else "✗")
+        print(f"  {icon} {check}: {status}")
+    
+    print("\n" + "=" * 60)
+    
+    return len(results['errors']) == 0
+
+
+def show_diagnostics_dialog(results: dict):
+    """Показывает диалог с результатами диагностики (если есть ошибки)"""
+    if not HAS_GUI:
+        return
+    
+    has_errors = len(results['errors']) > 0
+    has_warnings = len(results['warnings']) > 0
+    
+    if not has_errors and not has_warnings:
+        return  # Всё ок, не показываем диалог
+    
+    try:
+        import tkinter.messagebox as messagebox
+        
+        title = "Ошибки запуска" if has_errors else "Предупреждения"
+        
+        message_parts = []
+        
+        if results['errors']:
+            message_parts.append("ОШИБКИ:")
+            for err in results['errors']:
+                message_parts.append(f"• {err}")
+        
+        if results['warnings']:
+            if message_parts:
+                message_parts.append("")
+            message_parts.append("ПРЕДУПРЕЖДЕНИЯ:")
+            for warn in results['warnings'][:5]:  # Показываем только первые 5
+                message_parts.append(f"• {warn}")
+            if len(results['warnings']) > 5:
+                message_parts.append(f"... и ещё {len(results['warnings']) - 5}")
+        
+        message = "\n".join(message_parts)
+        
+        if has_errors:
+            messagebox.showerror(title, message)
+        else:
+            messagebox.showwarning(title, message)
+            
+    except Exception as e:
+        print(f"Не удалось показать диалог: {e}")
+
+
 def main():
     """Главная функция"""
     
-    if not BACKEND_DIR.exists():
-        print(f"Директория бэкенда не найдена: {BACKEND_DIR}")
+    # Запускаем диагностику
+    print("\nЗапуск диагностики...")
+    results = run_startup_diagnostics()
+    
+    # Выводим в консоль
+    diagnostics_ok = print_diagnostics(results)
+    
+    # Критические ошибки - не запускаемся
+    if not results['checks'].get('backend_dir', False):
+        print(f"\n[FATAL] Директория бэкенда не найдена: {BACKEND_DIR}")
+        print("Проверьте расположение EXE файла относительно проекта")
+        show_diagnostics_dialog(results)
         sys.exit(1)
     
-    if not FRONTEND_DIR.exists():
-        print(f"Директория фронтенда не найдена: {FRONTEND_DIR}")
+    if not results['checks'].get('frontend_dir', False):
+        print(f"\n[FATAL] Директория фронтенда не найдена: {FRONTEND_DIR}")
+        show_diagnostics_dialog(results)
         sys.exit(1)
     
+    if not results['checks'].get('python', False):
+        print(f"\n[FATAL] Python не найден в системе!")
+        show_diagnostics_dialog(results)
+        sys.exit(1)
+    
+    # Показываем предупреждения если есть
+    if results['warnings'] or results['errors']:
+        show_diagnostics_dialog(results)
+    
+    # Запускаем приложение
     if HAS_GUI and "--console" not in sys.argv:
         app = LauncherApp()
+        # Передаём результаты диагностики в приложение
+        app.startup_diagnostics = results
         app.run()
     else:
         if not HAS_GUI:
@@ -1318,4 +1632,11 @@ def main():
 
 
 if __name__ == "__main__":
+    # Режим только диагностики
+    if "--diagnose" in sys.argv or "--diag" in sys.argv:
+        results = run_startup_diagnostics()
+        print_diagnostics(results)
+        input("\nНажмите Enter для выхода...")
+        sys.exit(0 if len(results['errors']) == 0 else 1)
+    
     main()

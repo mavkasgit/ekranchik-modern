@@ -52,8 +52,9 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("[STARTUP] Excel path not configured, ExcelWatcher not started")
     
-    # FTPPoller НЕ запускается автоматически - управляется через API
-    logger.info("[STARTUP] FTPPoller ready (start via API: POST /api/dashboard/poller/start)")
+    # Start FTPPoller automatically
+    await ftp_poller.start()
+    logger.info("[STARTUP] FTPPoller started automatically")
     
     yield
     

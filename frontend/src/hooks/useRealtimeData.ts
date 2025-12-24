@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { WebSocketMessage } from '@/types/dashboard'
+import { WS_RECONNECT_INTERVAL } from '@/config/intervals'
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
@@ -14,7 +15,7 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
   const { 
     onMessage, 
     autoReconnect = true, 
-    reconnectInterval = 5000 
+    reconnectInterval = WS_RECONNECT_INTERVAL 
   } = options
   
   const [status, setStatus] = useState<ConnectionStatus>('disconnected')
@@ -29,6 +30,7 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host}/ws`
     
+    console.log('[WS] Connecting to:', wsUrl)
     setStatus('connecting')
     
     try {
@@ -37,29 +39,32 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
 
       ws.onopen = () => {
         setStatus('connected')
-        console.log('WebSocket connected')
+        console.log('[WS] Connected')
       }
 
       ws.onmessage = (event) => {
         try {
           const message: WebSocketMessage = JSON.parse(event.data)
+          console.log('[WS] Received:', message.type, message.payload)
           setLastMessage(message)
           onMessage?.(message)
 
-          // Invalidate queries based on message type
+          // Invalidate and refetch queries based on message type
           if (message.type === 'data_update') {
             queryClient.invalidateQueries({ queryKey: ['dashboard'] })
           } else if (message.type === 'unload_event') {
-            // Invalidate both old events and new matched events queries
-            queryClient.invalidateQueries({ queryKey: ['dashboard', 'events'] })
+            // Force immediate refetch for unload events
+            console.log('[WS] Refetching unload-matched data...')
             queryClient.invalidateQueries({ queryKey: ['dashboard', 'unload-matched'] })
+            queryClient.refetchQueries({ queryKey: ['dashboard', 'unload-matched'] })
           }
         } catch (e) {
-          console.error('Failed to parse WebSocket message:', e)
+          console.error('[WS] Failed to parse message:', e)
         }
       }
 
       ws.onclose = () => {
+        console.log('[WS] Disconnected')
         setStatus('disconnected')
         wsRef.current = null
         
@@ -68,12 +73,13 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
         }
       }
 
-      ws.onerror = () => {
+      ws.onerror = (e) => {
+        console.error('[WS] Error:', e)
         setStatus('error')
       }
     } catch (e) {
       setStatus('error')
-      console.error('WebSocket connection error:', e)
+      console.error('[WS] Connection error:', e)
     }
   }, [onMessage, autoReconnect, reconnectInterval, queryClient])
 

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.services.excel_service import excel_service
 from app.services.ftp_service import ftp_service
 from app.services.ftp_poller import ftp_poller
@@ -298,21 +299,21 @@ async def get_matched_unload_events(
     """
     Get unload events matched with Excel data.
     
-    Reads FTP log (or simulation file), parses all unload events,
-    and matches each with Excel data by hanger number.
+    Uses cached events from FTP poller (or simulation).
+    Matches each event with Excel data by hanger number.
     Returns events with entry/exit times and product info.
     """
     try:
-        # Get unload events from FTP or simulation
+        # Get unload events from cache (poller) or simulation
         if ftp_service.is_simulation:
             # Get ALL simulation events at once
             events = ftp_service.get_all_simulation_events()
             event_date = ftp_service._simulation_date
         else:
-            # Read from FTP
-            content = await ftp_service.read_today_log()
-            events = ftp_service.parse_unload_events(content)
+            # Use cached events from poller (already read from FTP)
+            events = ftp_poller.cached_events
             event_date = None
+            logger.debug(f"[API] Using {len(events)} cached events from poller")
         
         if not events:
             return []
@@ -524,7 +525,7 @@ async def get_simulation_status():
 class PollerStatus(BaseModel):
     """FTP Poller status response."""
     running: bool
-    interval: int = 15
+    interval: int = settings.FTP_POLL_INTERVAL
 
 
 @router.get("/poller/status", response_model=PollerStatus)

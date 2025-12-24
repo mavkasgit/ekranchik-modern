@@ -96,7 +96,11 @@ class WebSocketManager:
         Returns:
             Number of clients that received the message
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         if not self._connections:
+            logger.debug(f"[WS] No connections to broadcast to (type={message.type})")
             return 0
         
         # Get snapshot of connections
@@ -107,6 +111,7 @@ class WebSocketManager:
         disconnected = []
         
         data = message.model_dump(mode='json')
+        logger.info(f"[WS] Broadcasting {message.type} to {len(connections)} clients")
         
         for websocket in connections:
             if websocket == exclude:
@@ -118,7 +123,8 @@ class WebSocketManager:
                     sent_count += 1
                 else:
                     disconnected.append(websocket)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[WS] Failed to send to client: {e}")
                 disconnected.append(websocket)
         
         # Clean up disconnected clients
@@ -127,6 +133,7 @@ class WebSocketManager:
                 for ws in disconnected:
                     self._connections.discard(ws)
         
+        logger.info(f"[WS] Broadcast complete: sent to {sent_count}/{len(connections)} clients")
         return sent_count
     
     async def broadcast_dict(

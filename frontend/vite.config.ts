@@ -10,7 +10,9 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    host: true,  // Слушать на всех интерфейсах (для ktm.local)
+    port: 80,    // Стандартный HTTP порт (требует запуск от администратора)
+    allowedHosts: true,  // Разрешить все хосты
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
