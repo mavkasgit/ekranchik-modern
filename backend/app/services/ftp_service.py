@@ -41,7 +41,7 @@ class FTPService:
     """
     
     MAX_RETRIES = 3
-    RETRY_BASE_DELAY = 2.0
+    RETRY_BASE_DELAY = 3.0  # PLC needs more time between retries
     CONNECTION_TIMEOUT = 15
     ENCODINGS = ['utf-8', 'cp1251', 'cp866', 'latin-1']
     CONNECTION_REUSE_TIME = 60  # Держим соединение открытым 60 секунд
@@ -55,6 +55,10 @@ class FTPService:
         self._ftp: Optional[FTP] = None
         self._ftp_last_used: float = 0
         self._ftp_lock = asyncio.Lock()
+        
+        # Кеш для прошлых дней (они не меняются)
+        # {date: List[UnloadEvent]}
+        self._past_days_cache: dict[date, List[UnloadEvent]] = {}
         
         self._stats = {
             'connections': 0,
@@ -220,7 +224,8 @@ class FTPService:
     async def poll_multiday(self, days: int = 2) -> Tuple[List[UnloadEvent], bool]:
         """
         Читает логи за N дней и возвращает все события.
-        Закрывает соединение между файлами чтобы избежать busy.
+        Прошлые дни кешируются (они не меняются).
+        Только сегодняшний файл читается каждый раз.
         """
         today = date.today()
         date_changed = False
@@ -228,6 +233,8 @@ class FTPService:
         if self._last_date and self._last_date != today:
             logger.info(f"[FTP] Date changed: {self._last_date} -> {today}")
             date_changed = True
+            # При смене дня очищаем кеш (вчерашний "сегодня" теперь прошлый день)
+            self._past_days_cache.clear()
         
         self._last_date = today
         all_events = []
@@ -235,34 +242,44 @@ class FTPService:
         for day_offset in range(days):
             file_date = today - timedelta(days=day_offset)
             
-            # Try up to 3 times for each file (in case of "busy")
+            # Прошлые дни берём из кеша
+            if file_date < today and file_date in self._past_days_cache:
+                cached_events = self._past_days_cache[file_date]
+                all_events.extend(cached_events)
+                logger.debug(f"[FTP] Cache hit for {file_date}: {len(cached_events)} events")
+                continue
+            
+            # Читаем файл (сегодня - всегда, прошлые - если нет в кеше)
             for attempt in range(3):
                 try:
                     content = await self.read_log_for_date(file_date)
                     if content:
-                        # Устанавливаем дату для парсера
                         self._current_parse_date = file_date.strftime("%d.%m.%Y")
                         events = self.parse_unload_events_cj2m(content)
                         all_events.extend(events)
-                        logger.info(f"[FTP] Read {len(events)} events for {file_date}")
-                        break  # Success, move to next file
+                        
+                        # Кешируем прошлые дни
+                        if file_date < today:
+                            self._past_days_cache[file_date] = events
+                            logger.info(f"[FTP] Cached {len(events)} events for {file_date}")
+                        else:
+                            logger.info(f"[FTP] Read {len(events)} events for {file_date} (today)")
+                        break
                     else:
-                        # Empty content, might be busy - disconnect and retry
                         if attempt < 2:
-                            logger.warning(f"[FTP] Empty content for {file_date}, disconnect and retry {attempt + 1}/3")
+                            logger.warning(f"[FTP] Empty content for {file_date}, retry {attempt + 1}/3")
                             await self.disconnect()
-                            await asyncio.sleep(1.0)
+                            await asyncio.sleep(2.5)
                         continue
                 except Exception as e:
                     logger.error(f"[FTP] Error reading log for {file_date}: {e}")
                     await self.disconnect()
                     if attempt < 2:
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(2.5)
             
-            # ВАЖНО: Закрываем соединение после каждого файла
-            # ПЛК не любит когда читают несколько файлов подряд
+            # Закрываем соединение после каждого файла
             await self.disconnect()
-            await asyncio.sleep(0.3)  # Небольшая пауза между файлами
+            await asyncio.sleep(0.5)
         
         if all_events:
             logger.info(f"[FTP] Total: {len(all_events)} events from {days} days")
@@ -289,7 +306,14 @@ class FTPService:
             'last_date': str(self._last_date) if self._last_date else None,
             'simulation_mode': self._simulation_mode,
             'stats': self._stats.copy(),
+            'cached_days': list(str(d) for d in self._past_days_cache.keys()),
+            'cached_events': sum(len(e) for e in self._past_days_cache.values()),
         }
+    
+    def clear_cache(self) -> None:
+        """Очистить кеш прошлых дней."""
+        self._past_days_cache.clear()
+        logger.info("[FTP] Cache cleared")
     
     def parse_unload_events_cj2m(self, content: str) -> List[UnloadEvent]:
         """Парсинг событий из лога CJ2M."""

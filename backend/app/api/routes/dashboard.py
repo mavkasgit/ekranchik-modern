@@ -904,3 +904,230 @@ async def get_debug_matching(
     except Exception as e:
         logger.error(f"[DEBUG] Matching error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug/ftp-test")
+async def test_ftp_read_methods():
+    """
+    DEBUG: Test 5 different FTP read methods for today's file.
+    Shows which method works and which fails.
+    
+    Methods:
+    1. Direct read (current method)
+    2. Read with fresh connection (disconnect first)
+    3. Read with longer timeout
+    4. Read with passive mode off
+    5. Read with binary mode explicit
+    """
+    from datetime import date
+    from ftplib import FTP
+    import io
+    import asyncio
+    
+    today = date.today()
+    filename = today.strftime("%Y-%m-%d.txt")
+    results = []
+    
+    # Method 1: Current service method
+    try:
+        await ftp_service.disconnect()
+        await asyncio.sleep(0.5)
+        content = await ftp_service.read_log_for_date(today)
+        events = ftp_service.parse_unload_events_cj2m(content) if content else []
+        results.append({
+            "method": "1. Service method (current)",
+            "description": "Использует текущий FTPService с переиспользованием соединения",
+            "success": bool(content),
+            "content_length": len(content) if content else 0,
+            "events_count": len(events),
+            "error": None if content else "Empty content"
+        })
+    except Exception as e:
+        results.append({
+            "method": "1. Service method (current)",
+            "description": "Использует текущий FTPService с переиспользованием соединения",
+            "success": False,
+            "content_length": 0,
+            "events_count": 0,
+            "error": str(e)
+        })
+    
+    await asyncio.sleep(2.0)  # Wait between methods
+    
+    # Method 2: Fresh connection each time
+    try:
+        ftp = FTP()
+        ftp.connect(settings.FTP_HOST, settings.FTP_PORT, timeout=30)
+        ftp.login(settings.FTP_USER, settings.FTP_PASSWORD)
+        ftp.set_pasv(True)
+        if settings.FTP_BASE_PATH and settings.FTP_BASE_PATH != '/':
+            try:
+                ftp.cwd(settings.FTP_BASE_PATH)
+            except:
+                pass
+        
+        buffer = io.BytesIO()
+        ftp.retrbinary(f'RETR {filename}', buffer.write)
+        content = buffer.getvalue().decode('utf-8', errors='ignore')
+        ftp.quit()
+        
+        events = ftp_service.parse_unload_events_cj2m(content) if content else []
+        results.append({
+            "method": "2. Fresh connection",
+            "description": "Новое соединение, PASV mode, timeout=30",
+            "success": bool(content),
+            "content_length": len(content) if content else 0,
+            "events_count": len(events),
+            "error": None if content else "Empty content"
+        })
+    except Exception as e:
+        results.append({
+            "method": "2. Fresh connection",
+            "description": "Новое соединение, PASV mode, timeout=30",
+            "success": False,
+            "content_length": 0,
+            "events_count": 0,
+            "error": str(e)
+        })
+    
+    await asyncio.sleep(2.0)
+    
+    # Method 3: Active mode (not passive)
+    try:
+        ftp = FTP()
+        ftp.connect(settings.FTP_HOST, settings.FTP_PORT, timeout=30)
+        ftp.login(settings.FTP_USER, settings.FTP_PASSWORD)
+        ftp.set_pasv(False)  # Active mode
+        if settings.FTP_BASE_PATH and settings.FTP_BASE_PATH != '/':
+            try:
+                ftp.cwd(settings.FTP_BASE_PATH)
+            except:
+                pass
+        
+        buffer = io.BytesIO()
+        ftp.retrbinary(f'RETR {filename}', buffer.write)
+        content = buffer.getvalue().decode('utf-8', errors='ignore')
+        ftp.quit()
+        
+        events = ftp_service.parse_unload_events_cj2m(content) if content else []
+        results.append({
+            "method": "3. Active mode (not PASV)",
+            "description": "Active mode вместо Passive, timeout=30",
+            "success": bool(content),
+            "content_length": len(content) if content else 0,
+            "events_count": len(events),
+            "error": None if content else "Empty content"
+        })
+    except Exception as e:
+        results.append({
+            "method": "3. Active mode (not PASV)",
+            "description": "Active mode вместо Passive, timeout=30",
+            "success": False,
+            "content_length": 0,
+            "events_count": 0,
+            "error": str(e)
+        })
+    
+    await asyncio.sleep(2.0)
+    
+    # Method 4: With NOOP before read
+    try:
+        ftp = FTP()
+        ftp.connect(settings.FTP_HOST, settings.FTP_PORT, timeout=30)
+        ftp.login(settings.FTP_USER, settings.FTP_PASSWORD)
+        ftp.set_pasv(True)
+        if settings.FTP_BASE_PATH and settings.FTP_BASE_PATH != '/':
+            try:
+                ftp.cwd(settings.FTP_BASE_PATH)
+            except:
+                pass
+        
+        # Send NOOP to "wake up" connection
+        ftp.voidcmd("NOOP")
+        await asyncio.sleep(0.5)
+        
+        buffer = io.BytesIO()
+        ftp.retrbinary(f'RETR {filename}', buffer.write)
+        content = buffer.getvalue().decode('utf-8', errors='ignore')
+        ftp.quit()
+        
+        events = ftp_service.parse_unload_events_cj2m(content) if content else []
+        results.append({
+            "method": "4. NOOP before read",
+            "description": "Отправляем NOOP команду перед чтением для 'пробуждения'",
+            "success": bool(content),
+            "content_length": len(content) if content else 0,
+            "events_count": len(events),
+            "error": None if content else "Empty content"
+        })
+    except Exception as e:
+        results.append({
+            "method": "4. NOOP before read",
+            "description": "Отправляем NOOP команду перед чтением для 'пробуждения'",
+            "success": False,
+            "content_length": 0,
+            "events_count": 0,
+            "error": str(e)
+        })
+    
+    await asyncio.sleep(2.0)
+    
+    # Method 5: List directory first, then read
+    try:
+        ftp = FTP()
+        ftp.connect(settings.FTP_HOST, settings.FTP_PORT, timeout=30)
+        ftp.login(settings.FTP_USER, settings.FTP_PASSWORD)
+        ftp.set_pasv(True)
+        if settings.FTP_BASE_PATH and settings.FTP_BASE_PATH != '/':
+            try:
+                ftp.cwd(settings.FTP_BASE_PATH)
+            except:
+                pass
+        
+        # List directory first
+        files = ftp.nlst()
+        file_exists = filename in files
+        
+        if file_exists:
+            await asyncio.sleep(0.5)
+            buffer = io.BytesIO()
+            ftp.retrbinary(f'RETR {filename}', buffer.write)
+            content = buffer.getvalue().decode('utf-8', errors='ignore')
+        else:
+            content = ""
+        
+        ftp.quit()
+        
+        events = ftp_service.parse_unload_events_cj2m(content) if content else []
+        results.append({
+            "method": "5. List then read",
+            "description": f"Сначала NLST (файл {'найден' if file_exists else 'НЕ найден'}), потом RETR",
+            "success": bool(content),
+            "content_length": len(content) if content else 0,
+            "events_count": len(events),
+            "error": None if content else ("File not in directory" if not file_exists else "Empty content"),
+            "files_in_dir": files[:10] if 'files' in dir() else []
+        })
+    except Exception as e:
+        results.append({
+            "method": "5. List then read",
+            "description": "Сначала NLST, потом RETR",
+            "success": False,
+            "content_length": 0,
+            "events_count": 0,
+            "error": str(e)
+        })
+    
+    # Summary
+    successful = [r for r in results if r["success"]]
+    
+    return {
+        "target_file": filename,
+        "ftp_host": settings.FTP_HOST,
+        "ftp_port": settings.FTP_PORT,
+        "ftp_base_path": settings.FTP_BASE_PATH,
+        "total_methods": len(results),
+        "successful_methods": len(successful),
+        "results": results,
+        "recommendation": successful[0]["method"] if successful else "Все методы провалились - проверьте FTP сервер"
+    }
