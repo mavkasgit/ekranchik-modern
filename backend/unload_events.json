@@ -1,0 +1,66 @@
+{
+  "events": [
+    {
+      "hanger_number": 1,
+      "pallete": 1,
+      "exit_time": "18:15:39",
+      "exit_date": "08.01.2026",
+      "total_time_sec": 2307.0,
+      "baths_visited": [],
+      "timestamp": "2026-01-08T18:15:39.124165"
+    },
+    {
+      "hanger_number": 3,
+      "pallete": 3,
+      "exit_time": "18:19:57",
+      "exit_date": "08.01.2026",
+      "total_time_sec": 55.0,
+      "baths_visited": [],
+      "timestamp": "2026-01-08T18:19:57.791253"
+    },
+    {
+      "hanger_number": 2,
+      "pallete": 2,
+      "exit_time": "18:29:29",
+      "exit_date": "08.01.2026",
+      "total_time_sec": 205.0,
+      "baths_visited": [],
+      "timestamp": "2026-01-08T18:29:29.393528"
+    },
+    {
+      "hanger_number": 4,
+      "pallete": 4,
+      "exit_time": "18:42:16",
+      "exit_date": "08.01.2026",
+      "total_time_sec": 4.0,
+      "baths_visited": [
+        28,
+        34
+      ],
+      "timestamp": "2026-01-08T18:42:16.867024"
+    },
+    {
+      "hanger_number": 5,
+      "pallete": 5,
+      "exit_time": "18:58:17",
+      "exit_date": "08.01.2026",
+      "total_time_sec": 4.0,
+      "baths_visited": [
+        3,
+        4,
+        18,
+        19,
+        34
+      ],
+      "timestamp": "2026-01-08T18:58:17.954741"
+    }
+  ],
+  "processed_exits": [
+    "1_20260108_1815",
+    "4_20260108_1842",
+    "3_20260108_1819",
+    "5_20260108_1858",
+    "2_20260108_1829"
+  ],
+  "last_updated": "2026-01-08T18:58:17.955425"
+}

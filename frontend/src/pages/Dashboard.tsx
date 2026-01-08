@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, Loader2, Play, Square, Bug
+  Image, Maximize2, Minimize2, X, Loader2, Bug
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -24,7 +24,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { useToast } from '@/hooks/use-toast'
 
-import { useDashboard, useFileStatus, useFTPStatus, useMatchedUnloadEvents } from '@/hooks/useDashboard'
+import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
 import { dashboardApi, type DebugRawData, type DebugMatchingData } from '@/api/dashboard'
@@ -358,10 +358,9 @@ function ProfilePhoto({
   )
 }
 
-// Status bar
-function StatusBar({ onSimulationToggle, isSimulating, onDebugClick }: { onSimulationToggle: () => void, isSimulating: boolean, onDebugClick: () => void }) {
+function StatusBar({ onDebugClick }: { onDebugClick: () => void }) {
   const { data: fileStatus } = useFileStatus()
-  const { data: ftpStatus } = useFTPStatus()
+  const { data: opcuaStatus } = useOPCUAStatus()
   const { isConnected } = useRealtimeData()
 
   const fileIsOpen = fileStatus?.is_open
@@ -393,8 +392,8 @@ function StatusBar({ onSimulationToggle, isSimulating, onDebugClick }: { onSimul
 
           <div className="flex items-center gap-2">
             <Server className="w-4 h-4 text-muted-foreground" />
-            <div className={`w-2 h-2 rounded-full ${ftpStatus?.connected ? 'bg-green-500' : 'bg-destructive'}`} />
-            <span>FTP: {ftpStatus?.connected ? 'OK' : 'Откл'}</span>
+            <div className={`w-2 h-2 rounded-full ${opcuaStatus?.connected ? 'bg-green-500' : 'bg-destructive'}`} />
+            <span>OPC UA: {opcuaStatus?.connected ? 'OK' : 'Откл'}</span>
           </div>
 
           <div className="w-px h-4 bg-border" />
@@ -409,25 +408,6 @@ function StatusBar({ onSimulationToggle, isSimulating, onDebugClick }: { onSimul
           </div>
 
           <div className="w-px h-4 bg-border" />
-
-          <Button 
-            variant={isSimulating ? "destructive" : "outline"} 
-            size="sm" 
-            onClick={onSimulationToggle}
-            className="gap-1"
-          >
-            {isSimulating ? (
-              <>
-                <Square className="w-3 h-3" />
-                Стоп симуляции
-              </>
-            ) : (
-              <>
-                <Play className="w-3 h-3" />
-                Симуляция FTP
-              </>
-            )}
-          </Button>
 
           <Button 
             variant="outline" 
@@ -522,15 +502,15 @@ function DebugModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         {tab === 'matching' && matchData && !loading && (
           <div className="p-4 overflow-auto max-h-[calc(90vh-80px)]">
             <div className="mb-2 text-sm text-muted-foreground">
-              FTP: {matchData.total_ftp_events} событий | Excel: {matchData.total_excel_products} записей | Показано: {matchData.showing}
+              OPC UA: {matchData.total_ftp_events} событий | Excel: {matchData.total_excel_products} записей | Показано: {matchData.showing}
             </div>
             <div className="space-y-3">
               {matchData.matches.map((m, i) => (
                 <div key={i} className="border rounded p-3 bg-card">
                   <div className="flex items-start gap-4">
-                    {/* FTP Event */}
+                    {/* OPC UA Event */}
                     <div className="bg-green-100 dark:bg-green-900 rounded p-2 min-w-[150px]">
-                      <div className="text-xs text-green-700 dark:text-green-300 font-bold mb-1">📡 FTP ВЫХОД</div>
+                      <div className="text-xs text-green-700 dark:text-green-300 font-bold mb-1">📡 OPC UA ВЫХОД</div>
                       <div className="font-mono text-sm">
                         <div>Дата: <b>{m.ftp_event.date}</b></div>
                         <div>Время: <b>{m.ftp_event.time}</b></div>
@@ -597,10 +577,10 @@ function DebugModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         {/* Raw Data Tab */}
         {tab === 'raw' && rawData && !loading && (
           <div className="flex gap-4 p-4 overflow-auto max-h-[calc(90vh-80px)]">
-            {/* FTP Events */}
+            {/* OPC UA Events */}
             <div className="flex-1 min-w-[400px]">
               <div className="mb-2 flex items-center gap-2">
-                <h3 className="font-bold text-green-600">📡 FTP События</h3>
+                <h3 className="font-bold text-green-600">📡 OPC UA События</h3>
                 <Badge variant="outline">{rawData.ftp.source}</Badge>
                 <Badge>
                   {rawData.ftp.showing} / {rawData.ftp.total_cached}
@@ -764,10 +744,14 @@ function DataTable({
                 {showEntryExit ? (
                   <>
                     <TableCell className="text-center py-1 text-xs">
-                      <div className="flex flex-col">
-                        <span className="text-blue-600 dark:text-blue-400">{formatDate(hanger.entry_date)}</span>
-                        <span className="text-green-600 dark:text-green-400">{formatDate(hanger.exit_date)}</span>
-                      </div>
+                      {formatDate(hanger.entry_date) === formatDate(hanger.exit_date) ? (
+                        <span>{formatDate(hanger.entry_date)}</span>
+                      ) : (
+                        <div className="flex flex-col">
+                          <span className="text-blue-600 dark:text-blue-400">{formatDate(hanger.entry_date)}</span>
+                          <span className="text-green-600 dark:text-green-400">{formatDate(hanger.exit_date)}</span>
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-center py-1 text-xs">
                       <div className="flex flex-col">
@@ -920,14 +904,13 @@ export default function Dashboard() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
   const [isFileUpdating, setIsFileUpdating] = useState(false)
-  const [isSimulating, setIsSimulating] = useState(false)
   const [showDebug, setShowDebug] = useState(false)
   const lastModifiedRef = useRef<string | null>(null)
 
   const { toast } = useToast()
   const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, filters.unloadingLimit)
   const { data: fileStatus } = useFileStatus()
-  const { data: matchedEvents, refetch: refetchMatched } = useMatchedUnloadEvents(filters.realtimeLimit)
+  const { data: matchedEvents, refetch: refetchMatched } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
 
   // Track file changes and auto-refresh
   useEffect(() => {
@@ -986,73 +969,6 @@ export default function Dashboard() {
     setPhotoModal({ url, name })
   }, [])
 
-  // Track new events for highlighting
-  const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set())
-  const prevEventIdsRef = useRef<Set<string>>(new Set())
-
-  const toggleSimulation = useCallback(async () => {
-    try {
-      const { dashboardApi } = await import('@/api/dashboard')
-      if (isSimulating) {
-        await dashboardApi.stopSimulation()
-        setIsSimulating(false)
-        setNewEventIds(new Set())
-        prevEventIdsRef.current = new Set()
-        toast({ title: '⏹ Симуляция остановлена' })
-      } else {
-        await dashboardApi.startSimulation()
-        setIsSimulating(true)
-        setNewEventIds(new Set())
-        prevEventIdsRef.current = new Set()
-        toast({ title: '▶️ Симуляция запущена', description: 'События FTP будут появляться в таблице Выгрузка' })
-        // Start polling for updates during simulation
-        setTimeout(() => refetchMatched(), 1000)
-      }
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'Неизвестная ошибка'
-      console.error('Simulation error:', e)
-      toast({ 
-        title: 'Ошибка симуляции', 
-        description: errorMessage,
-        variant: 'destructive' 
-      })
-    }
-  }, [isSimulating, toast, refetchMatched])
-  
-  // Track new events when matchedEvents changes
-  useEffect(() => {
-    if (!matchedEvents || !isSimulating) return
-    
-    const currentIds = new Set(
-      matchedEvents.map(e => `${e.hanger}-${e.exit_date}-${e.exit_time}`)
-    )
-    
-    // Find new IDs that weren't in previous set
-    const newIds = new Set<string>()
-    currentIds.forEach(id => {
-      if (!prevEventIdsRef.current.has(id)) {
-        newIds.add(id)
-      }
-    })
-    
-    if (newIds.size > 0) {
-      setNewEventIds(newIds)
-      // Clear highlight after 3 seconds
-      setTimeout(() => setNewEventIds(new Set()), 3000)
-    }
-    
-    prevEventIdsRef.current = currentIds
-  }, [matchedEvents, isSimulating])
-  
-  // Poll more frequently during simulation
-  useEffect(() => {
-    if (!isSimulating) return
-    const interval = setInterval(() => {
-      refetchMatched()
-    }, 2000) // Every 2 seconds during simulation
-    return () => clearInterval(interval)
-  }, [isSimulating, refetchMatched])
-
   return (
     <div className={`${isFullscreen ? 'p-0' : 'container mx-auto p-6 space-y-4'}`}>
       {/* Header */}
@@ -1082,7 +998,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!isFullscreen && <StatusBar onSimulationToggle={toggleSimulation} isSimulating={isSimulating} onDebugClick={() => setShowDebug(true)} />}
+      {!isFullscreen && <StatusBar onDebugClick={() => setShowDebug(true)} />}
 
       {!isFullscreen && (
         <FiltersPanel
@@ -1135,8 +1051,6 @@ export default function Dashboard() {
                   onPhotoClick={handlePhotoClick} 
                   isFullscreen={isFullscreen}
                   showEntryExit
-                  highlightNew
-                  newIds={newEventIds}
                 />
               ) : (
                 <div className="p-8 text-center text-muted-foreground">Нет событий выгрузки</div>

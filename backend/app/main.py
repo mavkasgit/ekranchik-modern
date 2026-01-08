@@ -11,10 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.api.routes import dashboard_router, catalog_router, analysis_router, signal_router
+from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
 from app.services.excel_watcher import excel_watcher
-from app.services.ftp_poller import ftp_poller
+from app.services.opcua_poller import opcua_poller
 from app.services.websocket_manager import websocket_manager
+from app.services.hanger_service import hanger_service
 
 # Configure logging
 logging.basicConfig(
@@ -25,12 +27,13 @@ logger = logging.getLogger(__name__)
 
 # Отключаем спам логов от сетевых библиотек
 for noisy_logger in [
-    "aioftp", "aioftp.client", "aioftp.server",
     "asyncio", "aiohttp", "aiohttp.access",
     "httpcore", "httpx",
     "websockets", "websockets.client", "websockets.server",
     "uvicorn", "uvicorn.access", "uvicorn.error",
     "watchfiles", "watchfiles.main",
+    "app.services.ftp_service",  # FTP service - disabled
+    "app.services.websocket_manager",  # WebSocket broadcasts - too verbose
 ]:
     logging.getLogger(noisy_logger).setLevel(logging.ERROR)
 
@@ -39,7 +42,7 @@ for noisy_logger in [
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup/shutdown events.
-    Starts background services: ExcelWatcher, FTPPoller
+    Starts background services: ExcelWatcher, OPCUAPoller
     """
     # Startup
     logger.info(f"[STARTUP] Ekranchik Modern v1.0")
@@ -52,9 +55,20 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("[STARTUP] Excel path not configured, ExcelWatcher not started")
     
-    # Start FTPPoller automatically
-    await ftp_poller.start()
-    logger.info("[STARTUP] FTPPoller started automatically")
+    # OPC UA Poller - enabled by default for real-time hanger tracking
+    if settings.OPCUA_ENABLED:
+        await opcua_poller.start()
+        opcua_poller.load_events_from_unload_service()
+        logger.info("[STARTUP] OPCUAPoller started")
+    else:
+        logger.info("[STARTUP] OPCUAPoller disabled (OPCUA_ENABLED=False)")
+    
+    # Load hanger service cache
+    logger.info(f"[STARTUP] Hanger Service loaded with {len(hanger_service.get_all_hangers())} cached hangers")
+    
+    # Load unload service
+    from app.services.unload_service import unload_service
+    logger.info(f"[STARTUP] Unload Service loaded with {len(unload_service.events)} events")
     
     yield
     
@@ -63,7 +77,8 @@ async def lifespan(app: FastAPI):
     
     # Stop background services
     excel_watcher.stop()
-    await ftp_poller.stop()
+    if opcua_poller.is_running:
+        await opcua_poller.stop()
     await websocket_manager.close_all()
     
     logger.info("[SHUTDOWN] All services stopped")
@@ -90,6 +105,7 @@ app.include_router(dashboard_router, prefix="/api")
 app.include_router(catalog_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
 app.include_router(signal_router, prefix="/api")
+app.include_router(opcua_router, prefix="/api")
 app.include_router(websocket_router)
 
 # Mount static files - use project root static folder
@@ -109,7 +125,7 @@ async def health_check():
         "version": "1.0.0",
         "services": {
             "excel_watcher": excel_watcher.is_running,
-            "ftp_poller": ftp_poller.is_running,
+            "opcua_poller": opcua_poller.is_running,
             "websocket_clients": websocket_manager.connection_count
         }
     }

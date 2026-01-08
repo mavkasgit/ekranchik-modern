@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     FTP_POLL_INTERVAL: int = 30  # Seconds between polls (PLC needs time)
     FTP_DAYS_TO_READ: int = 2  # Number of days to read (today + yesterday)
     
+    # OPC UA Configuration (Omron PLC)
+    OPCUA_ENABLED: bool = True
+    OPCUA_ENDPOINT: str = "opc.tcp://172.17.11.131:4840/"
+    OPCUA_POLL_INTERVAL: int = 5  # Seconds between polls
+    
     # Telegram Bot
     TELEGRAM_TOKEN: str = ""
     BOT_PASSWORD: str = "1122"

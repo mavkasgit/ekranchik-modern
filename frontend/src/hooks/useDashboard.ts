@@ -18,26 +18,18 @@ export function useFileStatus() {
   })
 }
 
-export function useFTPStatus() {
+export function useOPCUAStatus() {
   return useQuery({
-    queryKey: ['dashboard', 'ftpStatus'],
-    queryFn: dashboardApi.getFTPStatus,
+    queryKey: ['dashboard', 'opcuaStatus'],
+    queryFn: dashboardApi.getOPCUAStatus,
     refetchInterval: DATA_REFRESH_INTERVAL,
   })
 }
 
-export function useTodayEvents() {
+export function useOPCUAMatchedUnloadEvents(limit = 100) {
   return useQuery({
-    queryKey: ['dashboard', 'events'],
-    queryFn: dashboardApi.getTodayEvents,
-    refetchInterval: DATA_REFRESH_INTERVAL,
-  })
-}
-
-export function useMatchedUnloadEvents(limit = 100) {
-  return useQuery({
-    queryKey: ['dashboard', 'unload-matched', limit],
-    queryFn: () => dashboardApi.getMatchedUnloadEvents(limit),
+    queryKey: ['dashboard', 'opcua-unload-matched', limit],
+    queryFn: () => dashboardApi.getOPCUAMatchedUnloadEvents(limit),
     refetchInterval: DATA_REFRESH_INTERVAL,
   })
 }

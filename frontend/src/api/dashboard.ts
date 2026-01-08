@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { DashboardResponse, FileStatus, FTPStatus, UnloadEvent } from '@/types/dashboard'
+import type { DashboardResponse, FileStatus, FTPStatus } from '@/types/dashboard'
 
 export const dashboardApi = {
   getData: async (days = 7, limit = 100, unloadingLimit = 10): Promise<DashboardResponse> => {
@@ -14,36 +14,15 @@ export const dashboardApi = {
     return data
   },
 
-  getFTPStatus: async (): Promise<FTPStatus> => {
-    const { data } = await api.get<FTPStatus>('/dashboard/status/ftp')
+  getOPCUAStatus: async (): Promise<FTPStatus> => {
+    const { data } = await api.get<FTPStatus>('/dashboard/status/opcua')
     return data
   },
 
-  getTodayEvents: async (): Promise<UnloadEvent[]> => {
-    const { data } = await api.get<UnloadEvent[]>('/dashboard/events')
-    return data
-  },
-
-  getMatchedUnloadEvents: async (limit = 100): Promise<MatchedUnloadEvent[]> => {
-    const { data } = await api.get<MatchedUnloadEvent[]>('/dashboard/unload-matched', {
+  getOPCUAMatchedUnloadEvents: async (limit = 100): Promise<MatchedUnloadEvent[]> => {
+    const { data } = await api.get<MatchedUnloadEvent[]>('/dashboard/opcua-unload-matched', {
       params: { limit },
     })
-    return data
-  },
-
-  // Simulation API
-  startSimulation: async (): Promise<SimulationStatus> => {
-    const { data } = await api.post<SimulationStatus>('/dashboard/simulation/start')
-    return data
-  },
-
-  stopSimulation: async (): Promise<SimulationStatus> => {
-    const { data } = await api.post<SimulationStatus>('/dashboard/simulation/stop')
-    return data
-  },
-
-  getSimulationStatus: async (): Promise<SimulationStatus> => {
-    const { data } = await api.get<SimulationStatus>('/dashboard/simulation/status')
     return data
   },
 
@@ -119,14 +98,6 @@ export interface DebugMatchingData {
       diff_hours: number | null
     } | null
   }>
-}
-
-export interface SimulationStatus {
-  active: boolean
-  file_path?: string
-  current_event: number
-  total_events: number
-  progress_percent: number
 }
 
 export interface MatchedUnloadEvent {

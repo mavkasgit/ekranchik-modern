@@ -1,0 +1,64 @@
+{
+  "4": {
+    "hanger_number": 4,
+    "pallete_data": "4",
+    "baths_history": [
+      {
+        "bath_number": 28,
+        "in_time": "5",
+        "out_time": "100",
+        "duration": "1"
+      },
+      {
+        "bath_number": 34,
+        "in_time": "4",
+        "out_time": null,
+        "duration": "-785"
+      }
+    ],
+    "first_seen": "2026-01-08T18:39:47.379020",
+    "last_updated": "2026-01-08T18:55:18.855142",
+    "total_baths": 2,
+    "current_bath": null
+  },
+  "5": {
+    "hanger_number": 5,
+    "pallete_data": "5",
+    "baths_history": [
+      {
+        "bath_number": 3,
+        "in_time": "5",
+        "out_time": null,
+        "duration": "-24"
+      },
+      {
+        "bath_number": 4,
+        "in_time": "4",
+        "out_time": "23",
+        "duration": null
+      },
+      {
+        "bath_number": 18,
+        "in_time": "1",
+        "out_time": null,
+        "duration": "-1"
+      },
+      {
+        "bath_number": 19,
+        "in_time": "4",
+        "out_time": null,
+        "duration": "-10"
+      },
+      {
+        "bath_number": 34,
+        "in_time": "4",
+        "out_time": null,
+        "duration": "-30"
+      }
+    ],
+    "first_seen": "2026-01-08T18:53:43.610214",
+    "last_updated": "2026-01-08T18:58:44.739086",
+    "total_baths": 5,
+    "current_bath": 34
+  }
+}

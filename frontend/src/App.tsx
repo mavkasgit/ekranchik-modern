@@ -1,11 +1,12 @@
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { LayoutDashboard, BookOpen, BarChart3, Moon, Sun } from 'lucide-react'
+import { LayoutDashboard, BookOpen, BarChart3, Moon, Sun, Gauge } from 'lucide-react'
 import { useState, useEffect, createContext, useContext } from 'react'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/toaster'
 import Dashboard from '@/pages/Dashboard'
 import Catalog from '@/pages/Catalog'
 import Analysis from '@/pages/Analysis'
+import { OPCUAPage } from '@/pages/OPCUAPage'
 
 // Fullscreen context
 const FullscreenContext = createContext({
@@ -43,6 +44,7 @@ function Navigation() {
     { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
     { to: '/catalog', icon: BookOpen, label: 'Каталог' },
     { to: '/analysis', icon: BarChart3, label: 'Анализ' },
+    { to: '/opcua', icon: Gauge, label: 'OPC UA' },
   ]
 
   // Hide navigation in fullscreen
@@ -96,6 +98,7 @@ function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/catalog" element={<Catalog />} />
               <Route path="/analysis" element={<Analysis />} />
+              <Route path="/opcua" element={<OPCUAPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
