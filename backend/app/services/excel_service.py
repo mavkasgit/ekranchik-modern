@@ -108,27 +108,10 @@ class ExcelService:
                 self._cache_mtime = path.stat().st_mtime
                 self._cache_path = path
             except Exception as e:
-                logger.warning(f"[EXCEL ERROR] {e}, trying fallback...")
-                # Try without sheet name as fallback (use openpyxl as backup)
-                try:
-                    df = pd.read_excel(
-                        path, 
-                        skiprows=[0, 1],
-                        usecols=[3, 4, 5, 7, 8, 10, 11, 12, 16, 19],
-                        engine='openpyxl'
-                    )
-                    df.columns = ['date', 'number', 'time', 'material_type', 'defect',
-                                  'kpz_number', 'client', 'profile', 'color', 'lamels_qty']
-                    df = df.dropna(how='all')
-                    df = df[(pd.notna(df['date'])) | (pd.notna(df['number']))]
-                    
-                    self._cache = df
-                    self._cache_mtime = path.stat().st_mtime
-                    self._cache_path = path
-                except Exception:
-                    if self._cache is not None:
-                        return self._cache.copy()
-                    return pd.DataFrame()
+                logger.error(f"[EXCEL ERROR] Failed to read Excel file: {e}")
+                if self._cache is not None:
+                    return self._cache.copy()
+                return pd.DataFrame()
         
         if full_dataset:
             return df
