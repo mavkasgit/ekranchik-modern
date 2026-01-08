@@ -14,9 +14,8 @@ from app.api.routes import dashboard_router, catalog_router, analysis_router, si
 from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
 from app.services.excel_watcher import excel_watcher
-from app.services.opcua_poller import opcua_poller
+from app.services.line_monitor import line_monitor
 from app.services.websocket_manager import websocket_manager
-from app.services.hanger_service import hanger_service
 
 # Configure logging
 logging.basicConfig(
@@ -42,7 +41,7 @@ for noisy_logger in [
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup/shutdown events.
-    Starts background services: ExcelWatcher, OPCUAPoller
+    Starts background services: ExcelWatcher, LineMonitor
     """
     # Startup
     logger.info(f"[STARTUP] Ekranchik Modern v1.0")
@@ -55,20 +54,12 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("[STARTUP] Excel path not configured, ExcelWatcher not started")
     
-    # OPC UA Poller - enabled by default for real-time hanger tracking
+    # Line Monitor - unified OPC UA monitoring (replaces opcua_poller)
     if settings.OPCUA_ENABLED:
-        await opcua_poller.start()
-        opcua_poller.load_events_from_unload_service()
-        logger.info("[STARTUP] OPCUAPoller started")
+        await line_monitor.start()
+        logger.info("[STARTUP] LineMonitor started")
     else:
-        logger.info("[STARTUP] OPCUAPoller disabled (OPCUA_ENABLED=False)")
-    
-    # Load hanger service cache
-    logger.info(f"[STARTUP] Hanger Service loaded with {len(hanger_service.get_all_hangers())} cached hangers")
-    
-    # Load unload service
-    from app.services.unload_service import unload_service
-    logger.info(f"[STARTUP] Unload Service loaded with {len(unload_service.events)} events")
+        logger.info("[STARTUP] LineMonitor disabled (OPCUA_ENABLED=False)")
     
     yield
     
@@ -77,8 +68,8 @@ async def lifespan(app: FastAPI):
     
     # Stop background services
     excel_watcher.stop()
-    if opcua_poller.is_running:
-        await opcua_poller.stop()
+    if line_monitor.is_running:
+        await line_monitor.stop()
     await websocket_manager.close_all()
     
     logger.info("[SHUTDOWN] All services stopped")
@@ -125,7 +116,7 @@ async def health_check():
         "version": "1.0.0",
         "services": {
             "excel_watcher": excel_watcher.is_running,
-            "opcua_poller": opcua_poller.is_running,
+            "line_monitor": line_monitor.is_running,
             "websocket_clients": websocket_manager.connection_count
         }
     }

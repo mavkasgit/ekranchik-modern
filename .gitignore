@@ -59,6 +59,9 @@ npm-debug.log*
 # Build outputs
 frontend/dist/
 
+# Kiro (AI development specs and documentation)
+.kiro/
+
 # Repomix
 repomix-output.xml
 

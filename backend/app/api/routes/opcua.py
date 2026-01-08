@@ -8,8 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.services.opcua_service import opcua_service
-from app.services.hanger_service import hanger_service
-from app.services.opcua_poller import opcua_poller
+from app.services.line_monitor import line_monitor
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -296,86 +295,80 @@ async def scan_hangers():
         if not await opcua_service.connect():
             raise HTTPException(status_code=500, detail="Cannot connect to OPC UA server")
     
-    await hanger_service.scan_baths()
+    await line_monitor._scan_baths()
+    active = line_monitor.get_active_hangers()
     return {
         "status": "scanned",
-        "total_hangers": len(hanger_service.get_all_hangers()),
-        "active_hangers": len(hanger_service.get_active_hangers())
+        "total_hangers": len(line_monitor._hangers),
+        "active_hangers": len(active)
     }
 
 
 @router.get("/hangers")
 async def get_all_hangers():
     """Получить все подвесы."""
-    hangers = hanger_service.get_all_hangers()
+    hangers = line_monitor._hangers.values()
     return {
         "total": len(hangers),
-        "hangers": [h.to_dict() for h in hangers]
+        "hangers": [{"number": h.number, "current_bath": h.current_bath, "baths_visited": h.baths_visited} for h in hangers]
     }
 
 
 @router.get("/hangers/active")
 async def get_active_hangers():
     """Получить активные подвесы (сейчас в ванне)."""
-    hangers = hanger_service.get_active_hangers()
+    hangers = line_monitor.get_active_hangers()
     return {
         "total": len(hangers),
-        "hangers": [h.to_dict() for h in hangers]
+        "hangers": [{"number": h.number, "current_bath": h.current_bath, "baths_visited": h.baths_visited} for h in hangers]
     }
 
 
 @router.get("/hangers/{hanger_number}")
 async def get_hanger(hanger_number: int):
     """Получить данные подвеса по номеру."""
-    hanger = hanger_service.get_hanger(hanger_number)
+    hanger = line_monitor.get_hanger_state(hanger_number)
     if not hanger:
         raise HTTPException(status_code=404, detail=f"Hanger {hanger_number} not found")
-    return hanger.to_dict()
+    return {"number": hanger.number, "current_bath": hanger.current_bath, "baths_visited": hanger.baths_visited}
 
 
 @router.get("/baths/{bath_number}/hanger")
 async def get_hanger_in_bath(bath_number: int):
     """Получить подвес который сейчас в ванне."""
-    hanger = hanger_service.get_hanger_in_bath(bath_number)
-    if not hanger:
-        return {"bath_number": bath_number, "hanger": None}
-    return {"bath_number": bath_number, "hanger": hanger.to_dict()}
+    for hanger in line_monitor.get_active_hangers():
+        if hanger.current_bath == bath_number:
+            return {"bath_number": bath_number, "hanger": {"number": hanger.number, "current_bath": hanger.current_bath}}
+    return {"bath_number": bath_number, "hanger": None}
 
 
 
-# OPC UA Poller Control Endpoints
+# Line Monitoring Control Endpoints
 
-@router.post("/poller/start")
-async def start_opcua_poller():
-    """Start OPC UA poller."""
-    success = await opcua_poller.start()
+@router.post("/monitor/start")
+async def start_line_monitor():
+    """Start line monitoring."""
+    success = await line_monitor.start()
     if not success:
-        raise HTTPException(status_code=400, detail="Poller already running")
+        raise HTTPException(status_code=400, detail="Monitor already running")
     return {"status": "started"}
 
 
-@router.post("/poller/stop")
-async def stop_opcua_poller():
-    """Stop OPC UA poller."""
-    await opcua_poller.stop()
+@router.post("/monitor/stop")
+async def stop_line_monitor():
+    """Stop line monitoring."""
+    await line_monitor.stop()
     return {"status": "stopped"}
 
 
-@router.get("/poller/status")
-async def get_opcua_poller_status():
-    """Get OPC UA poller status."""
+@router.get("/monitor/status")
+async def get_line_monitor_status():
+    """Get line monitor status."""
     return {
-        "running": opcua_poller.is_running,
-        "events_cached": opcua_poller.events_count,
-        "events": opcua_poller.cached_events
+        "running": line_monitor.is_running,
+        "events_cached": len(line_monitor.get_unload_events()),
+        "active_hangers": len(line_monitor.get_active_hangers())
     }
-
-
-@router.post("/poller/poll-now")
-async def poll_opcua_now():
-    """Trigger immediate poll."""
-    await opcua_poller.poll_now()
-    return {"status": "polled"}
 
 
 
@@ -512,35 +505,22 @@ async def get_bath_status(bath_number: int):
 @router.get("/line/cycles")
 async def get_completed_cycles(limit: int = 20):
     """Получить завершённые циклы (подвесы вышедшие из линии через Bath[34])."""
-    # Get cycles from hanger service
-    all_hangers = hanger_service.get_all_hangers()
+    # Get cycles from line monitor
+    all_hangers = list(line_monitor._hangers.values())
     
     # Filter completed hangers (not currently in any bath)
-    completed = [h for h in all_hangers if h.current_bath is None and h.baths_history]
+    completed = [h for h in all_hangers if h.current_bath is None and h.baths_visited]
     
-    # Sort by last_updated descending
-    completed.sort(key=lambda h: h.last_updated, reverse=True)
+    # Sort by entry time descending
+    completed.sort(key=lambda h: h.entry_time or "", reverse=True)
     
     cycles = []
     for hanger in completed[:limit]:
-        if hanger.baths_history:
-            first_bath = hanger.baths_history[0]
-            last_bath = hanger.baths_history[-1]
-            
-            # Calculate total time
-            total_time = 0
-            for bath in hanger.baths_history:
-                if bath.duration:
-                    try:
-                        total_time += float(bath.duration)
-                    except (ValueError, TypeError):
-                        pass
-            
+        if hanger.baths_visited:
             cycles.append({
-                "timestamp": hanger.last_updated,
-                "pallete": hanger.hanger_number,
-                "total_time": total_time,
-                "baths_visited": [b.bath_number for b in hanger.baths_history]
+                "timestamp": hanger.entry_time,
+                "pallete": hanger.number,
+                "baths_visited": hanger.baths_visited
             })
     
     return {
