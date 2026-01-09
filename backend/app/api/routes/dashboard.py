@@ -64,7 +64,8 @@ def parse_profile_name(name: str) -> Tuple[str, List[str]]:
 async def get_dashboard(
     days: Optional[int] = Query(default=7, ge=1, le=365, description="Days to look back"),
     limit: Optional[int] = Query(default=100, ge=1, le=1000, description="Max records"),
-    unloading_limit: Optional[int] = Query(default=10, ge=1, le=500, description="Max unloading records")
+    unloading_limit: Optional[int] = Query(default=10, ge=1, le=500, description="Max unloading records"),
+    loading_only: bool = Query(default=True, description="Only show rows that are loading (time is empty)")
 ):
     """
     Get dashboard data with production records.
@@ -73,7 +74,7 @@ async def get_dashboard(
     Also returns unloading_products - rows where time is filled (product unloaded).
     """
     try:
-        products = excel_service.get_products(limit=limit, days=days, loading_only=True)
+        products = excel_service.get_products(limit=limit, days=days, loading_only=loading_only)
         unloading_raw = excel_service.get_unloading_products(limit=unloading_limit)
         
         # Collect all unique profile names for batch lookup
@@ -267,13 +268,15 @@ async def get_opcua_status():
         
         return FileStatus(
             is_open=connected,
-            status_text="Подключено" if connected else "Отключено"
+            status_text="Подключено" if connected else "Отключено",
+            last_modified=datetime.now()
         )
     except Exception as e:
         return FileStatus(
             is_open=False,
             status_text="Ошибка",
-            error=str(e)
+            error=str(e),
+            last_modified=datetime.now()
         )
 
 
@@ -484,28 +487,23 @@ async def get_opcua_matched_unload_events(
     """
     Get OPC UA unload events (from Bath[34]) matched with Excel data.
     
-    Uses unload_service to get events from Bath[34] exit detection.
+    Uses line_monitor to get events from Bath[34] exit detection.
     Matches each event with Excel data by hanger number.
     Returns events with entry/exit times and product info.
     """
     try:
-        from app.services.unload_service import unload_service
-        from app.services.opcua_poller import opcua_poller
+        from app.services.line_monitor import line_monitor
         
-        # Get unload events from OPC UA service
-        events = unload_service.get_unload_events(limit=limit)
-        
-        # Also check poller cache
-        if not events:
-            events = opcua_poller.cached_events[-limit:]
+        # Get unload events from the line monitor service
+        events = line_monitor.get_unload_events(limit=limit)
         
         if not events:
             return []
         
         # Get all products from Excel for matching
-        products = excel_service.get_products(limit=1000, days=30)
+        products = excel_service.get_products(limit=1000, days=30, from_end=True, loading_only=False)
         
-        # Build lookup by hanger number
+        # Build lookup by hanger number - store ALL products for each hanger
         products_by_hanger: dict[str, list] = {}
         for p in products:
             num = str(p.get('number', ''))
@@ -526,8 +524,9 @@ async def get_opcua_matched_unload_events(
         
         photos_map = await catalog_service.get_profiles_photos_batch(list(profile_names))
         
-        # Helper functions
+        # Helper to parse date string to comparable format
         def parse_date(date_str: str) -> tuple:
+            """Parse DD.MM.YYYY or DD.MM.YY to (year, month, day) tuple for comparison."""
             if not date_str:
                 return (0, 0, 0)
             try:
@@ -542,6 +541,7 @@ async def get_opcua_matched_unload_events(
             return (0, 0, 0)
         
         def parse_time(time_str: str) -> tuple:
+            """Parse HH:MM:SS or HH:MM to (hour, minute, second) tuple."""
             if not time_str:
                 return (0, 0, 0)
             try:
@@ -554,38 +554,42 @@ async def get_opcua_matched_unload_events(
                 pass
             return (0, 0, 0)
         
-        def date_to_days(date_tuple: tuple) -> int:
-            year, month, day = date_tuple
-            return year * 365 + month * 30 + day
-        
         def datetime_to_seconds(date_tuple: tuple, time_tuple: tuple) -> float:
-            days = date_to_days(date_tuple)
-            secs = time_tuple[0] * 3600 + time_tuple[1] * 60 + time_tuple[2]
-            return days * 86400 + secs
-        
+            """Convert date+time to total seconds for comparison."""
+            # Simple conversion, not accounting for month lengths
+            year_days = date_tuple[0] * 365
+            month_days = date_tuple[1] * 30
+            day = date_tuple[2]
+            
+            total_days = year_days + month_days + day
+            total_seconds = time_tuple[0] * 3600 + time_tuple[1] * 60 + time_tuple[2]
+            
+            return total_days * 86400 + total_seconds
+
         def make_product_key(p: dict) -> str:
+            """Create unique key for product to track used entries."""
             return f"{p.get('date', '')}|{p.get('time', '')}|{p.get('number', '')}"
         
-        # Track used entries
+        # Track used entries to avoid matching same entry twice
         used_entries: set = set()
         
         # Sort events by time (oldest first) for greedy matching
         events_to_match = sorted(
             events,
             key=lambda e: datetime_to_seconds(
-                parse_date(e.date or ""),
-                parse_time(e.time)
+                parse_date(e.get("date") or ""),
+                parse_time(e.get("time") or "")
             )
         )
         
-        # Match events with products
+        # Match events with products (greedy: oldest exit first)
         matched = []
         for event in events_to_match:
-            hanger_num = str(event.hanger)
+            hanger_num = str(event.get('hanger'))
             candidates = products_by_hanger.get(hanger_num, [])
             
-            exit_date_tuple = parse_date(event.date or "")
-            exit_time_tuple = parse_time(event.time)
+            exit_date_tuple = parse_date(event.get("date") or "")
+            exit_time_tuple = parse_time(event.get("time") or "")
             exit_seconds = datetime_to_seconds(exit_date_tuple, exit_time_tuple)
             
             product = None
@@ -606,14 +610,12 @@ async def get_opcua_matched_unload_events(
                 entry_time_tuple = parse_time(entry_time)
                 entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
                 
-                # Entry must be BEFORE exit
                 if entry_seconds >= exit_seconds:
                     continue
                 
                 diff = exit_seconds - entry_seconds
                 
-                # Skip if more than 2 days apart
-                if diff > 2 * 86400:
+                if diff > 2 * 86400:  # 2 days
                     continue
                 
                 if best_diff is None or diff < best_diff:
@@ -623,22 +625,21 @@ async def get_opcua_matched_unload_events(
             if product:
                 used_entries.add(make_product_key(product))
             
-            # Build profiles_info
             profiles_info = []
             if product:
                 profile_str = str(product.get('profile', ''))
                 if profile_str and profile_str != '—':
-                    for p in profile_str.replace('+', ',').split(','):
-                        p = p.strip()
-                        if p:
-                            clean_name, processing = parse_profile_name(p)
-                            photo_info = photos_map.get(p, {})
-                            if not photo_info and clean_name != p:
+                    for prof_name in profile_str.replace('+', ',').split(','):
+                        prof_name = prof_name.strip()
+                        if prof_name:
+                            clean_name, processing = parse_profile_name(prof_name)
+                            photo_info = photos_map.get(prof_name, {})
+                            if not photo_info and clean_name != prof_name:
                                 photo_info = photos_map.get(clean_name, {})
                             
                             profiles_info.append(ProfileInfo(
-                                name=p,
-                                canonical_name=photo_info.get('name', clean_name or p),
+                                name=prof_name,
+                                canonical_name=photo_info.get('name', clean_name or prof_name),
                                 has_photo=bool(photo_info.get('thumb')),
                                 photo_thumb=photo_info.get('thumb'),
                                 photo_full=photo_info.get('full'),
@@ -646,9 +647,9 @@ async def get_opcua_matched_unload_events(
                             ))
             
             matched.append(MatchedUnloadEvent(
-                exit_date=event.date or datetime.now().strftime("%d.%m.%Y"),
-                exit_time=event.time,
-                hanger=event.hanger,
+                exit_date=event.get("date") or datetime.now().strftime("%d.%m.%Y"),
+                exit_time=event.get("time"),
+                hanger=int(hanger_num),
                 entry_date=str(product.get('date', '')) if product else None,
                 entry_time=str(product.get('time', '')) if product else None,
                 client=str(product.get('client', '—')) if product else '—',
@@ -660,30 +661,13 @@ async def get_opcua_matched_unload_events(
                 material_type=str(product.get('material_type', '—')) if product else '—',
             ))
         
-        # Return newest first
         matched.reverse()
         return matched
     except Exception as e:
-        logger.error(f"[OPC UA Unload] Error: {e}", exc_info=True)
+        logger.error(f"[OPC UA Unload] Error matching events: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/opcua-unload-events")
-async def get_opcua_unload_events(
-    limit: int = Query(default=100, ge=1, le=500, description="Max events to return")
-):
-    """
-    Get raw OPC UA unload events from Bath[34].
-    """
-    try:
-        from app.services.unload_service import unload_service
-        
-        events = unload_service.get_events(limit=limit)
-        
-        return {
-            "total": len(events),
-            "events": [e.to_dict() for e in reversed(events)]  # Newest first
-        }
-    except Exception as e:
-        logger.error(f"[OPC UA Unload] Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# This endpoint is redundant now as the logic is in /opcua-unload-matched
+# I'll remove it to avoid confusion
+# @router.get("/opcua-unload-events") ...

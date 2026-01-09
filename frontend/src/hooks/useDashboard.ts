@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import { dashboardApi } from '@/api/dashboard'
 import { FILE_STATUS_INTERVAL, DATA_REFRESH_INTERVAL } from '@/config/intervals'
 
-export function useDashboard(days = 7, limit = 100, unloadingLimit = 10) {
+export function useDashboard(days = 7, limit = 100, unloadingLimit = 10, loadingOnly = true) {
   return useQuery({
-    queryKey: ['dashboard', days, limit, unloadingLimit],
-    queryFn: () => dashboardApi.getData(days, limit, unloadingLimit),
+    queryKey: ['dashboard', days, limit, unloadingLimit, loadingOnly],
+    queryFn: () => dashboardApi.getData(days, limit, unloadingLimit, loadingOnly),
     refetchInterval: DATA_REFRESH_INTERVAL,
   })
 }

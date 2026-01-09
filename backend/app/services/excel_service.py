@@ -259,7 +259,7 @@ class ExcelService:
         if loading_only and len(records) > limit:
             records = records[-limit:]  # Take last N (newest)
         
-        return records
+        return records[::-1]
     
     def _process_dataframe(self, df: pd.DataFrame, loading_only: bool = False) -> List[Dict[str, Any]]:
         """

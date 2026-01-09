@@ -4,9 +4,10 @@ Combines hanger tracking, unload detection, and real-time polling.
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from collections import deque
 
 from app.services.opcua_service import opcua_service
 from app.services.websocket_manager import websocket_manager
@@ -14,28 +15,39 @@ from app.schemas.websocket import WebSocketMessage
 
 logger = logging.getLogger(__name__)
 
-CONTROL_BATH = 34  # Unload point
+# --- Constants ---
+CONTROL_BATH = 34  # Unload point bath number
+HANGER_TTL = timedelta(minutes=30)  # Time to keep inactive hanger data before cleanup
+CLEANUP_INTERVAL = timedelta(minutes=5)  # How often to run the cleanup task
+
+
+# --- Data Classes ---
+@dataclass
+class HangerPathEntry:
+    """Represents a hanger's time in a single bath."""
+    bath_name: str
+    entry_time: datetime
+    exit_time: Optional[datetime] = None
+    duration: Optional[float] = None  # in seconds
 
 
 @dataclass
 class HangerState:
-    """Current state of a hanger in the line."""
-    number: int
-    current_bath: Optional[int] = None
-    entry_time: Optional[str] = None
-    baths_visited: List[int] = None
-    
-    def __post_init__(self):
-        if self.baths_visited is None:
-            self.baths_visited = []
+    """Current state of a hanger in the line, tracking its current cycle."""
+    id: int
+    current_bath: Optional[str] = None
+    entry_time: Optional[datetime] = None
+    last_seen: datetime = field(default_factory=datetime.now)
+    path: List[HangerPathEntry] = field(default_factory=list)
 
 
 class LineMonitorService:
     """
     Unified service for monitoring production line via OPC UA.
-    - Tracks hangers through baths
-    - Detects unload events at Bath[34]
-    - Broadcasts real-time updates via WebSocket
+    - Tracks hangers through baths, handling cyclical hanger numbers.
+    - Detects unload events at the control bath.
+    - Broadcasts real-time updates via WebSocket.
+    - Cleans up stale hanger data to prevent memory leaks.
     """
     
     def __init__(self):
@@ -46,8 +58,9 @@ class LineMonitorService:
         # State tracking
         self._hangers: Dict[int, HangerState] = {}
         self._bath34_pallete: Optional[int] = None
-        self._processed_unloads: set = set()
-        
+        self._processed_unloads: deque = deque(maxlen=1000)
+        self._last_cleanup_time = datetime.now()
+
         # Unload events cache
         self._unload_events: List[dict] = []
     
@@ -89,71 +102,110 @@ class LineMonitorService:
         while self._running:
             try:
                 await self._poll_once()
+
+                # Periodically clean up old hangers
+                now = datetime.now()
+                if now - self._last_cleanup_time > CLEANUP_INTERVAL:
+                    await self._cleanup_hangers()
+                    self._last_cleanup_time = now
+
             except Exception as e:
-                logger.error(f"[Line Monitor] Poll error: {e}")
+                logger.error(f"[Line Monitor] Critical error in monitor loop: {e}", exc_info=True)
             
             await asyncio.sleep(self._poll_interval)
     
     async def _poll_once(self) -> None:
         """Single poll cycle: scan baths and detect events."""
-        try:
-            # Ensure OPC UA connection
-            if not opcua_service.is_connected:
-                if not await opcua_service.connect():
-                    logger.warning("[Line Monitor] Cannot connect to OPC UA")
-                    return
-            
-            # Scan all baths
-            await self._scan_baths()
-            
-            # Check for unload events
-            await self._check_unload()
-            
-        except Exception as e:
-            logger.error(f"[Line Monitor] Poll error: {e}")
-    
+        # Ensure OPC UA connection
+        if not opcua_service.is_connected:
+            if not await opcua_service.connect():
+                logger.warning("[Line Monitor] Cannot connect to OPC UA. Skipping poll.")
+                return
+        
+        # Scan all baths to update hanger states
+        await self._scan_baths()
+        
+        # Check for unload events at the control bath
+        await self._check_unload()
+
+    async def _cleanup_hangers(self) -> None:
+        """Remove hanger data that has been inactive for too long."""
+        now = datetime.now()
+        inactive_hangers = [
+            hanger_id
+            for hanger_id, state in self._hangers.items()
+            if state.current_bath is None and (now - state.last_seen) > HANGER_TTL
+        ]
+        
+        if inactive_hangers:
+            for hanger_id in inactive_hangers:
+                del self._hangers[hanger_id]
+            logger.info(f"[Line Monitor] Cleaned up {len(inactive_hangers)} inactive hangers.")
+
     async def _scan_baths(self) -> None:
-        """Scan all baths and update hanger positions."""
-        try:
-            # Reset current positions
-            for hanger in self._hangers.values():
-                hanger.current_bath = None
-            
-            # Scan baths 1-39
-            for bath_num in range(1, 40):
+        """Scan all baths and update hanger positions, handling new cycles."""
+        now = datetime.now()
+        
+        # Keep track of all hangers seen in this scan cycle
+        hangers_seen_in_scan = set()
+
+        for bath_num in range(1, 40):
+            bath_name = str(bath_num)
+            try:
                 in_use = await opcua_service.read_node(f"ns=4;s=Bath[{bath_num}].InUse")
-                
                 if not in_use:
                     continue
                 
-                # Read hanger number from Pallete field
                 pallete = await opcua_service.read_node(f"ns=4;s=Bath[{bath_num}].Pallete")
                 if not pallete or pallete == 0:
                     continue
-                
-                hanger_num = int(pallete)
-                
-                # Create or update hanger
-                if hanger_num not in self._hangers:
-                    self._hangers[hanger_num] = HangerState(number=hanger_num)
-                
-                hanger = self._hangers[hanger_num]
-                hanger.current_bath = bath_num
-                
-                # Track bath visit
-                if bath_num not in hanger.baths_visited:
-                    hanger.baths_visited.append(bath_num)
-                    if hanger.entry_time is None:
-                        hanger.entry_time = datetime.now().isoformat()
-        
-        except Exception as e:
-            logger.error(f"[Line Monitor] Scan error: {e}")
-    
+
+                hanger_id = int(pallete)
+                hangers_seen_in_scan.add(hanger_id)
+                hanger_state = self._hangers.get(hanger_id)
+
+                # --- New Cycle Detection ---
+                # If hanger is not tracked, or was previously unloaded (inactive), it's a new cycle.
+                if not hanger_state or hanger_state.current_bath is None:
+                    hanger_state = HangerState(id=hanger_id)
+                    self._hangers[hanger_id] = hanger_state
+                    logger.info(f"Hanger {hanger_id} started a new cycle upon entering bath {bath_name}.")
+
+                # --- State Update ---
+                # If hanger moved to a new bath
+                if hanger_state.current_bath != bath_name:
+                    # Finalize the previous step if it exists
+                    if hanger_state.current_bath is not None and hanger_state.entry_time is not None:
+                        duration = (now - hanger_state.entry_time).total_seconds()
+                        hanger_state.path.append(
+                            HangerPathEntry(
+                                bath_name=hanger_state.current_bath,
+                                entry_time=hanger_state.entry_time,
+                                exit_time=now,
+                                duration=duration,
+                            )
+                        )
+                    # Record entry into the new bath
+                    hanger_state.current_bath = bath_name
+                    hanger_state.entry_time = now
+
+                # Always update the last_seen timestamp for any active hanger
+                hanger_state.last_seen = now
+
+            except Exception as e:
+                logger.error(f"[Line Monitor] Error scanning bath {bath_name}: {e}")
+
+        # --- Handle hangers that are no longer seen ---
+        # This logic is tricky. A hanger might disappear due to a transient read error.
+        # The definitive signal that a hanger is off the line is the unload event.
+        # We will rely on _record_unload to set current_bath to None.
+        pass
+
     async def _check_unload(self) -> None:
         """Check Bath[34] for unload events."""
         try:
             pallete = await opcua_service.read_node(f"ns=4;s=Bath[{CONTROL_BATH}].Pallete")
-            current_pallete = int(pallete) if pallete else 0
+            current_pallete = int(pallete) if pallete and pallete > 0 else 0
             
             # First poll - just initialize
             if self._bath34_pallete is None:
@@ -167,51 +219,71 @@ class LineMonitorService:
             self._bath34_pallete = current_pallete
         
         except Exception as e:
-            logger.error(f"[Line Monitor] Unload check error: {e}")
+            logger.error(f"[Line Monitor] Unload check error: {e}", exc_info=True)
     
-    async def _record_unload(self, hanger_num: int) -> None:
-        """Record unload event and broadcast."""
+    async def _record_unload(self, hanger_id: int) -> None:
+        """Record unload event, update hanger state to inactive, and broadcast."""
         try:
             now = datetime.now()
-            event_key = f"{hanger_num}_{now.strftime('%Y%m%d_%H%M')}"
+            # Use a simple key to avoid duplicate events within a short timeframe
+            event_key = (hanger_id, now.strftime('%Y%m%d_%H%M'))
             
-            # Avoid duplicates
             if event_key in self._processed_unloads:
                 return
+            self._processed_unloads.append(event_key)
             
-            self._processed_unloads.add(event_key)
-            
-            # Get hanger data
-            hanger = self._hangers.get(hanger_num)
-            in_time = await opcua_service.read_node(f"ns=4;s=Bath[{CONTROL_BATH}].InTime")
-            
+            hanger = self._hangers.get(hanger_id)
+            total_time_sec = 0
+            path_summary = []
+
+            if hanger:
+                # Finalize the last step (the unload bath)
+                if hanger.entry_time and hanger.current_bath:
+                    duration = (now - hanger.entry_time).total_seconds()
+                    hanger.path.append(
+                        HangerPathEntry(
+                            bath_name=hanger.current_bath,
+                            entry_time=hanger.entry_time,
+                            exit_time=now,
+                            duration=duration
+                        )
+                    )
+                
+                # Calculate total time from the first entry in its path
+                if hanger.path:
+                    first_entry_time = hanger.path[0].entry_time
+                    total_time_sec = (now - first_entry_time).total_seconds()
+
+                path_summary = [entry.bath_name for entry in hanger.path]
+
+                # Mark hanger as inactive
+                hanger.current_bath = None
+                hanger.entry_time = None
+                hanger.last_seen = now
+                logger.info(f"Hanger {hanger_id} unloaded. State set to inactive.")
+
             event = {
-                "hanger": hanger_num,
+                "hanger": hanger_id,
                 "time": now.strftime("%H:%M:%S"),
                 "date": now.strftime("%d.%m.%Y"),
-                "total_time_sec": float(in_time) if in_time else 0,
-                "baths_visited": hanger.baths_visited if hanger else [],
+                "total_time_sec": total_time_sec,
+                "baths_visited": path_summary,
                 "timestamp": now.isoformat()
             }
             
+            # Cache event
             self._unload_events.append(event)
-            
-            # Keep only last 500 events
             if len(self._unload_events) > 500:
-                self._unload_events = self._unload_events[-500:]
+                self._unload_events.pop(0)
             
             # Broadcast via WebSocket
-            message = WebSocketMessage(
-                type="unload_event",
-                payload=event,
-                timestamp=now
-            )
+            message = WebSocketMessage(type="unload_event", payload=event, timestamp=now)
             await websocket_manager.broadcast(message)
             
-            logger.info(f"[Line Monitor] Unload: Hanger {hanger_num} at {now.strftime('%H:%M:%S')}")
+            logger.info(f"[Line Monitor] Unload recorded: Hanger {hanger_id} at {now.strftime('%H:%M:%S')}")
         
         except Exception as e:
-            logger.error(f"[Line Monitor] Record unload error: {e}")
+            logger.error(f"[Line Monitor] Record unload error for hanger {hanger_id}: {e}", exc_info=True)
     
     def get_unload_events(self, limit: int = 100) -> List[dict]:
         """Get recent unload events."""
@@ -222,7 +294,7 @@ class LineMonitorService:
         return self._hangers.get(hanger_num)
     
     def get_active_hangers(self) -> List[HangerState]:
-        """Get all hangers currently in the line."""
+        """Get all hangers currently considered active in the line."""
         return [h for h in self._hangers.values() if h.current_bath is not None]
 
 

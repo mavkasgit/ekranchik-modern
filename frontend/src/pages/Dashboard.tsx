@@ -361,7 +361,7 @@ function ProfilePhoto({
 function StatusBar() {
   const { data: fileStatus } = useFileStatus()
   const { data: opcuaStatus } = useOPCUAStatus()
-  const { isConnected } = useRealtimeData()
+  const { isConnected, lastMessage } = useRealtimeData()
 
   const fileIsOpen = fileStatus?.is_open
   const statusColor = fileStatus?.error 
@@ -383,7 +383,7 @@ function StatusBar() {
             </span>
             {fileStatus?.last_modified && (
               <span className="text-muted-foreground text-xs">
-                {new Date(fileStatus.last_modified).toLocaleString('ru')}
+                ({new Date(fileStatus.last_modified).toLocaleString('ru')})
               </span>
             )}
           </div>
@@ -392,8 +392,13 @@ function StatusBar() {
 
           <div className="flex items-center gap-2">
             <Server className="w-4 h-4 text-muted-foreground" />
-            <div className={`w-2 h-2 rounded-full ${opcuaStatus?.connected ? 'bg-green-500' : 'bg-destructive'}`} />
-            <span>OPC UA: {opcuaStatus?.connected ? 'OK' : 'Откл'}</span>
+            <div className={`w-2 h-2 rounded-full ${opcuaStatus?.is_open ? 'bg-green-500' : 'bg-destructive'}`} />
+            <span>OPC UA: {opcuaStatus?.is_open ? 'OK' : 'Откл'}</span>
+            {opcuaStatus?.last_modified && (
+              <span className="text-muted-foreground text-xs">
+                ({new Date(opcuaStatus.last_modified).toLocaleTimeString('ru')})
+              </span>
+            )}
           </div>
 
           <div className="w-px h-4 bg-border" />
@@ -405,6 +410,11 @@ function StatusBar() {
               <WifiOff className="w-4 h-4 text-destructive" />
             )}
             <span>WS: {isConnected ? 'Онлайн' : 'Офлайн'}</span>
+            {lastMessage?.timestamp && (
+              <span className="text-muted-foreground text-xs">
+                ({new Date(lastMessage.timestamp).toLocaleTimeString('ru')})
+              </span>
+            )}
           </div>
 
         </div>
@@ -574,24 +584,31 @@ function FiltersPanel({
   onChange,
   onApply,
   onReset,
+  onToggleLast100,
+  isLast100Mode,
 }: {
   filters: Filters
   onChange: (filters: Filters) => void
   onApply: () => void
   onReset: () => void
+  onToggleLast100: () => void
+  isLast100Mode: boolean
 }) {
+  const otherFiltersDisabled = isLast100Mode;
+
   return (
     <Card>
       <CardContent className="py-4">
         <div className="flex flex-wrap gap-4 items-center">
           {/* Loading */}
-          <div className="flex items-center gap-3 border rounded-lg px-3 py-2 border-blue-500/50 bg-blue-500/10">
+          <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-blue-500/50 bg-blue-500/10'}`}>
             <Checkbox
               id="show-loading"
               checked={filters.showLoading}
               onCheckedChange={(c) => onChange({ ...filters, showLoading: !!c })}
+              disabled={otherFiltersDisabled}
             />
-            <Label htmlFor="show-loading" className="cursor-pointer">Загрузка:</Label>
+            <Label htmlFor="show-loading" className={`cursor-pointer ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Загрузка:</Label>
             <Input
               type="number"
               value={filters.loadingLimit}
@@ -599,17 +616,19 @@ function FiltersPanel({
               className="w-20 h-8"
               min={1}
               max={500}
+              disabled={otherFiltersDisabled}
             />
           </div>
 
           {/* Realtime */}
-          <div className="flex items-center gap-3 border rounded-lg px-3 py-2 border-green-500/50 bg-green-500/10">
+          <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-green-500/50 bg-green-500/10'}`}>
             <Checkbox
               id="show-realtime"
               checked={filters.showRealtime}
               onCheckedChange={(c) => onChange({ ...filters, showRealtime: !!c })}
+              disabled={otherFiltersDisabled}
             />
-            <Label htmlFor="show-realtime" className="cursor-pointer">Выгрузка:</Label>
+            <Label htmlFor="show-realtime" className={`cursor-pointer ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Выгрузка:</Label>
             <Input
               type="number"
               value={filters.realtimeLimit}
@@ -617,17 +636,19 @@ function FiltersPanel({
               className="w-20 h-8"
               min={1}
               max={500}
+              disabled={otherFiltersDisabled}
             />
           </div>
 
           {/* Unloading old */}
-          <div className="flex items-center gap-3 border rounded-lg px-3 py-2 border-pink-500/50 bg-pink-500/10">
+          <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-pink-500/50 bg-pink-500/10'}`}>
             <Checkbox
               id="show-unloading"
               checked={filters.showUnloading}
               onCheckedChange={(c) => onChange({ ...filters, showUnloading: !!c })}
+              disabled={otherFiltersDisabled}
             />
-            <Label htmlFor="show-unloading" className="cursor-pointer">Выгрузка старая:</Label>
+            <Label htmlFor="show-unloading" className={`cursor-pointer ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Выгрузка старая:</Label>
             <Input
               type="number"
               value={filters.unloadingLimit}
@@ -635,25 +656,20 @@ function FiltersPanel({
               className="w-20 h-8"
               min={1}
               max={500}
+              disabled={otherFiltersDisabled}
             />
           </div>
 
           <Button
-            variant="outline"
-            onClick={() => onChange({
-              ...filters,
-              showLoading: true,
-              showRealtime: false,
-              showUnloading: false,
-              loadingLimit: 100
-            })}
+            variant={isLast100Mode ? "default" : "outline"}
+            onClick={onToggleLast100}
           >
             Последние 100
           </Button>
 
           <div className="flex gap-2 ml-auto">
-            <Button onClick={onApply}>Применить</Button>
-            <Button variant="outline" onClick={onReset}>Сбросить</Button>
+            <Button onClick={onApply} disabled={otherFiltersDisabled}>Применить</Button>
+            <Button variant="outline" onClick={onReset} disabled={otherFiltersDisabled}>Сбросить</Button>
           </div>
         </div>
       </CardContent>
@@ -668,11 +684,39 @@ export default function Dashboard() {
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
   const [isFileUpdating, setIsFileUpdating] = useState(false)
   const lastModifiedRef = useRef<string | null>(null)
+  
+  // State for "Последние 100" toggle
+  const [isLast100Mode, setIsLast100Mode] = useState(false);
+  const [preLast100Filters, setPreLast100Filters] = useState<Filters | null>(null);
+
+  // Determine if the API should filter for loading_only rows
+  const loadingOnly = !isLast100Mode;
 
   const { toast } = useToast()
-  const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, filters.unloadingLimit)
+  const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, filters.unloadingLimit, loadingOnly)
   const { data: fileStatus } = useFileStatus()
   const { data: matchedEvents, refetch: refetchMatched } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
+
+  const handleToggleLast100 = () => {
+    if (isLast100Mode) {
+      // Turn OFF: Restore previous filters
+      if (preLast100Filters) {
+        setFilters(preLast100Filters);
+      }
+      setIsLast100Mode(false);
+      setPreLast100Filters(null);
+    } else {
+      // Turn ON: Save current filters and apply "Last 100"
+      setPreLast100Filters(filters);
+      setFilters({
+        ...defaultFilters,
+        showLoading: true,
+        loadingLimit: 100,
+      });
+      setIsLast100Mode(true);
+    }
+  };
+
 
   // Track file changes and auto-refresh
   useEffect(() => {
@@ -766,8 +810,10 @@ export default function Dashboard() {
         <FiltersPanel
           filters={filters}
           onChange={setFilters}
-          onApply={() => refetch()}
-          onReset={() => { setFilters(defaultFilters); refetch() }}
+          onApply={refetch}
+          onReset={() => setFilters(defaultFilters)}
+          onToggleLast100={handleToggleLast100}
+          isLast100Mode={isLast100Mode}
         />
       )}
 

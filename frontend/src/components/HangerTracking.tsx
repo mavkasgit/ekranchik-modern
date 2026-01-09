@@ -1,21 +1,10 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, CheckCircle, Clock, Zap } from 'lucide-react'
 
-interface HangerRecord {
-  bath_number: number
-  in_time: string | null
-  out_time: string | null
-  duration: string | null
-}
-
 interface Hanger {
-  hanger_number: number
-  pallete_data: string | null
-  baths_history: HangerRecord[]
-  first_seen: string
-  last_updated: string
-  total_baths: number
-  current_bath: number | null
+  number: number;
+  current_bath: number | null;
+  baths_visited: number[];
 }
 
 export function HangerTracking() {
@@ -129,7 +118,7 @@ export function HangerTracking() {
         <div className="bg-purple-50 rounded-lg p-4">
           <div className="text-sm text-purple-600 font-medium">Avg Baths/Hanger</div>
           <div className="text-2xl font-bold text-purple-900">
-            {hangers.length > 0 ? (hangers.reduce((sum, h) => sum + h.total_baths, 0) / hangers.length).toFixed(1) : '—'}
+            {hangers.length > 0 ? (hangers.reduce((sum, h) => sum + (h.baths_visited?.length || 0), 0) / hangers.length).toFixed(1) : '—'}
           </div>
         </div>
       </div>
@@ -139,12 +128,12 @@ export function HangerTracking() {
         <div className="mb-6">
           <h3 className="text-lg font-semibold mb-3 text-gray-900">Currently Active</h3>
           <div className="space-y-3">
-            {activeHangers.map((hanger) => (
-              <div key={hanger.hanger_number} className="bg-green-50 border border-green-200 rounded-lg p-4">
+            {activeHangers.filter(Boolean).map((hanger) => (
+              <div key={hanger.number} className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <div className="flex items-start justify-between mb-2">
                   <div>
                     <div className="font-mono font-semibold text-gray-900">
-                      Hanger #{String(hanger.hanger_number).padStart(3, '0')}
+                      Hanger #{String(hanger.number).padStart(3, '0')}
                     </div>
                     <div className="text-sm text-gray-600 mt-1">
                       Currently in Bath #{hanger.current_bath}
@@ -156,13 +145,8 @@ export function HangerTracking() {
                   </span>
                 </div>
                 <div className="text-xs text-gray-600">
-                  Path: {hanger.baths_history.map(b => `Bath[${b.bath_number}]`).join(' → ')}
+                  Path: {hanger.baths_visited?.map(b => `Bath[${b}]`).join(' → ') || 'No path yet'}
                 </div>
-                {hanger.pallete_data && (
-                  <div className="text-xs text-gray-600 mt-1">
-                    Pallete: {hanger.pallete_data}
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -179,24 +163,20 @@ export function HangerTracking() {
                 <th className="text-left py-2 px-3 font-medium text-gray-600">Hanger #</th>
                 <th className="text-left py-2 px-3 font-medium text-gray-600">Path Through Baths</th>
                 <th className="text-left py-2 px-3 font-medium text-gray-600">Total Baths</th>
-                <th className="text-left py-2 px-3 font-medium text-gray-600">First Seen</th>
                 <th className="text-left py-2 px-3 font-medium text-gray-600">Status</th>
               </tr>
             </thead>
             <tbody>
-              {hangers.slice(0, 15).map((hanger) => (
-                <tr key={hanger.hanger_number} className="border-b border-gray-100 hover:bg-gray-50">
+              {hangers.filter(Boolean).slice(0, 15).map((hanger) => (
+                <tr key={hanger.number} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-3 px-3 font-mono font-semibold text-gray-900">
-                    {String(hanger.hanger_number).padStart(3, '0')}
+                    {String(hanger.number).padStart(3, '0')}
                   </td>
                   <td className="py-3 px-3 text-xs text-gray-700 font-mono">
-                    {hanger.baths_history.map(b => `[${b.bath_number}]`).join(' → ')}
+                    {hanger.baths_visited?.map(b => `[${b}]`).join(' → ') || 'No path yet'}
                   </td>
                   <td className="py-3 px-3 text-gray-700 font-semibold">
-                    {hanger.total_baths}
-                  </td>
-                  <td className="py-3 px-3 text-gray-700 text-xs">
-                    {formatTime(hanger.first_seen)}
+                    {hanger.baths_visited?.length || 0}
                   </td>
                   <td className="py-3 px-3">
                     {hanger.current_bath !== null ? (
@@ -223,3 +203,4 @@ export function HangerTracking() {
     </div>
   )
 }
+

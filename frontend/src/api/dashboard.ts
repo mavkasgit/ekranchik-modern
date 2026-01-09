@@ -2,11 +2,17 @@ import { api } from './client'
 import type { DashboardResponse, FileStatus } from '@/types/dashboard'
 
 export const dashboardApi = {
-  getData: async (days = 7, limit = 100, unloadingLimit = 10): Promise<DashboardResponse> => {
-    const { data } = await api.get<DashboardResponse>('/dashboard', {
-      params: { days, limit, unloading_limit: unloadingLimit },
-    })
-    return data
+  getData: async (days = 7, limit = 100, unloadingLimit = 10, loadingOnly = true): Promise<DashboardResponse> => {
+    const params: Record<string, any> = {
+      days,
+      limit,
+      unloading_limit: unloadingLimit,
+    };
+    if (!loadingOnly) {
+      params.loading_only = false;
+    }
+    const { data } = await api.get<DashboardResponse>('/dashboard', { params });
+    return data;
   },
 
   getFileStatus: async (): Promise<FileStatus> => {
