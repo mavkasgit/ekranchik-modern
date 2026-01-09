@@ -27,7 +27,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
-import { dashboardApi, type DebugRawData, type DebugMatchingData } from '@/api/dashboard'
+import { dashboardApi } from '@/api/dashboard'
 
 const FILTERS_KEY = 'ekranchik_filters'
 
@@ -358,7 +358,7 @@ function ProfilePhoto({
   )
 }
 
-function StatusBar({ onDebugClick }: { onDebugClick: () => void }) {
+function StatusBar() {
   const { data: fileStatus } = useFileStatus()
   const { data: opcuaStatus } = useOPCUAStatus()
   const { isConnected } = useRealtimeData()
@@ -407,246 +407,9 @@ function StatusBar({ onDebugClick }: { onDebugClick: () => void }) {
             <span>WS: {isConnected ? 'Онлайн' : 'Офлайн'}</span>
           </div>
 
-          <div className="w-px h-4 bg-border" />
-
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={onDebugClick}
-            className="gap-1"
-          >
-            <Bug className="w-3 h-3" />
-            DEBUG
-          </Button>
         </div>
       </CardContent>
     </Card>
-  )
-}
-
-// Debug Modal
-function DebugModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [tab, setTab] = useState<'raw' | 'matching'>('matching')
-  const [rawData, setRawData] = useState<DebugRawData | null>(null)
-  const [matchData, setMatchData] = useState<DebugMatchingData | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const loadData = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      if (tab === 'raw') {
-        const data = await dashboardApi.getDebugRawData(50)
-        setRawData(data)
-      } else {
-        const data = await dashboardApi.getDebugMatching(15)
-        setMatchData(data)
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
-    } finally {
-      setLoading(false)
-    }
-  }, [tab])
-
-  useEffect(() => {
-    if (open) {
-      loadData()
-    }
-  }, [open, tab, loadData])
-
-  return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-hidden p-0">
-        <div className="p-4 border-b flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h2 className="text-lg font-bold">🔧 DEBUG</h2>
-            <div className="flex gap-1">
-              <Button
-                variant={tab === 'matching' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setTab('matching')}
-              >
-                🔗 Матчинг
-              </Button>
-              <Button
-                variant={tab === 'raw' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setTab('raw')}
-              >
-                📊 Сырые данные
-              </Button>
-            </div>
-            {matchData && tab === 'matching' && <Badge>Сегодня: {matchData.today}</Badge>}
-            {rawData && tab === 'raw' && <Badge>Сегодня: {rawData.today}</Badge>}
-          </div>
-          <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
-            <RefreshCw className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
-            Обновить
-          </Button>
-        </div>
-
-        {loading && (
-          <div className="p-8 text-center">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
-            Загрузка...
-          </div>
-        )}
-
-        {error && (
-          <div className="p-8 text-center text-red-500">Ошибка: {error}</div>
-        )}
-
-        {/* Matching Tab */}
-        {tab === 'matching' && matchData && !loading && (
-          <div className="p-4 overflow-auto max-h-[calc(90vh-80px)]">
-            <div className="mb-2 text-sm text-muted-foreground">
-              OPC UA: {matchData.total_ftp_events} событий | Excel: {matchData.total_excel_products} записей | Показано: {matchData.showing}
-            </div>
-            <div className="space-y-3">
-              {matchData.matches.map((m, i) => (
-                <div key={i} className="border rounded p-3 bg-card">
-                  <div className="flex items-start gap-4">
-                    {/* OPC UA Event */}
-                    <div className="bg-green-100 dark:bg-green-900 rounded p-2 min-w-[150px]">
-                      <div className="text-xs text-green-700 dark:text-green-300 font-bold mb-1">📡 OPC UA ВЫХОД</div>
-                      <div className="font-mono text-sm">
-                        <div>Дата: <b>{m.ftp_event.date}</b></div>
-                        <div>Время: <b>{m.ftp_event.time}</b></div>
-                        <div>Подвес: <b className="text-lg">{m.ftp_event.hanger}</b></div>
-                      </div>
-                    </div>
-
-                    {/* Arrow */}
-                    <div className="text-2xl self-center">→</div>
-
-                    {/* Matched Result */}
-                    <div className={`rounded p-2 min-w-[200px] ${m.matched ? 'bg-blue-100 dark:bg-blue-900' : 'bg-red-100 dark:bg-red-900'}`}>
-                      <div className={`text-xs font-bold mb-1 ${m.matched ? 'text-blue-700 dark:text-blue-300' : 'text-red-700 dark:text-red-300'}`}>
-                        {m.matched ? '✅ СМАТЧЕНО' : '❌ НЕ НАЙДЕНО'}
-                      </div>
-                      {m.matched ? (
-                        <div className="font-mono text-sm">
-                          <div>Дата: <b>{m.matched.entry_date}</b></div>
-                          <div>Время: <b>{m.matched.entry_time}</b></div>
-                          <div>Разница: <b>{m.matched.diff_hours}ч</b></div>
-                          <div className="truncate max-w-[180px]">Клиент: {m.matched.client}</div>
-                          <div className="truncate max-w-[180px]">Профиль: {m.matched.profile}</div>
-                        </div>
-                      ) : (
-                        <div className="text-sm">Кандидатов: {m.candidates_count}</div>
-                      )}
-                    </div>
-
-                    {/* Candidates */}
-                    {m.candidates.length > 0 && (
-                      <div className="flex-1 min-w-[300px]">
-                        <div className="text-xs text-muted-foreground mb-1">
-                          Кандидаты ({m.candidates_count}):
-                        </div>
-                        <div className="text-xs space-y-1 max-h-[100px] overflow-auto">
-                          {m.candidates.map((c, j) => (
-                            <div
-                              key={j}
-                              className={`font-mono px-1 rounded ${
-                                c.status === 'OK'
-                                  ? 'bg-green-50 dark:bg-green-950'
-                                  : c.status === 'USED'
-                                  ? 'bg-yellow-50 dark:bg-yellow-950 line-through'
-                                  : 'bg-red-50 dark:bg-red-950 line-through'
-                              }`}
-                            >
-                              {c.entry_date} {c.entry_time} | {c.diff_hours}ч |{' '}
-                              <span className={c.status !== 'OK' ? 'text-muted-foreground' : ''}>
-                                {c.status}
-                              </span>{' '}
-                              | {c.client?.slice(0, 15)}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Raw Data Tab */}
-        {tab === 'raw' && rawData && !loading && (
-          <div className="flex gap-4 p-4 overflow-auto max-h-[calc(90vh-80px)]">
-            {/* OPC UA Events */}
-            <div className="flex-1 min-w-[400px]">
-              <div className="mb-2 flex items-center gap-2">
-                <h3 className="font-bold text-green-600">📡 OPC UA События</h3>
-                <Badge variant="outline">{rawData.ftp.source}</Badge>
-                <Badge>
-                  {rawData.ftp.showing} / {rawData.ftp.total_cached}
-                </Badge>
-              </div>
-              <div className="border rounded max-h-[60vh] overflow-auto">
-                <Table>
-                  <TableHeader className="sticky top-0 bg-muted">
-                    <TableRow>
-                      <TableHead className="text-xs py-1">Дата</TableHead>
-                      <TableHead className="text-xs py-1">Время</TableHead>
-                      <TableHead className="text-xs py-1">№ Подв</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rawData.ftp.events.map((e, i) => (
-                      <TableRow key={i} className={i % 2 === 0 ? 'bg-green-50 dark:bg-green-950' : ''}>
-                        <TableCell className="text-xs py-1 font-mono">{e.date}</TableCell>
-                        <TableCell className="text-xs py-1 font-mono">{e.time}</TableCell>
-                        <TableCell className="text-xs py-1 font-bold">{e.hanger}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-
-            {/* Excel Products */}
-            <div className="flex-1 min-w-[500px]">
-              <div className="mb-2 flex items-center gap-2">
-                <h3 className="font-bold text-blue-600">📊 Excel Записи</h3>
-                <Badge>
-                  {rawData.excel.showing} / {rawData.excel.total}
-                </Badge>
-              </div>
-              <div className="border rounded max-h-[60vh] overflow-auto">
-                <Table>
-                  <TableHeader className="sticky top-0 bg-muted">
-                    <TableRow>
-                      <TableHead className="text-xs py-1">Дата</TableHead>
-                      <TableHead className="text-xs py-1">Время</TableHead>
-                      <TableHead className="text-xs py-1">№</TableHead>
-                      <TableHead className="text-xs py-1">Клиент</TableHead>
-                      <TableHead className="text-xs py-1">Профиль</TableHead>
-                      <TableHead className="text-xs py-1">Цвет</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rawData.excel.products.map((p, i) => (
-                      <TableRow key={i} className={i % 2 === 0 ? 'bg-blue-50 dark:bg-blue-950' : ''}>
-                        <TableCell className="text-xs py-1 font-mono">{p.date}</TableCell>
-                        <TableCell className="text-xs py-1 font-mono">{p.time}</TableCell>
-                        <TableCell className="text-xs py-1 font-bold">{p.number}</TableCell>
-                        <TableCell className="text-xs py-1 truncate max-w-[100px]">{p.client}</TableCell>
-                        <TableCell className="text-xs py-1 truncate max-w-[120px]">{p.profile}</TableCell>
-                        <TableCell className="text-xs py-1">{p.color}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
   )
 }
 
@@ -904,7 +667,6 @@ export default function Dashboard() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
   const [isFileUpdating, setIsFileUpdating] = useState(false)
-  const [showDebug, setShowDebug] = useState(false)
   const lastModifiedRef = useRef<string | null>(null)
 
   const { toast } = useToast()
@@ -998,7 +760,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!isFullscreen && <StatusBar onDebugClick={() => setShowDebug(true)} />}
+      {!isFullscreen && <StatusBar />}
 
       {!isFullscreen && (
         <FiltersPanel
@@ -1078,8 +840,6 @@ export default function Dashboard() {
         photoUrl={photoModal?.url || null}
         profileName={photoModal?.name || ''}
       />
-
-      <DebugModal open={showDebug} onClose={() => setShowDebug(false)} />
     </div>
   )
 }

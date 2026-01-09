@@ -276,7 +276,6 @@ class TestLogCategories:
         """LOG_CATEGORIES импортируется"""
         from launcher import LOG_CATEGORIES
         assert 'all' in LOG_CATEGORIES
-        assert 'ftp' in LOG_CATEGORIES
         assert 'error' in LOG_CATEGORIES
     
     def test_all_category_has_empty_patterns(self):
@@ -289,71 +288,6 @@ class TestLogCategories:
         from launcher import LOG_CATEGORIES
         patterns = LOG_CATEGORIES['error']['patterns']
         assert 'ERROR' in patterns or 'error' in patterns
-
-
-class TestFTPUtils:
-    """Тесты для FTP утилит"""
-    
-    def test_ftp_utils_import(self):
-        """ftp_utils импортируется"""
-        import ftp_utils
-        assert hasattr(ftp_utils, 'get_ftp_connection')
-        assert hasattr(ftp_utils, 'decode_content')
-    
-    def test_decode_content_utf8(self):
-        """decode_content работает с UTF-8"""
-        from ftp_utils import decode_content
-        test_bytes = "Привет мир".encode('utf-8')
-        result = decode_content(test_bytes)
-        assert result == "Привет мир"
-    
-    def test_decode_content_cp1251(self):
-        """decode_content работает с CP1251"""
-        from ftp_utils import decode_content
-        test_bytes = "Привет мир".encode('cp1251')
-        result = decode_content(test_bytes)
-        assert "Привет" in result or result is not None
-    
-    def test_get_ftp_connections_status_import(self):
-        """get_ftp_connections_status импортируется"""
-        from ftp_utils import get_ftp_connections_status
-        assert callable(get_ftp_connections_status)
-    
-    def test_close_ftp_connections_import(self):
-        """close_ftp_connections импортируется"""
-        from ftp_utils import close_ftp_connections
-        assert callable(close_ftp_connections)
-    
-    def test_wait_for_ftp_available_import(self):
-        """wait_for_ftp_available импортируется"""
-        from ftp_utils import wait_for_ftp_available
-        assert callable(wait_for_ftp_available)
-    
-    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
-    def test_get_ftp_connections_status_returns_dict(self):
-        """get_ftp_connections_status возвращает словарь с нужными полями"""
-        from ftp_utils import get_ftp_connections_status
-        result = get_ftp_connections_status("172.17.11.194", 21)
-        
-        assert isinstance(result, dict)
-        assert 'total' in result
-        assert 'established' in result
-        assert 'time_wait' in result
-        assert 'close_wait' in result
-        assert 'connections' in result
-        assert isinstance(result['connections'], list)
-    
-    @pytest.mark.skipif(sys.platform != 'win32', reason="Windows only")
-    def test_close_ftp_connections_returns_dict(self):
-        """close_ftp_connections возвращает словарь с результатами"""
-        from ftp_utils import close_ftp_connections
-        result = close_ftp_connections("172.17.11.194", 21)
-        
-        assert isinstance(result, dict)
-        assert 'closed' in result
-        assert 'killed_pids' in result
-        assert 'errors' in result
-        assert isinstance(result['killed_pids'], list)
 
 
 class TestAPIEndpoints:
@@ -380,42 +314,5 @@ class TestAPIEndpoints:
             data = json.loads(resp.read().decode())
             assert data['status'] == 'healthy'
     
-    def test_poller_status_endpoint(self, api_available):
-        """Тест /api/dashboard/poller/status"""
-        import urllib.request
-        import json
-        
-        req = urllib.request.Request("http://127.0.0.1:8000/api/dashboard/poller/status")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            assert 'running' in data
-            assert 'interval' in data
-    
-    def test_poller_start_stop(self, api_available):
-        """Тест запуска и остановки поллинга"""
-        import urllib.request
-        import json
-        
-        # Запуск
-        req = urllib.request.Request(
-            "http://127.0.0.1:8000/api/dashboard/poller/start",
-            method="POST", data=b""
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            assert data['running'] is True
-        
-        time.sleep(1)
-        
-        # Остановка
-        req = urllib.request.Request(
-            "http://127.0.0.1:8000/api/dashboard/poller/stop",
-            method="POST", data=b""
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            assert data['running'] is False
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

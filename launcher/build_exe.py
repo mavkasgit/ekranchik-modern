@@ -16,7 +16,6 @@ def build():
     # Файлы для включения
     data_files = [
         ("theme.json", "."),
-        ("ftp_utils.py", "."),
         ("icons.py", "."),
     ]
     

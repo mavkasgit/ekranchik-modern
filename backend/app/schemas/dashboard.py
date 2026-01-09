@@ -27,17 +27,8 @@ class HangerData(BaseModel):
     is_defect: bool = Field(default=False, description="True if defect/браk")
 
 
-class UnloadEvent(BaseModel):
-    """FTP unload event from PLC"""
-    time: str = Field(..., description="Event time HH:MM:SS")
-    hanger: int = Field(..., ge=0, description="Hanger number")
-    date: Optional[str] = Field(default=None, description="Event date DD.MM.YYYY")
-    timestamp: Optional[datetime] = None
-
-
 class MatchedUnloadEvent(BaseModel):
     """Unload event matched with Excel data"""
-    # From FTP
     exit_date: str
     exit_time: str
     hanger: int
@@ -74,9 +65,3 @@ class FileStatus(BaseModel):
     error: Optional[str] = None
 
 
-class FTPStatus(BaseModel):
-    """FTP connection status"""
-    connected: bool = False
-    last_check: Optional[datetime] = None
-    events_today: int = 0
-    error: Optional[str] = None

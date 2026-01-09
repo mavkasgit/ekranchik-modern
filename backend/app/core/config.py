@@ -33,15 +33,6 @@ class Settings(BaseSettings):
     # Excel file path
     EXCEL_FILE_PATH: str = ""
     
-    # FTP Configuration (Omron PLC)
-    FTP_HOST: str = "172.17.11.194"
-    FTP_PORT: int = 21
-    FTP_USER: str = "omron"
-    FTP_PASSWORD: str = "12345678"
-    FTP_BASE_PATH: str = "/MEMCARD1/messages/"
-    FTP_POLL_INTERVAL: int = 30  # Seconds between polls (PLC needs time)
-    FTP_DAYS_TO_READ: int = 2  # Number of days to read (today + yesterday)
-    
     # OPC UA Configuration (Omron PLC)
     OPCUA_ENABLED: bool = True
     OPCUA_ENDPOINT: str = "opc.tcp://172.17.11.131:4840/"

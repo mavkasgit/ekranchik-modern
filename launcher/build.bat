@@ -22,7 +22,6 @@ pyinstaller --noconfirm ^
     --windowed ^
     --name "EkranchikLauncher" ^
     --icon=launcher.ico ^
-    --add-data "ftp_utils.py;." ^
     --add-data "tray_icons.py;." ^
     --hidden-import=customtkinter ^
     --hidden-import=PIL ^

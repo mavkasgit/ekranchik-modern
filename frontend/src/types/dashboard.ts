@@ -25,14 +25,8 @@ export interface HangerData {
   // For realtime unload events - entry/exit times
   entry_date?: string   // Date when loaded (from Excel)
   entry_time?: string   // Time when loaded (from Excel)
-  exit_date?: string    // Date when unloaded (from FTP)
-  exit_time?: string    // Time when unloaded (from FTP)
-}
-
-export interface UnloadEvent {
-  time: string
-  hanger: number
-  timestamp?: string
+  exit_date?: string    // Date when unloaded
+  exit_time?: string    // Time when unloaded
 }
 
 export interface DashboardResponse {
@@ -51,13 +45,6 @@ export interface FileStatus {
   last_modified?: string
   file_name?: string
   status_text: string
-  error?: string
-}
-
-export interface FTPStatus {
-  connected: boolean
-  last_check?: string
-  events_today: number
   error?: string
 }
 

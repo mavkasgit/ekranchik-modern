@@ -31,7 +31,6 @@ for noisy_logger in [
     "websockets", "websockets.client", "websockets.server",
     "uvicorn", "uvicorn.access", "uvicorn.error",
     "watchfiles", "watchfiles.main",
-    "app.services.ftp_service",  # FTP service - disabled
     "app.services.websocket_manager",  # WebSocket broadcasts - too verbose
 ]:
     logging.getLogger(noisy_logger).setLevel(logging.ERROR)

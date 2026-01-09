@@ -5,7 +5,7 @@ a = Analysis(
     ['D:\\KTM\\KTM2000\\launcher\\launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[('D:\\KTM\\KTM2000\\launcher\\theme.json', '.'), ('D:\\KTM\\KTM2000\\launcher\\ftp_utils.py', '.'), ('D:\\KTM\\KTM2000\\launcher\\icons.py', '.')],
+    datas=[('D:\\KTM\\KTM2000\\launcher\\theme.json', '.'), ('D:\\KTM\\KTM2000\\launcher\\icons.py', '.')],
     hiddenimports=['customtkinter', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'pystray', 'pystray._win32', 'dotenv'],
     hookspath=[],
     hooksconfig={},

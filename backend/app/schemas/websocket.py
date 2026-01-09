@@ -20,7 +20,6 @@ class DataUpdateMessage(WebSocketMessage):
 
 
 class UnloadEventMessage(WebSocketMessage):
-    """Message for FTP unload events"""
     type: Literal["unload_event"] = "unload_event"
 
 

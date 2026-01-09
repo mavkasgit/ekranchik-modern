@@ -7,7 +7,6 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services.ftp_poller import ftp_poller
 from app.services.excel_service import excel_service
 from app.services.websocket_manager import websocket_manager
 from app.schemas.websocket import WebSocketMessage
@@ -34,19 +33,10 @@ async def receive_signal(request: SignalRequest):
     Receive external signals/events.
     
     Used for:
-    - FTP event notifications from external systems
     - Manual refresh triggers
     - Integration with other services
     """
-    if request.source == "ftp":
-        # Trigger immediate FTP poll
-        await ftp_poller.poll_now()
-        return SignalResponse(
-            success=True,
-            message="FTP poll triggered"
-        )
-    
-    elif request.source == "excel":
+    if request.source == "excel":
         # Invalidate Excel cache and broadcast
         excel_service.invalidate_cache()
         
@@ -94,9 +84,6 @@ async def refresh_all():
     """
     # Invalidate Excel cache
     excel_service.invalidate_cache()
-    
-    # Poll FTP
-    await ftp_poller.poll_now()
     
     # Broadcast refresh
     message = WebSocketMessage(
