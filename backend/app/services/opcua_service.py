@@ -39,7 +39,7 @@ class OPCUAService:
         # Кеш значений узлов
         self._node_cache: Dict[str, Any] = {}
         self._cache_time: Dict[str, datetime] = {}
-        self._cache_ttl: int = 5  # Секунды
+        self._cache_ttl: int = 10  # Секунды
         
         self._stats = {
             'connections': 0,
@@ -70,12 +70,28 @@ class OPCUAService:
             logger.error("[OPC UA] Library not available")
             return False
         
+        # Проверяем, не идёт ли уже подключение
+        if self._state == OPCUAState.CONNECTING:
+            return False
+        
         if self._connected:
             return True
         
         async with self._lock:
+            # Повторная проверка под локом
+            if self._connected:
+                return True
+            
             try:
                 self._state = OPCUAState.CONNECTING
+                
+                # Закрываем старый клиент если есть
+                if self._client:
+                    try:
+                        await self._client.disconnect()
+                    except:
+                        pass
+                    self._client = None
                 
                 client = Client(settings.OPCUA_ENDPOINT, timeout=10)
                 await client.connect()
@@ -94,8 +110,32 @@ class OPCUAService:
                 logger.error(f"[OPC UA] Connection failed: {e}")
                 self._connected = False
                 self._state = OPCUAState.ERROR
+                self._client = None
                 self._stats['errors'] += 1
                 return False
+    
+    async def ensure_connected(self) -> bool:
+        """Проверить соединение и переподключиться при необходимости."""
+        if not self._connected or not self._client:
+            return await self.connect()
+        
+        # Проверяем живость соединения простым запросом
+        try:
+            # Пробуем прочитать корневой узел - это быстрая проверка
+            root = self._client.get_node("i=84")  # Root folder
+            await root.get_children()
+            return True
+        except Exception as e:
+            logger.warning(f"[OPC UA] Health check failed, reconnecting: {e}")
+            self._connected = False
+            self._state = OPCUAState.DISCONNECTED
+            if self._client:
+                try:
+                    await self._client.disconnect()
+                except:
+                    pass
+                self._client = None
+            return await self.connect()
     
     async def disconnect(self) -> None:
         """Отключиться от OPC UA сервера."""
@@ -137,10 +177,36 @@ class OPCUAService:
             return value
             
         except Exception as e:
-            # Логируем только критические ошибки, не спам про несуществующие ноды
             error_str = str(e).lower()
-            if "badnodeidunknown" not in error_str and "badattributeidinvalid" not in error_str:
+            
+            # Критические ошибки соединения - нужно переподключиться
+            connection_errors = [
+                "failed to send request",
+                "badsessionidinvalid",
+                "badsecurechannelclosed",
+                "badconnectionclosed",
+                "connection refused",
+                "timeout",
+                "badservernotconnected",
+                "badcommunicationerror",
+            ]
+            
+            is_connection_error = any(err in error_str for err in connection_errors)
+            
+            if is_connection_error:
+                logger.warning(f"[OPC UA] Connection lost, will reconnect: {e}")
+                # Сбрасываем состояние соединения для переподключения
+                self._connected = False
+                self._state = OPCUAState.DISCONNECTED
+                if self._client:
+                    try:
+                        await self._client.disconnect()
+                    except:
+                        pass
+                    self._client = None
+            elif "badnodeidunknown" not in error_str and "badattributeidinvalid" not in error_str:
                 logger.error(f"[OPC UA] Read error for {node_id}: {e}")
+            
             self._stats['errors'] += 1
             return None
     

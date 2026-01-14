@@ -74,11 +74,13 @@ function ProfileCard({
   onSelect,
   onEdit,
   onDelete,
+  isMobile,
 }: { 
   profile: Profile
   onSelect: (profile: Profile) => void
   onEdit: (profile: Profile) => void
   onDelete: (profile: Profile) => void
+  isMobile: boolean
 }) {
   const photoUrl = getPhotoUrl(profile.photo_thumb, profile.updated_at)
 
@@ -109,14 +111,17 @@ function ProfileCard({
           </div>
         </div>
       </CardContent>
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); onEdit(profile) }}>
-          <Pencil className="h-4 w-4" />
-        </Button>
-        <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(profile) }}>
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
+      {/* Edit/Delete buttons - desktop only */}
+      {!isMobile && (
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); onEdit(profile) }}>
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(profile) }}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
     </Card>
   )
 }
@@ -331,14 +336,26 @@ function ProfileDialog({
 
   // Calculate dialog size based on actual image pixels
   // Image should be shown at 1:1 scale or smaller, never stretched
+  // Mobile: full screen layout
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+  
   const dialogSize = useMemo(() => {
+    // Mobile - fullscreen
+    if (isMobile) {
+      return { 
+        width: typeof window !== 'undefined' ? window.innerWidth : 400, 
+        height: typeof window !== 'undefined' ? window.innerHeight : 600,
+        isMobile: true
+      }
+    }
+    
     const rightPanelWidth = 320 // w-80
     const maxDialogHeight = typeof window !== 'undefined' ? window.innerHeight - 100 : 800 // 100px padding from edges
     const maxDialogWidth = typeof window !== 'undefined' ? window.innerWidth - 100 : 1200
     const minHeight = 400
     
     if (!imageSize) {
-      return { width: Math.min(900, maxDialogWidth), height: minHeight }
+      return { width: Math.min(900, maxDialogWidth), height: minHeight, isMobile: false }
     }
     
     // Image area width = dialog width - right panel
@@ -363,15 +380,18 @@ function ProfileDialog({
     
     return {
       width: Math.max(600, imgDisplayWidth + rightPanelWidth),
-      height: Math.max(minHeight, imgDisplayHeight)
+      height: Math.max(minHeight, imgDisplayHeight),
+      isMobile: false
     }
-  }, [imageSize])
+  }, [imageSize, isMobile])
 
   const content = (
     <>
-      {/* Photo area - left side */}
+      {/* Photo area - left side on desktop, top on mobile */}
       <div 
-        className="flex-1 bg-muted flex items-center justify-center overflow-auto relative"
+        className={`bg-muted flex items-center justify-center overflow-auto relative ${
+          isMobile ? 'h-[80vh] w-full' : 'flex-1'
+        }`}
         onDrop={isEditMode ? handleDrop : undefined}
         onDragOver={isEditMode ? (e) => e.preventDefault() : undefined}
       >
@@ -410,6 +430,41 @@ function ProfileDialog({
               }
               window.addEventListener('mousemove', onMove)
               window.addEventListener('mouseup', onUp)
+            } : undefined}
+            // Touch support for mobile crop
+            onTouchStart={isEditMode && photoMode === 'crop' ? (e) => {
+              e.preventDefault()
+              const touch = e.touches[0]
+              const container = e.currentTarget
+              const rect = container.getBoundingClientRect()
+              const startX = ((touch.clientX - rect.left) / rect.width) * 100
+              const startY = ((touch.clientY - rect.top) / rect.height) * 100
+              
+              setCropArea({ x: startX, y: startY, width: 0, height: 0 })
+              
+              const onMove = (moveE: TouchEvent) => {
+                const moveTouch = moveE.touches[0]
+                const currentX = ((moveTouch.clientX - rect.left) / rect.width) * 100
+                const currentY = ((moveTouch.clientY - rect.top) / rect.height) * 100
+                
+                const newX = Math.min(startX, currentX)
+                const newY = Math.min(startY, currentY)
+                const newW = Math.abs(currentX - startX)
+                const newH = Math.abs(currentY - startY)
+                
+                setCropArea({
+                  x: Math.max(0, newX),
+                  y: Math.max(0, newY),
+                  width: Math.min(newW, 100 - Math.max(0, newX)),
+                  height: Math.min(newH, 100 - Math.max(0, newY)),
+                })
+              }
+              const onEnd = () => {
+                window.removeEventListener('touchmove', onMove)
+                window.removeEventListener('touchend', onEnd)
+              }
+              window.addEventListener('touchmove', onMove, { passive: false })
+              window.addEventListener('touchend', onEnd)
             } : undefined}
           >
                 <img 
@@ -498,7 +553,7 @@ function ProfileDialog({
                 {isEditMode ? (
                   <>
                     <Upload className="w-16 h-16 mx-auto mb-4" />
-                    <p className="text-lg">Нажмите, перетащите или вставьте (Ctrl+V)</p>
+                    <p className="text-lg px-4">{isMobile ? 'Нажмите для загрузки' : 'Нажмите, перетащите или вставьте (Ctrl+V)'}</p>
                   </>
                 ) : (
                   <>
@@ -519,8 +574,10 @@ function ProfileDialog({
             )}
           </div>
 
-          {/* Right panel */}
-          <div className="w-80 border-l bg-background p-4 flex flex-col">
+          {/* Right panel - side on desktop, bottom on mobile */}
+          <div className={`border-l bg-background p-4 flex flex-col ${
+            isMobile ? 'flex-1 overflow-y-auto border-l-0 border-t' : 'w-80'
+          }`}>
             <div className="flex-1 space-y-4 overflow-y-auto">
               {isViewMode ? (
                 <>
@@ -591,7 +648,7 @@ function ProfileDialog({
                       value={formData.notes ?? ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value || null }))}
                       placeholder="Дополнительная информация..."
-                      rows={3}
+                      rows={isMobile ? 2 : 3}
                     />
                   </div>
 
@@ -604,9 +661,11 @@ function ProfileDialog({
                       <Button type="button" variant="outline" size="sm" className="w-full" onClick={cancelCrop}>
                         Сбросить превью
                       </Button>
-                      <p className="text-xs text-muted-foreground text-center">
-                        Перетащите синюю область для превью
-                      </p>
+                      {!isMobile && (
+                        <p className="text-xs text-muted-foreground text-center">
+                          Перетащите синюю область для превью
+                        </p>
+                      )}
                     </div>
                   )}
                 </>
@@ -631,8 +690,12 @@ function ProfileDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent 
-        className="p-0 gap-0 top-[5%] translate-y-0"
-        style={{ width: `${dialogSize.width}px`, height: `${dialogSize.height}px`, maxWidth: 'calc(100vw - 100px)' }}
+        className={`p-0 gap-0 ${
+          isMobile 
+            ? 'w-screen h-screen max-w-none max-h-none rounded-none top-0 left-0 translate-x-0 translate-y-0' 
+            : 'top-[5%] translate-y-0'
+        }`}
+        style={isMobile ? undefined : { width: `${dialogSize.width}px`, height: `${dialogSize.height}px`, maxWidth: 'calc(100vw - 100px)' }}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <DialogHeader className="sr-only">
@@ -641,11 +704,11 @@ function ProfileDialog({
         </DialogHeader>
         
         {isEditMode ? (
-          <form onSubmit={handleSubmit} className="flex h-full">
+          <form onSubmit={handleSubmit} className={`flex h-full ${isMobile ? 'flex-col' : ''}`}>
             {content}
           </form>
         ) : (
-          <div className="flex h-full">
+          <div className={`flex h-full ${isMobile ? 'flex-col' : ''}`}>
             {content}
           </div>
         )}
@@ -740,6 +803,15 @@ export default function Catalog() {
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editMode, setEditMode] = useState<'create' | 'edit'>('edit')
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+
+  // Mobile detection
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+  
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   // Data
   const { data: allProfiles, isLoading: loadingAll } = useCatalogAll()
@@ -852,18 +924,23 @@ export default function Catalog() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon" onClick={() => setViewMode('grid')} 
-              className={viewMode === 'grid' ? 'bg-accent' : ''}>
-              <Grid className="h-4 w-4" />
-            </Button>
-            <Button variant="outline" size="icon" onClick={() => setViewMode('table')}
-              className={viewMode === 'table' ? 'bg-accent' : ''}>
-              <List className="h-4 w-4" />
-            </Button>
-            <Button onClick={handleCreateNew}>
-              <Plus className="h-4 w-4 mr-2" />
-              Создать
-            </Button>
+            {/* View mode buttons - desktop only */}
+            {!isMobile && (
+              <>
+                <Button variant="outline" size="icon" onClick={() => setViewMode('grid')} 
+                  className={viewMode === 'grid' ? 'bg-accent' : ''}>
+                  <Grid className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" onClick={() => setViewMode('table')}
+                  className={viewMode === 'table' ? 'bg-accent' : ''}>
+                  <List className="h-4 w-4" />
+                </Button>
+                <Button onClick={handleCreateNew}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Создать
+                </Button>
+              </>
+            )}
           </div>
         </div>
         
@@ -939,13 +1016,14 @@ export default function Catalog() {
               onSelect={handleSelectProfile}
               onEdit={handleEditProfile}
               onDelete={handleDeleteProfile}
+              isMobile={isMobile}
             />
           ))}
         </div>
       )}
 
-      {/* Table View */}
-      {!isLoading && viewMode === 'table' && displayData.length > 0 && (
+      {/* Table View - desktop only */}
+      {!isLoading && !isMobile && viewMode === 'table' && displayData.length > 0 && (
         <div className="border rounded-lg">
           <Table>
             <TableHeader>

@@ -4,6 +4,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import './index.css'
 
+// Force light mode - remove dark class if present
+if (typeof document !== 'undefined') {
+  document.documentElement.classList.remove('dark')
+  localStorage.setItem('theme', 'light')
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

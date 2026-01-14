@@ -67,6 +67,9 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
             console.log('[WS] Refetching unload-matched data...')
             queryClient.invalidateQueries({ queryKey: ['dashboard', 'unload-matched'] })
             queryClient.refetchQueries({ queryKey: ['dashboard', 'unload-matched'] })
+          } else if (message.type === 'opcua_status' || message.type === 'heartbeat') {
+            // OPC UA status updates - invalidate dashboard to refresh connection status
+            queryClient.invalidateQueries({ queryKey: ['opcua'] })
           }
         } catch (e) {
           console.error('[WS] Failed to parse message:', e)

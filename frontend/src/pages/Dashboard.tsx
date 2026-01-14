@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, Loader2, Bug
+  Image, Maximize2, Minimize2, X, Loader2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -27,7 +27,6 @@ import { useToast } from '@/hooks/use-toast'
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
-import { dashboardApi } from '@/api/dashboard'
 
 const FILTERS_KEY = 'ekranchik_filters'
 
@@ -512,7 +511,7 @@ function DataTable({
             return (
               <TableRow
                 key={`${hanger.number}-${idx}`}
-                className={isNew ? 'bg-yellow-500/20 animate-pulse' : idx % 2 === 0 ? 'bg-slate-200 dark:bg-slate-700' : ''}
+                className={isNew ? 'bg-yellow-500/20 animate-pulse' : idx % 2 === 0 ? 'bg-slate-200' : ''}
               >
                 {showEntryExit ? (
                   <>
@@ -521,15 +520,15 @@ function DataTable({
                         <span>{formatDate(hanger.entry_date)}</span>
                       ) : (
                         <div className="flex flex-col">
-                          <span className="text-blue-600 dark:text-blue-400">{formatDate(hanger.entry_date)}</span>
-                          <span className="text-green-600 dark:text-green-400">{formatDate(hanger.exit_date)}</span>
+                          <span className="text-blue-600">{formatDate(hanger.entry_date)}</span>
+                          <span className="text-green-600">{formatDate(hanger.exit_date)}</span>
                         </div>
                       )}
                     </TableCell>
                     <TableCell className="text-center py-1 text-xs">
                       <div className="flex flex-col">
-                        <span className="text-blue-600 dark:text-blue-400">{formatTime(hanger.entry_time)}</span>
-                        <span className="text-green-600 dark:text-green-400">{formatTime(hanger.exit_time)}</span>
+                        <span className="text-blue-600">{formatTime(hanger.entry_time)}</span>
+                        <span className="text-green-600">{formatTime(hanger.exit_time)}</span>
                       </div>
                     </TableCell>
                   </>
@@ -742,6 +741,35 @@ export default function Dashboard() {
       lastModifiedRef.current = newModified
     }
   }, [fileStatus?.last_modified])
+
+  // Handle Escape key to exit kiosk mode
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Close the browser window (works in kiosk mode)
+        window.close()
+      }
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [])
+
+  // Auto-fullscreen if opened from kiosk mode (check URL parameter or window size)
+  useEffect(() => {
+    // Проверяем если это открыто на весь экран (вероятно из киоска)
+    const isKioskMode = window.innerHeight === screen.height && window.innerWidth === screen.width
+    
+    if (isKioskMode && !isFullscreen) {
+      // Автоматически переходим в fullscreen
+      setTimeout(() => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {
+            // Если fullscreen не сработал, это нормально
+          })
+        }
+      }, 500)
+    }
+  }, [])
 
   // Refetch matched events when new unload event arrives
   useRealtimeData({

@@ -804,6 +804,14 @@ if HAS_GUI:
                 corner_radius=6, command=self._open_website
             ).pack(side="left", padx=(0, 8))
             
+            # Кнопка киоск-режима (fullscreen без панели задач)
+            ctk.CTkButton(
+                status_frame, text="📺 Киоск", width=80, height=32,
+                font=ctk.CTkFont(family=FONTS['small'][0], size=11),
+                fg_color=COLORS['accent'], hover_color=COLORS['accent_hover'],
+                corner_radius=6, command=self._open_kiosk_mode
+            ).pack(side="left", padx=(0, 8))
+            
             # Кнопка выхода
             ctk.CTkButton(
                 status_frame, text="Выход ✕", width=80, height=32,
@@ -889,6 +897,100 @@ if HAS_GUI:
                     webbrowser.open("http://localhost:5173")
                 except Exception:
                     pass
+        
+        def _open_kiosk_mode(self):
+            """
+            Открыть браузер на втором экране с Dashboard в полноэкранном режиме.
+            Браузер открывается с параметром --new-window для второго экрана.
+            """
+            import shutil
+            
+            # URL Dashboard (не главная страница)
+            url = "http://ktm.local/dashboard"
+            fallback_url = "http://localhost:5173/dashboard"
+            
+            # Ищем браузеры в порядке приоритета
+            browsers = []
+            
+            if sys.platform == 'win32':
+                # Chrome
+                chrome_paths = [
+                    os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+                    os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                    os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+                ]
+                for p in chrome_paths:
+                    if os.path.exists(p):
+                        browsers.append(('chrome', p))
+                        break
+                
+                # Edge
+                edge_paths = [
+                    os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+                    os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+                ]
+                for p in edge_paths:
+                    if os.path.exists(p):
+                        browsers.append(('edge', p))
+                        break
+            else:
+                # Linux/Mac
+                chrome = shutil.which('google-chrome') or shutil.which('chromium-browser') or shutil.which('chromium')
+                if chrome:
+                    browsers.append(('chrome', chrome))
+            
+            if not browsers:
+                # Fallback - обычный браузер
+                self._open_website()
+                self.pages[self.current_page].log.append("[SYSTEM] Киоск-режим: Chrome/Edge не найден, открыт обычный браузер")
+                return
+            
+            browser_name, browser_path = browsers[0]
+            
+            # Аргументы для открытия на втором экране в fullscreen
+            # --new-window - открыть в новом окне (на втором экране)
+            # --start-fullscreen - запуск в fullscreen
+            # --disable-infobars - убирает информационные панели
+            # --disable-session-crashed-bubble - убирает сообщение о крахе
+            # --noerrdialogs - убирает диалоги ошибок
+            # --disable-translate - отключает перевод
+            # --no-first-run - пропускает первый запуск
+            # --disable-features=TranslateUI - отключает UI перевода
+            # --disable-pinch - отключает pinch-zoom
+            # --overscroll-history-navigation=0 - отключает свайп назад
+            kiosk_args = [
+                browser_path,
+                '--new-window',
+                '--start-fullscreen',
+                '--disable-infobars',
+                '--disable-session-crashed-bubble',
+                '--noerrdialogs',
+                '--disable-translate',
+                '--no-first-run',
+                '--disable-features=TranslateUI',
+                '--disable-pinch',
+                '--overscroll-history-navigation=0',
+                url
+            ]
+            
+            try:
+                # Запускаем браузер на втором экране
+                hidden_args = get_hidden_subprocess_args()
+                subprocess.Popen(
+                    kiosk_args,
+                    **hidden_args
+                )
+                self.pages[self.current_page].log.append(f"[SYSTEM] Киоск-режим запущен ({browser_name}) на втором экране: {url}")
+                self.pages[self.current_page].log.append("[SYSTEM] Dashboard откроется в полноэкранном режиме")
+                self.pages[self.current_page].log.append("[SYSTEM] Для выхода нажмите кнопку 'Выход' или ESC")
+            except Exception as e:
+                self.pages[self.current_page].log.append(f"[ERROR] Ошибка запуска киоск-режима: {e}")
+                # Fallback
+                try:
+                    kiosk_args[-1] = fallback_url
+                    subprocess.Popen(kiosk_args, **hidden_args)
+                except Exception:
+                    self._open_website()
         
         def _start_log_updates(self):
             def update():

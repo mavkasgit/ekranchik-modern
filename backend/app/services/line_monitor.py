@@ -53,7 +53,11 @@ class LineMonitorService:
     def __init__(self):
         self._running = False
         self._task: Optional[asyncio.Task] = None
-        self._poll_interval = 2  # seconds
+        self._poll_interval = 10  # seconds
+        self._heartbeat_interval = 10  # seconds - отправка статуса на фронтенд
+        self._last_heartbeat = datetime.now()
+        self._consecutive_errors = 0
+        self._max_consecutive_errors = 5  # После этого делаем полный reconnect
         
         # State tracking
         self._hangers: Dict[int, HangerState] = {}
@@ -102,31 +106,89 @@ class LineMonitorService:
         while self._running:
             try:
                 await self._poll_once()
+                
+                # Сбрасываем счётчик ошибок при успешном опросе
+                self._consecutive_errors = 0
+
+                # Периодический heartbeat для фронтенда
+                now = datetime.now()
+                if (now - self._last_heartbeat).total_seconds() >= self._heartbeat_interval:
+                    await self._send_heartbeat()
+                    self._last_heartbeat = now
 
                 # Periodically clean up old hangers
-                now = datetime.now()
                 if now - self._last_cleanup_time > CLEANUP_INTERVAL:
                     await self._cleanup_hangers()
                     self._last_cleanup_time = now
 
             except Exception as e:
-                logger.error(f"[Line Monitor] Critical error in monitor loop: {e}", exc_info=True)
+                self._consecutive_errors += 1
+                logger.error(f"[Line Monitor] Error in monitor loop ({self._consecutive_errors}): {e}", exc_info=True)
+                
+                # При множественных ошибках - принудительный reconnect
+                if self._consecutive_errors >= self._max_consecutive_errors:
+                    logger.warning("[Line Monitor] Too many errors, forcing OPC UA reconnect")
+                    await opcua_service.disconnect()
+                    self._consecutive_errors = 0
+                    await self._broadcast_connection_status(False)
             
             await asyncio.sleep(self._poll_interval)
     
+    async def _send_heartbeat(self) -> None:
+        """Send heartbeat with current status to all clients."""
+        try:
+            active_hangers = self.get_active_hangers()
+            heartbeat = WebSocketMessage(
+                type="heartbeat",
+                payload={
+                    "opcua_connected": opcua_service.is_connected,
+                    "opcua_state": opcua_service.state.value,
+                    "active_hangers": len(active_hangers),
+                    "total_tracked": len(self._hangers),
+                    "recent_unloads": len(self._unload_events),
+                    "stats": opcua_service.stats,
+                },
+                timestamp=datetime.now()
+            )
+            await websocket_manager.broadcast(heartbeat)
+        except Exception as e:
+            logger.error(f"[Line Monitor] Heartbeat error: {e}")
+    
     async def _poll_once(self) -> None:
         """Single poll cycle: scan baths and detect events."""
-        # Ensure OPC UA connection
+        # Ensure OPC UA connection with health check
         if not opcua_service.is_connected:
-            if not await opcua_service.connect():
+            connected = await opcua_service.connect()
+            if not connected:
                 logger.warning("[Line Monitor] Cannot connect to OPC UA. Skipping poll.")
+                # Отправляем статус отключения на фронтенд
+                await self._broadcast_connection_status(False)
                 return
+            else:
+                # Успешно переподключились - уведомляем фронтенд
+                await self._broadcast_connection_status(True)
         
         # Scan all baths to update hanger states
         await self._scan_baths()
         
         # Check for unload events at the control bath
         await self._check_unload()
+    
+    async def _broadcast_connection_status(self, connected: bool) -> None:
+        """Broadcast OPC UA connection status to all clients."""
+        try:
+            status_message = WebSocketMessage(
+                type="opcua_status",
+                payload={
+                    "connected": connected,
+                    "state": opcua_service.state.value,
+                    "stats": opcua_service.stats,
+                },
+                timestamp=datetime.now()
+            )
+            await websocket_manager.broadcast(status_message)
+        except Exception as e:
+            logger.error(f"[Line Monitor] Failed to broadcast status: {e}")
 
     async def _cleanup_hangers(self) -> None:
         """Remove hanger data that has been inactive for too long."""

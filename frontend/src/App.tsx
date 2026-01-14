@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { LayoutDashboard, BookOpen, BarChart3, Moon, Sun, Gauge } from 'lucide-react'
+import { LayoutDashboard, BookOpen, BarChart3, Gauge } from 'lucide-react'
 import { useState, useEffect, createContext, useContext } from 'react'
-import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/toaster'
 import Dashboard from '@/pages/Dashboard'
 import Catalog from '@/pages/Catalog'
@@ -15,27 +14,6 @@ const FullscreenContext = createContext({
 })
 
 export const useFullscreen = () => useContext(FullscreenContext)
-
-function ThemeToggle() {
-  const [dark, setDark] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('theme') === 'dark' ||
-        (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)
-    }
-    return false
-  })
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-    localStorage.setItem('theme', dark ? 'dark' : 'light')
-  }, [dark])
-
-  return (
-    <Button variant="ghost" size="icon" onClick={() => setDark(!dark)}>
-      {dark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-    </Button>
-  )
-}
 
 function Navigation() {
   const { isFullscreen } = useFullscreen()
@@ -71,7 +49,6 @@ function Navigation() {
             </NavLink>
           ))}
         </nav>
-        <ThemeToggle />
       </div>
     </header>
   )
