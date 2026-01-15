@@ -611,7 +611,18 @@ function FiltersPanel({
             <Input
               type="number"
               value={filters.loadingLimit}
-              onChange={e => onChange({ ...filters, loadingLimit: Number(e.target.value) })}
+              onChange={e => {
+                const val = e.target.value
+                // Allow empty string during editing
+                onChange({ ...filters, loadingLimit: val === '' ? '' as any : Number(val) })
+              }}
+              onBlur={e => {
+                // Validate on blur - ensure minimum value of 1
+                const val = e.target.value
+                if (val === '' || Number(val) < 1) {
+                  onChange({ ...filters, loadingLimit: 1 })
+                }
+              }}
               className="w-20 h-8"
               min={1}
               max={500}
@@ -631,7 +642,16 @@ function FiltersPanel({
             <Input
               type="number"
               value={filters.realtimeLimit}
-              onChange={e => onChange({ ...filters, realtimeLimit: Number(e.target.value) })}
+              onChange={e => {
+                const val = e.target.value
+                onChange({ ...filters, realtimeLimit: val === '' ? '' as any : Number(val) })
+              }}
+              onBlur={e => {
+                const val = e.target.value
+                if (val === '' || Number(val) < 1) {
+                  onChange({ ...filters, realtimeLimit: 1 })
+                }
+              }}
               className="w-20 h-8"
               min={1}
               max={500}
@@ -651,7 +671,16 @@ function FiltersPanel({
             <Input
               type="number"
               value={filters.unloadingLimit}
-              onChange={e => onChange({ ...filters, unloadingLimit: Number(e.target.value) })}
+              onChange={e => {
+                const val = e.target.value
+                onChange({ ...filters, unloadingLimit: val === '' ? '' as any : Number(val) })
+              }}
+              onBlur={e => {
+                const val = e.target.value
+                if (val === '' || Number(val) < 1) {
+                  onChange({ ...filters, unloadingLimit: 1 })
+                }
+              }}
               className="w-20 h-8"
               min={1}
               max={500}

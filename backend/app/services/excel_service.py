@@ -265,6 +265,20 @@ class ExcelService:
             loading_only: If True, only include loading rows (date+material filled, time empty)
         """
         products = []
+        
+        # Filter by date - last 2 weeks for loading_only mode
+        if loading_only and 'date' in df.columns:
+            try:
+                logger.info(f"[FILTER] Before date filter: {len(df)} rows")
+                # Convert date column to datetime
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                # Filter last 2 weeks
+                cutoff = datetime.now() - timedelta(days=14)
+                df = df[df['date'] >= cutoff]
+                logger.info(f"[FILTER] After date filter (last 2 weeks, cutoff={cutoff.strftime('%Y-%m-%d')}): {len(df)} rows")
+            except Exception as e:
+                logger.warning(f"[FILTER] Could not filter by date: {e}")
+        
         for _, row in df.iterrows():
             date_val = row.get('date')
             material_type = row.get('material_type')
@@ -281,6 +295,7 @@ class ExcelService:
                 # Time must be EMPTY (this indicates a loading row, not unloading)
                 if pd.notna(time_val) and str(time_val).strip() not in ('', '—', 'nan', 'NaT'):
                     continue
+            
             # Handle lamels (can be "30+30" or number)
             lamels = row.get('lamels_qty')
             if pd.notna(lamels):
@@ -341,6 +356,7 @@ class ExcelService:
                 'is_defect': is_defect,
             })
         
+        logger.info(f"[FILTER] Final products after all filters: {len(products)}")
         return products
     
     def get_recent_profiles(self, limit: int = 50) -> List[Dict[str, Any]]:
