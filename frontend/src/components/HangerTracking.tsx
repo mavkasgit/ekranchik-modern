@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react'
-import { RefreshCw, CheckCircle, Clock, Zap } from 'lucide-react'
+import { RefreshCw, CheckCircle, Clock, Zap, AlertCircle } from 'lucide-react'
 
 interface Hanger {
   number: number;
-  current_bath: number | null;
-  baths_visited: number[];
+  current_bath: number | string | null;
+  baths_visited: (number | string)[];
+}
+
+interface OPCUAStatus {
+  connected: boolean;
+  endpoint: string;
 }
 
 export function HangerTracking() {
@@ -13,6 +18,19 @@ export function HangerTracking() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [opcuaStatus, setOpcuaStatus] = useState<OPCUAStatus | null>(null)
+
+  const fetchOPCUAStatus = async () => {
+    try {
+      const res = await fetch('/api/opcua/status')
+      if (res.ok) {
+        const data = await res.json()
+        setOpcuaStatus(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch OPC UA status:', err)
+    }
+  }
 
   const fetchHangers = async () => {
     setLoading(true)
@@ -22,7 +40,10 @@ export function HangerTracking() {
         fetch('/api/opcua/hangers/active')
       ])
       
-      if (!allRes.ok || !activeRes.ok) throw new Error('Failed to fetch hanger data')
+      if (!allRes.ok || !activeRes.ok) {
+        const errorText = await allRes.text()
+        throw new Error(`Failed to fetch hanger data: ${errorText}`)
+      }
       
       const allData = await allRes.json()
       const activeData = await activeRes.json()
@@ -48,10 +69,14 @@ export function HangerTracking() {
   }
 
   useEffect(() => {
+    fetchOPCUAStatus()
     fetchHangers()
     
     if (autoRefresh) {
-      const interval = setInterval(fetchHangers, 10000)
+      const interval = setInterval(() => {
+        fetchOPCUAStatus()
+        fetchHangers()
+      }, 10000)
       return () => clearInterval(interval)
     }
   }, [autoRefresh])
@@ -72,6 +97,22 @@ export function HangerTracking() {
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Hanger Tracking</h2>
           <p className="text-sm text-gray-600 mt-1">Track hangers through production line</p>
+          {opcuaStatus && (
+            <div className="flex items-center gap-2 mt-2">
+              {opcuaStatus.connected ? (
+                <>
+                  <CheckCircle className="w-4 h-4 text-green-600" />
+                  <span className="text-xs text-green-600 font-medium">OPC UA Connected</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="w-4 h-4 text-red-600" />
+                  <span className="text-xs text-red-600 font-medium">OPC UA Disconnected</span>
+                </>
+              )}
+              <span className="text-xs text-gray-500">({opcuaStatus.endpoint})</span>
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           <button
@@ -156,48 +197,62 @@ export function HangerTracking() {
       {/* All Hangers Table */}
       <div>
         <h3 className="text-lg font-semibold mb-3 text-gray-900">All Hangers</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="text-left py-2 px-3 font-medium text-gray-600">Hanger #</th>
-                <th className="text-left py-2 px-3 font-medium text-gray-600">Path Through Baths</th>
-                <th className="text-left py-2 px-3 font-medium text-gray-600">Total Baths</th>
-                <th className="text-left py-2 px-3 font-medium text-gray-600">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {hangers.filter(Boolean).slice(0, 15).map((hanger) => (
-                <tr key={hanger.number} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-3 px-3 font-mono font-semibold text-gray-900">
-                    {String(hanger.number).padStart(3, '0')}
-                  </td>
-                  <td className="py-3 px-3 text-xs text-gray-700 font-mono">
-                    {hanger.baths_visited?.map(b => `[${b}]`).join(' → ') || 'No path yet'}
-                  </td>
-                  <td className="py-3 px-3 text-gray-700 font-semibold">
-                    {hanger.baths_visited?.length || 0}
-                  </td>
-                  <td className="py-3 px-3">
-                    {hanger.current_bath !== null ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                        <Zap className="w-3 h-3" />
-                        In Bath {hanger.current_bath}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
-                        <Clock className="w-3 h-3" />
-                        Completed
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {hangers.length > 15 && (
-          <p className="text-xs text-gray-500 mt-2">Showing 15 of {hangers.length} hangers</p>
+        {hangers.length === 0 ? (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
+            <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <p className="text-gray-600 font-medium mb-1">No hanger data available</p>
+            <p className="text-sm text-gray-500">
+              {opcuaStatus?.connected 
+                ? 'Click "Scan" to detect hangers in the production line' 
+                : 'OPC UA is not connected. Check connection settings.'}
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-2 px-3 font-medium text-gray-600">Hanger #</th>
+                    <th className="text-left py-2 px-3 font-medium text-gray-600">Path Through Baths</th>
+                    <th className="text-left py-2 px-3 font-medium text-gray-600">Total Baths</th>
+                    <th className="text-left py-2 px-3 font-medium text-gray-600">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hangers.filter(Boolean).slice(0, 15).map((hanger) => (
+                    <tr key={hanger.number} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-3 font-mono font-semibold text-gray-900">
+                        {String(hanger.number).padStart(3, '0')}
+                      </td>
+                      <td className="py-3 px-3 text-xs text-gray-700 font-mono">
+                        {hanger.baths_visited?.map(b => `[${b}]`).join(' → ') || 'No path yet'}
+                      </td>
+                      <td className="py-3 px-3 text-gray-700 font-semibold">
+                        {hanger.baths_visited?.length || 0}
+                      </td>
+                      <td className="py-3 px-3">
+                        {hanger.current_bath !== null ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
+                            <Zap className="w-3 h-3" />
+                            In Bath {hanger.current_bath}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
+                            <Clock className="w-3 h-3" />
+                            Completed
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {hangers.length > 15 && (
+              <p className="text-xs text-gray-500 mt-2">Showing 15 of {hangers.length} hangers</p>
+            )}
+          </>
         )}
       </div>
     </div>

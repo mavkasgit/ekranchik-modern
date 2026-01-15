@@ -296,7 +296,7 @@ async def scan_hangers():
             raise HTTPException(status_code=500, detail="Cannot connect to OPC UA server")
     
     await line_monitor._scan_baths()
-    active = line_monitor.get_active_hangers()
+    active = [h for h in line_monitor._hangers.values() if h.current_bath is not None]
     return {
         "status": "scanned",
         "total_hangers": len(line_monitor._hangers),
@@ -310,35 +310,54 @@ async def get_all_hangers():
     hangers = line_monitor._hangers.values()
     return {
         "total": len(hangers),
-        "hangers": [{"number": h.number, "current_bath": h.current_bath, "baths_visited": h.baths_visited} for h in hangers]
+        "hangers": [{
+            "number": h.id, 
+            "current_bath": int(h.current_bath) if h.current_bath and h.current_bath.isdigit() else None, 
+            "baths_visited": [int(entry.bath_name) if entry.bath_name.isdigit() else entry.bath_name for entry in h.path]
+        } for h in hangers]
     }
 
 
 @router.get("/hangers/active")
 async def get_active_hangers():
     """Получить активные подвесы (сейчас в ванне)."""
-    hangers = line_monitor.get_active_hangers()
+    hangers = [h for h in line_monitor._hangers.values() if h.current_bath is not None]
     return {
         "total": len(hangers),
-        "hangers": [{"number": h.number, "current_bath": h.current_bath, "baths_visited": h.baths_visited} for h in hangers]
+        "hangers": [{
+            "number": h.id, 
+            "current_bath": int(h.current_bath) if h.current_bath and h.current_bath.isdigit() else None, 
+            "baths_visited": [int(entry.bath_name) if entry.bath_name.isdigit() else entry.bath_name for entry in h.path]
+        } for h in hangers]
     }
 
 
 @router.get("/hangers/{hanger_number}")
 async def get_hanger(hanger_number: int):
     """Получить данные подвеса по номеру."""
-    hanger = line_monitor.get_hanger_state(hanger_number)
+    hanger = line_monitor._hangers.get(hanger_number)
     if not hanger:
         raise HTTPException(status_code=404, detail=f"Hanger {hanger_number} not found")
-    return {"number": hanger.number, "current_bath": hanger.current_bath, "baths_visited": hanger.baths_visited}
+    return {
+        "number": hanger.id, 
+        "current_bath": int(hanger.current_bath) if hanger.current_bath and hanger.current_bath.isdigit() else None, 
+        "baths_visited": [int(entry.bath_name) if entry.bath_name.isdigit() else entry.bath_name for entry in hanger.path]
+    }
 
 
 @router.get("/baths/{bath_number}/hanger")
 async def get_hanger_in_bath(bath_number: int):
     """Получить подвес который сейчас в ванне."""
-    for hanger in line_monitor.get_active_hangers():
-        if hanger.current_bath == bath_number:
-            return {"bath_number": bath_number, "hanger": {"number": hanger.number, "current_bath": hanger.current_bath}}
+    bath_name = str(bath_number)
+    for hanger in line_monitor._hangers.values():
+        if hanger.current_bath == bath_name:
+            return {
+                "bath_number": bath_number, 
+                "hanger": {
+                    "number": hanger.id, 
+                    "current_bath": int(hanger.current_bath) if hanger.current_bath and hanger.current_bath.isdigit() else None
+                }
+            }
     return {"bath_number": bath_number, "hanger": None}
 
 

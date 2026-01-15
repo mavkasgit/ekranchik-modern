@@ -24,6 +24,10 @@ try:
     import customtkinter as ctk
     from PIL import Image, ImageDraw
     import pystray
+    import win32gui
+    import win32con
+    import win32process
+    import win32api
     HAS_GUI = True
     HAS_TRAY = True
 except ImportError as e:
@@ -57,6 +61,11 @@ else:
 
 BACKEND_CMD = [PYTHON_EXE, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 FRONTEND_CMD = ["npm", "run", "dev"]
+
+# Настройки браузера в трее
+CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+BROWSER_URL = "http://ktm.local"
+BROWSER_PROFILE_DIR = None  # Будет установлен в __init__
 
 # Windows-specific
 if sys.platform == 'win32':
@@ -226,11 +235,11 @@ class ProcessManager:
                 self.output_queue.put(f"[SYSTEM] Убиты предыдущие процессы на порту 8000: {killed}")
                 time.sleep(1)  # Даём время освободить порт
         
-        if "frontend" in self.name.lower() or "5173" in str(self.cmd) or "npm" in str(self.cmd):
-            killed = kill_process_on_port(5173)
+        if "frontend" in self.name.lower() or "npm" in str(self.cmd):
+            killed = kill_process_on_port(80)
             if killed:
-                self.output_queue.put(f"[SYSTEM] Убиты предыдущие процессы на порту 5173: {killed}")
-                time.sleep(0.5)
+                self.output_queue.put(f"[SYSTEM] Убиты предыдущие процессы на порту 80: {killed}")
+                time.sleep(1)  # Даём время освободить порт
             
         try:
             # Получаем аргументы для скрытого запуска
@@ -724,6 +733,15 @@ if HAS_GUI:
             self.tray_icon = None
             self.tray_thread = None
             
+            # Браузер в трее (новая логика из tray_kiosk.py)
+            self.chrome_process = None
+            self.chrome_hwnd = None
+            self.chrome_is_visible = True
+            
+            # Профиль браузера
+            global BROWSER_PROFILE_DIR
+            BROWSER_PROFILE_DIR = os.path.join(os.environ.get("TEMP", tempfile.gettempdir()), "EkranchikBrowserProfile")
+            
             # Текущая страница
             self.current_page = "backend"
             self.pages = {}
@@ -796,20 +814,12 @@ if HAS_GUI:
                 corner_radius=6, command=self._stop_all
             ).pack(side="left", padx=(0, 8))
             
-            # Кнопка открытия сайта
+            # Кнопка открытия браузера в трее
             ctk.CTkButton(
                 status_frame, text="🌐 Открыть", width=90, height=32,
                 font=ctk.CTkFont(family=FONTS['small'][0], size=11),
-                fg_color=COLORS['border'], hover_color=COLORS['accent'],
-                corner_radius=6, command=self._open_website
-            ).pack(side="left", padx=(0, 8))
-            
-            # Кнопка киоск-режима (fullscreen без панели задач)
-            ctk.CTkButton(
-                status_frame, text="📺 Киоск", width=80, height=32,
-                font=ctk.CTkFont(family=FONTS['small'][0], size=11),
                 fg_color=COLORS['accent'], hover_color=COLORS['accent_hover'],
-                corner_radius=6, command=self._open_kiosk_mode
+                corner_radius=6, command=self._open_tray_browser
             ).pack(side="left", padx=(0, 8))
             
             # Кнопка выхода
@@ -857,13 +867,13 @@ if HAS_GUI:
             
             # Принудительно убиваем процессы на портах
             killed_8000 = kill_process_on_port(8000)
-            killed_5173 = kill_process_on_port(5173)
+            killed_80 = kill_process_on_port(80)
             if killed_8000:
                 self.pages["backend"].log.append(f"[SYSTEM] Убиты процессы на порту 8000: {killed_8000}")
-            if killed_5173:
-                self.pages["frontend"].log.append(f"[SYSTEM] Убиты процессы на порту 5173: {killed_5173}")
+            if killed_80:
+                self.pages["frontend"].log.append(f"[SYSTEM] Убиты процессы на порту 80: {killed_80}")
             
-            if killed_8000 or killed_5173:
+            if killed_8000 or killed_80:
                 time.sleep(1)  # Даём время освободить порты
             
             # Запускаем бэкенд
@@ -883,114 +893,142 @@ if HAS_GUI:
             # Принудительно убиваем оставшиеся процессы на портах
             time.sleep(0.5)
             kill_process_on_port(8000)
-            kill_process_on_port(5173)
+            kill_process_on_port(80)
         
-        def _open_website(self):
-            """Открыть сайт в браузере"""
-            import webbrowser
-            url = "http://ktm.local"
-            try:
-                webbrowser.open(url)
-            except Exception as e:
-                # Fallback на localhost если ktm.local не работает
-                try:
-                    webbrowser.open("http://localhost:5173")
-                except Exception:
-                    pass
-        
-        def _open_kiosk_mode(self):
-            """
-            Открыть браузер на втором экране с Dashboard в полноэкранном режиме.
-            Браузер открывается с параметром --new-window для второго экрана.
-            """
+        def _open_tray_browser(self):
+            """Открыть браузер в трее (из tray_kiosk.py)"""
+            if self.chrome_process and self.chrome_process.poll() is None:
+                self.pages[self.current_page].log.append("[SYSTEM] Браузер уже запущен")
+                return
+            
+            # Ищем Chrome
             import shutil
-            
-            # URL Dashboard (не главная страница)
-            url = "http://ktm.local/dashboard"
-            fallback_url = "http://localhost:5173/dashboard"
-            
-            # Ищем браузеры в порядке приоритета
-            browsers = []
+            chrome_path = None
             
             if sys.platform == 'win32':
-                # Chrome
                 chrome_paths = [
-                    os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
-                    os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
                     os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
                 ]
                 for p in chrome_paths:
                     if os.path.exists(p):
-                        browsers.append(('chrome', p))
+                        chrome_path = p
                         break
-                
-                # Edge
-                edge_paths = [
-                    os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
-                    os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
-                ]
-                for p in edge_paths:
-                    if os.path.exists(p):
-                        browsers.append(('edge', p))
-                        break
-            else:
-                # Linux/Mac
-                chrome = shutil.which('google-chrome') or shutil.which('chromium-browser') or shutil.which('chromium')
-                if chrome:
-                    browsers.append(('chrome', chrome))
             
-            if not browsers:
-                # Fallback - обычный браузер
-                self._open_website()
-                self.pages[self.current_page].log.append("[SYSTEM] Киоск-режим: Chrome/Edge не найден, открыт обычный браузер")
+            if not chrome_path:
+                self.pages[self.current_page].log.append("[ERROR] Chrome не найден")
                 return
             
-            browser_name, browser_path = browsers[0]
+            # Создаём профиль
+            if not os.path.exists(BROWSER_PROFILE_DIR):
+                os.makedirs(BROWSER_PROFILE_DIR)
             
-            # Аргументы для открытия на втором экране в fullscreen
-            # --new-window - открыть в новом окне (на втором экране)
-            # --start-fullscreen - запуск в fullscreen
-            # --disable-infobars - убирает информационные панели
-            # --disable-session-crashed-bubble - убирает сообщение о крахе
-            # --noerrdialogs - убирает диалоги ошибок
-            # --disable-translate - отключает перевод
-            # --no-first-run - пропускает первый запуск
-            # --disable-features=TranslateUI - отключает UI перевода
-            # --disable-pinch - отключает pinch-zoom
-            # --overscroll-history-navigation=0 - отключает свайп назад
-            kiosk_args = [
-                browser_path,
-                '--new-window',
-                '--start-fullscreen',
-                '--disable-infobars',
-                '--disable-session-crashed-bubble',
-                '--noerrdialogs',
-                '--disable-translate',
-                '--no-first-run',
-                '--disable-features=TranslateUI',
-                '--disable-pinch',
-                '--overscroll-history-navigation=0',
-                url
+            # Аргументы запуска
+            args = [
+                chrome_path,
+                f'--app={BROWSER_URL}',
+                '--window-size=1000,700',
+                f'--user-data-dir={BROWSER_PROFILE_DIR}',
+                '--no-first-run'
             ]
             
             try:
-                # Запускаем браузер на втором экране
-                hidden_args = get_hidden_subprocess_args()
-                subprocess.Popen(
-                    kiosk_args,
-                    **hidden_args
-                )
-                self.pages[self.current_page].log.append(f"[SYSTEM] Киоск-режим запущен ({browser_name}) на втором экране: {url}")
-                self.pages[self.current_page].log.append("[SYSTEM] Dashboard откроется в полноэкранном режиме")
-                self.pages[self.current_page].log.append("[SYSTEM] Для выхода нажмите кнопку 'Выход' или ESC")
+                self.chrome_process = subprocess.Popen(args)
+                self.pages[self.current_page].log.append(f"[SYSTEM] Браузер запущен (PID: {self.chrome_process.pid})")
+                
+                # Запускаем поток для поиска окна и настройки трея
+                threading.Thread(target=self._setup_browser_window, daemon=True).start()
+                
             except Exception as e:
-                self.pages[self.current_page].log.append(f"[ERROR] Ошибка запуска киоск-режима: {e}")
-                # Fallback
+                self.pages[self.current_page].log.append(f"[ERROR] Ошибка запуска браузера: {e}")
+        
+        def _find_chrome_window(self):
+            """Ищет окно Chrome"""
+            if not self.chrome_process:
+                return None
+            
+            hwnds = []
+            
+            def callback(hwnd, _):
+                if win32gui.IsWindowVisible(hwnd):
+                    _, found_pid = win32process.GetWindowThreadProcessId(hwnd)
+                    try:
+                        handle = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, found_pid)
+                        proc_path = win32process.GetModuleFileNameEx(handle, 0)
+                        win32api.CloseHandle(handle)
+                        
+                        if "chrome.exe" in proc_path.lower():
+                            if win32gui.GetWindowText(hwnd):
+                                hwnds.append(hwnd)
+                    except:
+                        pass
+            
+            win32gui.EnumWindows(callback, None)
+            return hwnds[0] if hwnds else None
+        
+        def _remove_taskbar_icon(self):
+            """Убирает кнопку из панели задач"""
+            if not self.chrome_hwnd:
+                return
+            
+            try:
+                style = win32gui.GetWindowLong(self.chrome_hwnd, win32con.GWL_EXSTYLE)
+                
+                if not (style & win32con.WS_EX_TOOLWINDOW):
+                    new_style = (style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
+                    win32gui.SetWindowLong(self.chrome_hwnd, win32con.GWL_EXSTYLE, new_style)
+                    
+                    win32gui.SetWindowPos(
+                        self.chrome_hwnd, 0, 0, 0, 0, 0,
+                        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | 
+                        win32con.SWP_NOZORDER | win32con.SWP_FRAMECHANGED
+                    )
+                    self.pages[self.current_page].log.append("[SYSTEM] Иконка убрана из панели задач")
+            except Exception as e:
+                self.pages[self.current_page].log.append(f"[ERROR] Ошибка скрытия иконки: {e}")
+        
+        def _setup_browser_window(self):
+            """Настройка окна браузера"""
+            time.sleep(2)
+            
+            # Ищем окно
+            for i in range(10):
+                hwnd = self._find_chrome_window()
+                if hwnd:
+                    self.chrome_hwnd = hwnd
+                    self.pages[self.current_page].log.append(f"[SYSTEM] Окно найдено (HWND: {hwnd})")
+                    self._remove_taskbar_icon()
+                    self.pages[self.current_page].log.append("[SYSTEM] Управление браузером доступно в меню трея Ekranchik")
+                    break
+                time.sleep(1)
+        
+        def _toggle_browser_visibility(self):
+            """Показать/скрыть браузер"""
+            if not self.chrome_hwnd:
+                self.chrome_hwnd = self._find_chrome_window()
+            
+            if not self.chrome_hwnd:
+                return
+            
+            if self.chrome_is_visible:
+                win32gui.ShowWindow(self.chrome_hwnd, win32con.SW_HIDE)
+                self.chrome_is_visible = False
+            else:
+                win32gui.ShowWindow(self.chrome_hwnd, win32con.SW_SHOW)
+                win32gui.SetForegroundWindow(self.chrome_hwnd)
+                self.chrome_is_visible = True
+        
+        def _close_browser(self):
+            """Закрыть браузер"""
+            if self.chrome_process:
                 try:
-                    kiosk_args[-1] = fallback_url
-                    subprocess.Popen(kiosk_args, **hidden_args)
-                except Exception:
-                    self._open_website()
+                    self.chrome_process.terminate()
+                except:
+                    pass
+                self.chrome_process = None
+                self.chrome_hwnd = None
+                self.chrome_is_visible = True
         
         def _start_log_updates(self):
             def update():
@@ -1022,6 +1060,9 @@ if HAS_GUI:
                 pystray.MenuItem("Запустить всё", self._start_all),
                 pystray.MenuItem("Остановить всё", self._stop_all),
                 pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Показать/Скрыть браузер", lambda: self._toggle_browser_visibility()),
+                pystray.MenuItem("Закрыть браузер", lambda: self._close_browser()),
+                pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Выход", self._full_exit)
             )
             
@@ -1045,6 +1086,10 @@ if HAS_GUI:
         
         def _full_exit(self):
             self._stop_all()
+            
+            # Закрываем браузер
+            self._close_browser()
+            
             if self.tray_icon:
                 self.tray_icon.stop()
             self.root.quit()
