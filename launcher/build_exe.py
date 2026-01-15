@@ -17,9 +17,10 @@ def build():
     data_files = [
         ("theme.json", "."),
         ("icons.py", "."),
+        ("launcher.ico", "."),  # Добавляем иконку в данные
     ]
     
-    # Иконка
+    # Иконка для EXE
     icon_path = LAUNCHER_DIR / "launcher.ico"
     
     cmd = [
@@ -30,15 +31,17 @@ def build():
         "--clean",
     ]
     
-    # Добавляем иконку если есть
+    # Добавляем иконку для EXE если есть
     if icon_path.exists():
         cmd.extend(["--icon", str(icon_path)])
+        print(f"✓ Иконка для EXE: {icon_path}")
     
     # Добавляем data файлы
     for src, dst in data_files:
         src_path = LAUNCHER_DIR / src
         if src_path.exists():
             cmd.extend(["--add-data", f"{src_path};{dst}"])
+            print(f"✓ Добавлен файл: {src}")
     
     # Hidden imports
     hidden_imports = [
@@ -49,6 +52,10 @@ def build():
         "pystray",
         "pystray._win32",
         "dotenv",
+        "win32gui",
+        "win32con",
+        "win32process",
+        "win32api",
     ]
     for imp in hidden_imports:
         cmd.extend(["--hidden-import", imp])

@@ -221,17 +221,53 @@ def get_status_image(running: bool, size: int = 10):
 # === Иконка для System Tray ===
 
 def get_tray_icon():
-    """Темно-синий квадрат с белым монитором для System Tray"""
+    """Загружает иконку из launcher.ico для System Tray"""
+    from pathlib import Path
+    import sys
+    
+    # Определяем путь к иконке
+    if getattr(sys, 'frozen', False):
+        # Запуск из EXE - ищем в _MEIPASS
+        icon_path = Path(sys._MEIPASS) / "launcher.ico"
+    else:
+        # Обычный запуск
+        icon_path = Path(__file__).parent / "launcher.ico"
+    
+    # Пробуем загрузить .ico файл
+    if icon_path.exists():
+        try:
+            # Открываем .ico файл
+            img = Image.open(icon_path)
+            
+            # .ico может содержать несколько размеров, берём самый большой
+            # Обычно это 256x256 или 128x128
+            if hasattr(img, 'size'):
+                # Если это один размер
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+                # Масштабируем до 64x64 для трея
+                if img.size != (64, 64):
+                    img = img.resize((64, 64), Image.Resampling.LANCZOS)
+                return img
+            else:
+                # Если это ICO с несколькими размерами, берём первый
+                img = img.convert('RGBA')
+                if img.size != (64, 64):
+                    img = img.resize((64, 64), Image.Resampling.LANCZOS)
+                return img
+        except Exception as e:
+            print(f"Не удалось загрузить launcher.ico: {e}")
+    
+    # Fallback - создаём простую иконку программно
+    print("Используется fallback иконка")
     size = 64
     img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # Темно-синий квадрат
-    draw.rounded_rectangle([4, 4, 60, 60], radius=8, fill='#1565c0', outline='#0d47a1', width=2)
+    # Оранжевый круг (Omron цвет)
+    draw.ellipse([4, 4, 60, 60], fill='#ff6b00', outline='#ff8533', width=2)
     
-    # Белый монитор
-    draw.rounded_rectangle([18, 20, 46, 38], radius=2, fill='white')
-    draw.rectangle([30, 38, 34, 42], fill='white')
-    draw.rectangle([24, 42, 40, 44], fill='white')
+    # Белая буква E
+    draw.text((20, 16), "E", fill='white', font=None)
     
     return img
