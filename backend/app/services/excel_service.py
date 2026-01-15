@@ -218,35 +218,27 @@ class ExcelService:
         Get products from Excel with optional filtering.
         
         Args:
-            limit: Maximum number of records
-            days: Number of days to look back
+            limit: Maximum number of records to return (applied AFTER filtering)
+            days: Number of days to look back (only used when from_end=False)
             filters: Optional filters (client, profile, etc.)
-            from_end: If True, read last N rows (default); if False, read first N
+            from_end: If True, read from end; if False, apply date filter
             loading_only: If True, only return loading rows (date+material filled, time empty)
         
         Returns:
-            List of product dictionaries
+            List of product dictionaries (limited to 'limit' records)
         """
         df = self.get_dataframe(full_dataset=True)
         if df.empty:
             return []
         
-        # Get last N rows from the end of the file
-        # Keep original order: oldest first, newest last
-        if from_end:
-            # For loading_only, take much more rows to ensure we get enough after filtering
-            # Use limit * 10 to account for rows with time filled (unloaded)
-            df = df.tail(limit * 10 if loading_only else limit)
-        else:
-            # Apply date filter only when not reading from end
-            if 'date' in df.columns:
-                try:
-                    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-                    cutoff = datetime.now() - timedelta(days=days)
-                    df = df[df['date'] >= cutoff]
-                except Exception:
-                    pass
-            df = df.head(limit * 10 if loading_only else limit)
+        # Apply date filter only when not reading from end
+        if not from_end and 'date' in df.columns:
+            try:
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                cutoff = datetime.now() - timedelta(days=days)
+                df = df[df['date'] >= cutoff]
+            except Exception:
+                pass
         
         # Apply additional filters
         if filters:
@@ -254,13 +246,14 @@ class ExcelService:
                 if key in df.columns and value:
                     df = df[df[key].astype(str).str.contains(str(value), case=False, na=False)]
         
-        # Process and format records
+        # Process ALL records with filtering
         records = self._process_dataframe(df, loading_only=loading_only)
         
-        # Apply limit after filtering
-        if loading_only and len(records) > limit:
-            records = records[-limit:]  # Take last N (newest)
+        # Apply limit AFTER filtering - take last N (newest)
+        if len(records) > limit:
+            records = records[-limit:]
         
+        # Return in reverse order (newest first)
         return records[::-1]
     
     def _process_dataframe(self, df: pd.DataFrame, loading_only: bool = False) -> List[Dict[str, Any]]:
