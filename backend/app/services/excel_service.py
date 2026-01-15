@@ -234,7 +234,9 @@ class ExcelService:
         # Get last N rows from the end of the file
         # Keep original order: oldest first, newest last
         if from_end:
-            df = df.tail(limit * 3 if loading_only else limit)  # Get more rows if filtering
+            # For loading_only, take much more rows to ensure we get enough after filtering
+            # Use limit * 10 to account for rows with time filled (unloaded)
+            df = df.tail(limit * 10 if loading_only else limit)
         else:
             # Apply date filter only when not reading from end
             if 'date' in df.columns:
@@ -244,7 +246,7 @@ class ExcelService:
                     df = df[df['date'] >= cutoff]
                 except Exception:
                     pass
-            df = df.head(limit * 3 if loading_only else limit)
+            df = df.head(limit * 10 if loading_only else limit)
         
         # Apply additional filters
         if filters:
