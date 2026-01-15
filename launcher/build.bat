@@ -17,23 +17,16 @@ echo.
 echo Building executable...
 echo.
 
-pyinstaller --noconfirm ^
-    --onefile ^
-    --windowed ^
-    --name "EkranchikLauncher" ^
-    --icon=launcher.ico ^
-    --add-data "tray_icons.py;." ^
-    --hidden-import=customtkinter ^
-    --hidden-import=PIL ^
-    --hidden-import=pystray ^
-    --hidden-import=dotenv ^
-    launcher.py
+REM Используем spec файл для onefile сборки
+pyinstaller --noconfirm EkranchikLauncher.spec
 
 echo.
 echo ========================================
 echo Build complete!
 echo Executable: dist\EkranchikLauncher.exe
 echo ========================================
+echo.
+echo Place dashboard_kiosk.py next to the exe
 echo.
 
 pause

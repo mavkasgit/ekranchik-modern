@@ -271,3 +271,50 @@ def get_tray_icon():
     draw.text((20, 16), "E", fill='white', font=None)
     
     return img
+
+
+def get_kiosk_tray_icon():
+    """Создаёт иконку для киоска - такая же как основная, но с красным фоном"""
+    from pathlib import Path
+    import sys
+    
+    # Определяем путь к иконке
+    if getattr(sys, 'frozen', False):
+        icon_path = Path(sys._MEIPASS) / "launcher.ico"
+    else:
+        icon_path = Path(__file__).parent / "launcher.ico"
+    
+    # Пробуем загрузить .ico файл
+    if icon_path.exists():
+        try:
+            img = Image.open(icon_path)
+            
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            
+            if img.size != (64, 64):
+                img = img.resize((64, 64), Image.Resampling.LANCZOS)
+            
+            # Создаём новое изображение с красным фоном
+            red_bg = Image.new('RGBA', (64, 64), '#ef5350')
+            
+            # Накладываем оригинальную иконку поверх красного фона
+            red_bg.paste(img, (0, 0), img)
+            
+            return red_bg
+        except Exception as e:
+            print(f"Не удалось загрузить launcher.ico для киоска: {e}")
+    
+    # Fallback - создаём красную иконку программно
+    print("Используется fallback иконка для киоска")
+    size = 64
+    img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    
+    # Красный круг
+    draw.ellipse([4, 4, 60, 60], fill='#ef5350', outline='#f44336', width=2)
+    
+    # Белая буква K
+    draw.text((20, 16), "K", fill='white', font=None)
+    
+    return img

@@ -246,7 +246,14 @@ class ExcelService:
                 if key in df.columns and value:
                     df = df[df[key].astype(str).str.contains(str(value), case=False, na=False)]
         
-        # Process ALL records with filtering
+        # OPTIMIZATION: If loading_only=False and limit is small, take last N rows BEFORE processing
+        # This avoids processing the entire dataset when we only need recent records
+        if not loading_only and limit < 500:
+            # Take last (limit * 2) rows to ensure we have enough after filtering
+            df = df.tail(limit * 2)
+            logger.info(f"[OPTIMIZATION] Pre-filtered to last {len(df)} rows before processing")
+        
+        # Process records with filtering
         records = self._process_dataframe(df, loading_only=loading_only)
         
         # Apply limit AFTER filtering - take last N (newest)

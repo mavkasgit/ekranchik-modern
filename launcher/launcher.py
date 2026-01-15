@@ -37,14 +37,18 @@ except ImportError as e:
 
 # Настройки - определяем пути с учётом PyInstaller
 if getattr(sys, 'frozen', False):
-    # Запуск из EXE - ищем относительно exe файла
+    # Запуск из EXE
     _exe_dir = Path(sys.executable).parent
-    # EXE в launcher/dist/, проект в launcher/../
+    # Если exe в launcher/dist/, то:
+    # - BASE_DIR = launcher/dist/../../ = проект
+    # - LAUNCHER_DIR = launcher/dist/../ = launcher/
     BASE_DIR = _exe_dir.parent.parent
+    LAUNCHER_DIR = _exe_dir.parent  # launcher/ (где лежит dashboard_kiosk.py)
     THEME_PATH = Path(sys._MEIPASS) / "theme.json"
 else:
     # Обычный запуск
     BASE_DIR = Path(__file__).parent.parent
+    LAUNCHER_DIR = Path(__file__).parent
     THEME_PATH = Path(__file__).parent / "theme.json"
 
 BACKEND_DIR = BASE_DIR / "backend"
@@ -61,6 +65,7 @@ else:
 
 BACKEND_CMD = [PYTHON_EXE, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 FRONTEND_CMD = ["npm", "run", "dev"]
+KIOSK_CMD = [PYTHON_EXE, "dashboard_kiosk.py"]
 
 # Настройки браузера в трее
 CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -72,6 +77,116 @@ if sys.platform == 'win32':
     CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW
 else:
     CREATE_NO_WINDOW = 0
+
+
+def get_monitors():
+    """Получить список мониторов (Windows)."""
+    monitors = []
+    
+    if sys.platform != 'win32':
+        return monitors
+    
+    # Попытка 1: win32api
+    try:
+        import win32api
+        
+        def callback(hMonitor, hdcMonitor, lprcMonitor, dwData):
+            monitors.append({
+                'left': lprcMonitor[0],
+                'top': lprcMonitor[1],
+                'right': lprcMonitor[2],
+                'bottom': lprcMonitor[3],
+                'width': lprcMonitor[2] - lprcMonitor[0],
+                'height': lprcMonitor[3] - lprcMonitor[1]
+            })
+            return True
+        
+        win32api.EnumDisplayMonitors(None, None, callback)
+        
+        if monitors:
+            return monitors
+    except Exception as e:
+        print(f"win32api detection failed: {e}")
+    
+    # Попытка 2: ctypes
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        
+        monitor_count = user32.GetSystemMetrics(80)  # SM_CMONITORS
+        
+        if monitor_count > 0:
+            # Получаем размер виртуального экрана
+            virtual_width = user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+            virtual_height = user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
+            
+            if monitor_count > 1:
+                # Предполагаем стандартные мониторы
+                for i in range(monitor_count):
+                    monitors.append({
+                        'left': i * 1920,
+                        'top': 0,
+                        'right': (i + 1) * 1920,
+                        'bottom': 1080,
+                        'width': 1920,
+                        'height': 1080
+                    })
+            else:
+                monitors.append({
+                    'left': 0,
+                    'top': 0,
+                    'right': virtual_width,
+                    'bottom': virtual_height,
+                    'width': virtual_width,
+                    'height': virtual_height
+                })
+            
+            return monitors
+    except Exception as e:
+        print(f"ctypes detection failed: {e}")
+    
+    # Попытка 3: tkinter
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        
+        if screen_width > 2000:
+            # Вероятно 2 монитора
+            monitors.append({
+                'left': 0,
+                'top': 0,
+                'right': 1920,
+                'bottom': 1080,
+                'width': 1920,
+                'height': 1080
+            })
+            monitors.append({
+                'left': 1920,
+                'top': 0,
+                'right': 3840,
+                'bottom': 1080,
+                'width': 1920,
+                'height': 1080
+            })
+        else:
+            monitors.append({
+                'left': 0,
+                'top': 0,
+                'right': screen_width,
+                'bottom': screen_height,
+                'width': screen_width,
+                'height': screen_height
+            })
+        
+        root.destroy()
+    except Exception as e:
+        print(f"tkinter detection failed: {e}")
+    
+    return monitors
 
 
 def kill_process_on_port(port: int) -> list:
@@ -728,6 +843,10 @@ if HAS_GUI:
             # Менеджеры процессов
             self.backend_manager = ProcessManager("Backend", BACKEND_CMD, BACKEND_DIR)
             self.frontend_manager = ProcessManager("Frontend", FRONTEND_CMD, FRONTEND_DIR)
+            self.kiosk_manager = ProcessManager("Kiosk", KIOSK_CMD, LAUNCHER_DIR)
+            
+            # Выбранный монитор для киоска (по умолчанию второй)
+            self._kiosk_monitor = 1
             
             # Tray
             self.tray_icon = None
@@ -794,10 +913,13 @@ if HAS_GUI:
             status_frame.pack(side="right", padx=16)
             
             self.backend_status = StatusBadge(status_frame, "Backend", False)
-            self.backend_status.pack(side="left", padx=(0, 20))
+            self.backend_status.pack(side="left", padx=(0, 16))
             
             self.frontend_status = StatusBadge(status_frame, "Frontend", False)
-            self.frontend_status.pack(side="left", padx=(0, 20))
+            self.frontend_status.pack(side="left", padx=(0, 16))
+            
+            self.kiosk_status = StatusBadge(status_frame, "Kiosk", False)
+            self.kiosk_status.pack(side="left", padx=(0, 16))
             
             # Кнопки управления
             ctk.CTkButton(
@@ -814,9 +936,17 @@ if HAS_GUI:
                 corner_radius=6, command=self._stop_all
             ).pack(side="left", padx=(0, 8))
             
+            # Кнопка киоска
+            ctk.CTkButton(
+                status_frame, text="🖥️ Киоск", width=90, height=32,
+                font=ctk.CTkFont(family=FONTS['small'][0], size=11),
+                fg_color=COLORS['warning'], hover_color=COLORS['accent_hover'],
+                corner_radius=6, command=self._start_kiosk
+            ).pack(side="left", padx=(0, 8))
+            
             # Кнопка открытия браузера в трее
             ctk.CTkButton(
-                status_frame, text="🌐 Открыть", width=90, height=32,
+                status_frame, text="🌐 Браузер", width=90, height=32,
                 font=ctk.CTkFont(family=FONTS['small'][0], size=11),
                 fg_color=COLORS['accent'], hover_color=COLORS['accent_hover'],
                 corner_radius=6, command=self._open_tray_browser
@@ -879,11 +1009,51 @@ if HAS_GUI:
             # Запускаем бэкенд
             if not self.backend_manager.is_running:
                 self.pages["backend"].start()
+            
+            # Ждём запуска бэкенда
+            time.sleep(2)
+            
             # Запускаем фронтенд
             if not self.frontend_manager.is_running:
                 self.pages["frontend"].start()
+            
+            # Ждём запуска фронтенда
+            time.sleep(3)
+            
+            # Запускаем киоск
+            self._start_kiosk()
+        
+        def _start_kiosk(self):
+            """Запуск киоска"""
+            if self.kiosk_manager.is_running:
+                self.pages[self.current_page].log.append("[SYSTEM] Киоск уже запущен")
+                return
+            
+            # Полный путь к dashboard_kiosk.py
+            kiosk_script = LAUNCHER_DIR / "dashboard_kiosk.py"
+            
+            if not kiosk_script.exists():
+                self.pages[self.current_page].log.append(f"[ERROR] Файл не найден: {kiosk_script}")
+                self.pages[self.current_page].log.append(f"[ERROR] LAUNCHER_DIR: {LAUNCHER_DIR}")
+                return
+            
+            # Обновляем команду с выбранным монитором
+            kiosk_cmd = [PYTHON_EXE, str(kiosk_script), "--monitor", str(self._kiosk_monitor)]
+            self.kiosk_manager.cmd = kiosk_cmd
+            
+            self.pages[self.current_page].log.append(f"[SYSTEM] Запуск киоска на мониторе {self._kiosk_monitor + 1}...")
+            self.pages[self.current_page].log.append(f"[SYSTEM] Команда: {' '.join(kiosk_cmd)}")
+            if self.kiosk_manager.start():
+                self.pages[self.current_page].log.append(f"[SYSTEM] Киоск запущен (PID: {self.kiosk_manager.pid})")
+            else:
+                self.pages[self.current_page].log.append("[ERROR] Не удалось запустить киоск")
         
         def _stop_all(self):
+            # Сначала киоск
+            if self.kiosk_manager.is_running:
+                self.kiosk_manager.stop()
+                self.pages[self.current_page].log.append("[SYSTEM] Киоск остановлен")
+            
             # Потом сервисы
             if self.frontend_manager.is_running:
                 self.pages["frontend"].stop()
@@ -1048,6 +1218,11 @@ if HAS_GUI:
                 self.frontend_status.set_status(True, f"Frontend: PID {self.frontend_manager.pid}")
             else:
                 self.frontend_status.set_status(False, "Frontend: Остановлен")
+            
+            if self.kiosk_manager.is_running:
+                self.kiosk_status.set_status(True, f"Kiosk: PID {self.kiosk_manager.pid}")
+            else:
+                self.kiosk_status.set_status(False, "Kiosk: Остановлен")
         
         def _setup_tray(self):
             """Настройка System Tray"""
@@ -1059,6 +1234,10 @@ if HAS_GUI:
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Запустить всё", self._start_all),
                 pystray.MenuItem("Остановить всё", self._stop_all),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Запустить Backend", lambda: self.pages["backend"].start()),
+                pystray.MenuItem("Запустить Frontend", lambda: self.pages["frontend"].start()),
+                pystray.MenuItem("Запустить Kiosk", lambda: self._start_kiosk()),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Показать/Скрыть браузер", lambda: self._toggle_browser_visibility()),
                 pystray.MenuItem("Закрыть браузер", lambda: self._close_browser()),
@@ -1096,7 +1275,149 @@ if HAS_GUI:
             self.root.destroy()
         
         def run(self):
+            # Показываем диалог автозапуска
+            self.root.after(500, self._show_autostart_dialog)
             self.root.mainloop()
+        
+        def _show_autostart_dialog(self):
+            """Показывает диалог автозапуска при старте"""
+            import tkinter as tk
+            import tkinter.messagebox as messagebox
+            
+            # Определяем мониторы
+            monitors = get_monitors()
+            monitor_count = len(monitors)
+            
+            # Создаём кастомное диалоговое окно
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Автозапуск Ekranchik")
+            dialog.geometry("450x350")
+            dialog.resizable(False, False)
+            dialog.configure(bg='#2b2b2b')
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Центрируем окно
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() // 2) - (450 // 2)
+            y = (dialog.winfo_screenheight() // 2) - (350 // 2)
+            dialog.geometry(f"450x350+{x}+{y}")
+            
+            # Заголовок
+            tk.Label(
+                dialog, text="Запустить все компоненты?",
+                font=('Segoe UI', 14, 'bold'),
+                bg='#2b2b2b', fg='#e0e0e0'
+            ).pack(pady=(20, 10))
+            
+            # Список компонентов
+            components_frame = tk.Frame(dialog, bg='#2b2b2b')
+            components_frame.pack(pady=10)
+            
+            for comp in ["• Backend (FastAPI)", "• Frontend (React)", "• Kiosk (Dashboard)"]:
+                tk.Label(
+                    components_frame, text=comp,
+                    font=('Segoe UI', 11),
+                    bg='#2b2b2b', fg='#a0a0a0'
+                ).pack(anchor='w', padx=40)
+            
+            # Выбор монитора для киоска
+            tk.Label(
+                dialog, text="Монитор для киоска:",
+                font=('Segoe UI', 11, 'bold'),
+                bg='#2b2b2b', fg='#e0e0e0'
+            ).pack(pady=(20, 5))
+            
+            # По умолчанию второй монитор если есть, иначе первый
+            default_monitor = 1 if monitor_count > 1 else 0
+            monitor_var = tk.IntVar(value=default_monitor)
+            
+            monitor_frame = tk.Frame(dialog, bg='#2b2b2b')
+            monitor_frame.pack()
+            
+            # Показываем только реальные мониторы
+            if monitor_count == 0:
+                tk.Label(
+                    monitor_frame, text="⚠ Мониторы не обнаружены",
+                    font=('Segoe UI', 10),
+                    bg='#2b2b2b', fg='#ffb74d'
+                ).pack(anchor='w', pady=2)
+            else:
+                for i, mon in enumerate(monitors):
+                    label_text = f"Монитор {i + 1}: {mon['width']}x{mon['height']}"
+                    if i == 0:
+                        label_text += " (основной)"
+                    elif i == 1:
+                        label_text += " (рекомендуется)"
+                    
+                    tk.Radiobutton(
+                        monitor_frame, text=label_text,
+                        variable=monitor_var, value=i,
+                        font=('Segoe UI', 10),
+                        bg='#2b2b2b', fg='#a0a0a0',
+                        selectcolor='#1e1e1e', activebackground='#2b2b2b',
+                        activeforeground='#e0e0e0'
+                    ).pack(anchor='w', pady=2)
+            
+            # Результат
+            result = {'start': False, 'monitor': default_monitor}
+            
+            def on_start():
+                result['start'] = True
+                result['monitor'] = monitor_var.get()
+                dialog.destroy()
+            
+            def on_cancel():
+                result['start'] = False
+                dialog.destroy()
+            
+            # Кнопки
+            btn_frame = tk.Frame(dialog, bg='#2b2b2b')
+            btn_frame.pack(pady=30, side='bottom')
+            
+            start_btn = tk.Button(
+                btn_frame, text="Запустить",
+                command=on_start,
+                font=('Segoe UI', 11, 'bold'),
+                bg='#4caf50', fg='white',
+                activebackground='#66bb6a',
+                activeforeground='white',
+                relief='flat', 
+                width=12, height=2,
+                cursor='hand2',
+                borderwidth=0
+            )
+            start_btn.pack(side='left', padx=10)
+            
+            cancel_btn = tk.Button(
+                btn_frame, text="Отмена",
+                command=on_cancel,
+                font=('Segoe UI', 11),
+                bg='#3d3d3d', fg='#e0e0e0',
+                activebackground='#4d4d4d',
+                activeforeground='#ffffff',
+                relief='flat', 
+                width=12, height=2,
+                cursor='hand2',
+                borderwidth=0
+            )
+            cancel_btn.pack(side='left', padx=10)
+            
+            # Обработка закрытия окна
+            dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+            
+            # Ждём закрытия диалога
+            dialog.wait_window()
+            
+            if result['start']:
+                # Сохраняем выбранный монитор для киоска
+                self._kiosk_monitor = result['monitor']
+                
+                # Запускаем всё
+                self._start_all()
+                
+                # Сворачиваем в трей через 1 секунду
+                self.root.after(1000, self._hide_to_tray)
 
 
 class ConsoleMode:
@@ -1105,6 +1426,7 @@ class ConsoleMode:
     def __init__(self):
         self.backend_manager = ProcessManager("Backend", BACKEND_CMD, BACKEND_DIR)
         self.frontend_manager = ProcessManager("Frontend", FRONTEND_CMD, FRONTEND_DIR)
+        self.kiosk_manager = ProcessManager("Kiosk", KIOSK_CMD, LAUNCHER_DIR)
     
     def run(self):
         print("\n" + "="*60)
@@ -1128,6 +1450,15 @@ class ConsoleMode:
             self.backend_manager.stop()
             return
         
+        time.sleep(3)
+        
+        print("\nЗапуск Kiosk...")
+        if self.kiosk_manager.start():
+            print("Kiosk запущен")
+        else:
+            print("Не удалось запустить Kiosk")
+            # Продолжаем работу без киоска
+        
         print("\n" + "="*60)
         print("Система запущена! (Ctrl+C для остановки)")
         print("="*60 + "\n")
@@ -1146,10 +1477,17 @@ class ConsoleMode:
                         break
                     print(f"[FRONTEND] {msg}")
                 
+                while True:
+                    msg = self.kiosk_manager.get_output()
+                    if msg is None:
+                        break
+                    print(f"[KIOSK] {msg}")
+                
                 time.sleep(0.1)
         
         except KeyboardInterrupt:
             print("\n\nОстановка системы...")
+            self.kiosk_manager.stop()
             self.frontend_manager.stop()
             self.backend_manager.stop()
             print("Система остановлена")
