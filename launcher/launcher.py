@@ -86,29 +86,28 @@ def get_monitors():
     if sys.platform != 'win32':
         return monitors
     
-    # Попытка 1: win32api
+    # Попытка 1: win32api (более надежный способ)
     try:
         import win32api
-        
-        def callback(hMonitor, hdcMonitor, lprcMonitor, dwData):
+        monitor_handles = win32api.EnumDisplayMonitors()
+        for handle in monitor_handles:
+            info = win32api.GetMonitorInfo(handle[0])
+            rc = info['Monitor']
             monitors.append({
-                'left': lprcMonitor[0],
-                'top': lprcMonitor[1],
-                'right': lprcMonitor[2],
-                'bottom': lprcMonitor[3],
-                'width': lprcMonitor[2] - lprcMonitor[0],
-                'height': lprcMonitor[3] - lprcMonitor[1]
+                'left': rc[0],
+                'top': rc[1],
+                'right': rc[2],
+                'bottom': rc[3],
+                'width': rc[2] - rc[0],
+                'height': rc[3] - rc[1]
             })
-            return True
-        
-        win32api.EnumDisplayMonitors(None, None, callback)
         
         if monitors:
             return monitors
     except Exception as e:
         print(f"win32api detection failed: {e}")
     
-    # Попытка 2: ctypes
+    # Попытка 2: ctypes (менее надежный fallback)
     try:
         import ctypes
         user32 = ctypes.windll.user32
@@ -145,7 +144,7 @@ def get_monitors():
     except Exception as e:
         print(f"ctypes detection failed: {e}")
     
-    # Попытка 3: tkinter
+    # Попытка 3: tkinter (самый ненадежный)
     try:
         import tkinter as tk
         root = tk.Tk()
@@ -155,31 +154,18 @@ def get_monitors():
         screen_height = root.winfo_screenheight()
         
         if screen_width > 2000:
-            # Вероятно 2 монитора
             monitors.append({
-                'left': 0,
-                'top': 0,
-                'right': 1920,
-                'bottom': 1080,
-                'width': 1920,
-                'height': 1080
+                'left': 0, 'top': 0, 'right': 1920, 'bottom': 1080,
+                'width': 1920, 'height': 1080
             })
             monitors.append({
-                'left': 1920,
-                'top': 0,
-                'right': 3840,
-                'bottom': 1080,
-                'width': 1920,
-                'height': 1080
+                'left': 1920, 'top': 0, 'right': 3840, 'bottom': 1080,
+                'width': 1920, 'height': 1080
             })
         else:
             monitors.append({
-                'left': 0,
-                'top': 0,
-                'right': screen_width,
-                'bottom': screen_height,
-                'width': screen_width,
-                'height': screen_height
+                'left': 0, 'top': 0, 'right': screen_width, 'bottom': screen_height,
+                'width': screen_width, 'height': screen_height
             })
         
         root.destroy()

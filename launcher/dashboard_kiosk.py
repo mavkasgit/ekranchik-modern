@@ -53,110 +53,63 @@ def get_monitors():
     """Получить список мониторов (Windows)."""
     monitors = []
     
-    # Попытка 1: win32api
-    if HAS_WIN32:
-        logger.info("Trying to detect monitors using win32api...")
+    if not HAS_WIN32:
+        return monitors
         
-        try:
-            import win32api
-            
-            def callback(hMonitor, hdcMonitor, lprcMonitor, dwData):
-                monitors.append({
-                    'left': lprcMonitor[0],
-                    'top': lprcMonitor[1],
-                    'right': lprcMonitor[2],
-                    'bottom': lprcMonitor[3],
-                    'width': lprcMonitor[2] - lprcMonitor[0],
-                    'height': lprcMonitor[3] - lprcMonitor[1]
-                })
-                return True
-            
-            # Вызываем EnumDisplayMonitors с callback
-            win32api.EnumDisplayMonitors(None, None, callback)
-            
-            # Альтернативный способ через ctypes
-            if not monitors:
-                import ctypes
-                user32 = ctypes.windll.user32
-                
-                # Получаем количество мониторов
-                monitor_count = user32.GetSystemMetrics(80)  # SM_CMONITORS
-                logger.info(f"GetSystemMetrics reports {monitor_count} monitor(s)")
-                
-                if monitor_count > 0:
-                    # Получаем размер виртуального экрана
-                    virtual_width = user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
-                    virtual_height = user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
-                    
-                    logger.info(f"Virtual screen: {virtual_width}x{virtual_height}")
-                    
-                    # Если больше одного монитора
-                    if monitor_count > 1:
-                        # Предполагаем стандартные мониторы 1920x1080
-                        for i in range(monitor_count):
-                            monitors.append({
-                                'left': i * 1920,
-                                'top': 0,
-                                'right': (i + 1) * 1920,
-                                'bottom': 1080,
-                                'width': 1920,
-                                'height': 1080
-                            })
-                        logger.info(f"Created {monitor_count} monitor entries (estimated)")
-            
+    # Попытка 1: win32api (более надежный способ)
+    try:
+        import win32api
+        monitor_handles = win32api.EnumDisplayMonitors()
+        for handle in monitor_handles:
+            info = win32api.GetMonitorInfo(handle[0])
+            rc = info['Monitor']
+            monitors.append({
+                'left': rc[0],
+                'top': rc[1],
+                'right': rc[2],
+                'bottom': rc[3],
+                'width': rc[2] - rc[0],
+                'height': rc[3] - rc[1]
+            })
+        
+        if monitors:
             logger.info(f"win32api detected {len(monitors)} monitor(s)")
-        except Exception as e:
-            logger.error(f"win32api detection failed: {e}")
+            return monitors
+    except Exception as e:
+        logger.error(f"win32api detection failed: {e}")
     
     # Попытка 2: tkinter (если win32api не сработал)
-    if not monitors:
-        logger.info("Trying to detect monitors using tkinter...")
-        try:
-            import tkinter as tk
-            root = tk.Tk()
-            root.withdraw()
-            
-            # Получаем размер экрана
-            screen_width = root.winfo_screenwidth()
-            screen_height = root.winfo_screenheight()
-            
-            logger.info(f"tkinter screen size: {screen_width}x{screen_height}")
-            
-            # Если ширина больше 2000, вероятно 2 монитора
-            if screen_width > 2000:
-                # Предполагаем 2 монитора по 1920
-                monitors.append({
-                    'left': 0,
-                    'top': 0,
-                    'right': 1920,
-                    'bottom': 1080,
-                    'width': 1920,
-                    'height': 1080
-                })
-                monitors.append({
-                    'left': 1920,
-                    'top': 0,
-                    'right': 3840,
-                    'bottom': 1080,
-                    'width': 1920,
-                    'height': 1080
-                })
-                logger.info("Detected 2 monitors (estimated from screen width)")
-            else:
-                # Один монитор
-                monitors.append({
-                    'left': 0,
-                    'top': 0,
-                    'right': screen_width,
-                    'bottom': screen_height,
-                    'width': screen_width,
-                    'height': screen_height
-                })
-                logger.info("Detected 1 monitor")
-            
-            root.destroy()
-        except Exception as e:
-            logger.error(f"tkinter detection failed: {e}")
+    logger.info("Trying to detect monitors using tkinter as a fallback...")
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        
+        logger.info(f"tkinter screen size: {screen_width}x{screen_height}")
+        
+        if screen_width > 2000:
+            monitors.append({
+                'left': 0, 'top': 0, 'right': 1920, 'bottom': 1080,
+                'width': 1920, 'height': 1080
+            })
+            monitors.append({
+                'left': 1920, 'top': 0, 'right': 3840, 'bottom': 1080,
+                'width': 1920, 'height': 1080
+            })
+            logger.info("Detected 2 monitors (estimated from screen width)")
+        else:
+            monitors.append({
+                'left': 0, 'top': 0, 'right': screen_width, 'bottom': screen_height,
+                'width': screen_width, 'height': screen_height
+            })
+            logger.info("Detected 1 monitor")
+        
+        root.destroy()
+    except Exception as e:
+        logger.error(f"tkinter detection failed: {e}")
     
     return monitors
 
