@@ -96,14 +96,7 @@ class OPCUAService:
             
             try:
                 self._state = OPCUAState.CONNECTING
-                
-                # Закрываем старый клиент если есть
-                if self._client:
-                    try:
-                        await self._client.disconnect()
-                    except:
-                        pass
-                    self._client = None
+                self._client = None # Просто отбрасываем старый клиент
                 
                 client = Client(settings.OPCUA_ENDPOINT, timeout=10)
                 # Устанавливаем параметры сессии для долгого соединения
@@ -123,13 +116,12 @@ class OPCUAService:
                 return True
                 
             except Exception as e:
-                logger.error(f"[OPC UA] Connection failed: {e}")
+                logger.error("[OPC UA] Connection failed:", exc_info=True)
                 self._connected = False
                 self._state = OPCUAState.ERROR
                 self._client = None
                 self._stats['errors'] += 1
-                return False
-    
+                return False    
     async def ensure_connected(self) -> bool:
         """Проверить соединение и переподключиться при необходимости."""
         if not self._connected or not self._client:
@@ -146,12 +138,7 @@ class OPCUAService:
             logger.warning(f"[OPC UA] Health check failed ({type(e).__name__}), reconnecting: {e}")
             self._connected = False
             self._state = OPCUAState.DISCONNECTED
-            if self._client:
-                try:
-                    await self._client.disconnect()
-                except:
-                    pass
-                self._client = None
+            self._client = None
             return await self.connect()
     
     async def disconnect(self) -> None:
@@ -290,12 +277,7 @@ class OPCUAService:
                 # Сбрасываем состояние соединения для переподключения
                 self._connected = False
                 self._state = OPCUAState.DISCONNECTED
-                if self._client:
-                    try:
-                        await self._client.disconnect()
-                    except:
-                        pass
-                    self._client = None
+                self._client = None
             else:
                 # Добавляем в черный список узлы с постоянными ошибками атрибутов
                 if "badattributeidinvalid" in error_str or "badnodeidunknown" in error_str:
