@@ -162,65 +162,69 @@ def get_monitors():
 
 
 class KioskDashboard:
-    def __init__(self, url: str = "http://localhost", monitor_index: int = 1):
+    def __init__(self, url: str = "http://localhost", monitor_index: int = 1, geometry: dict = None):
         self.url = url
         self.window = None
         self.tray_icon = None
         self.is_fullscreen = True
-        self.monitor_index = monitor_index  # 0 = первый, 1 = второй
+        self.monitor_index = monitor_index
+        self.geometry = geometry  # {'x':, 'y':, 'width':, 'height':}
+        self._use_move_hack = not bool(geometry) # Не использовать перемещение, если геометрия задана
         
     def on_loaded(self):
         """Callback when page is loaded."""
-        print(f"[Kiosk] Dashboard loaded")
+        logger.info(f"Dashboard loaded at {self.url}")
         
-        # Перемещаем на нужный монитор после загрузки
-        if HAS_WIN32:
+        # Перемещаем на нужный монитор после загрузки, если нужно
+        if HAS_WIN32 and self._use_move_hack:
             self._move_to_monitor()
         
     def on_closing(self):
         """Prevent closing in kiosk mode - only via tray."""
-        print("[Kiosk] Close blocked - use tray menu to exit")
+        logger.info("Close blocked - use tray menu to exit")
         return False
     
     def _move_to_monitor(self):
-        """Переместить окно на указанный монитор."""
+        """Переместить окно на указанный монитор (Fallback)."""
         monitors = get_monitors()
         
         if not monitors:
             logger.warning("Could not detect monitors in _move_to_monitor")
             return
         
-        logger.info(f"Detected {len(monitors)} monitor(s) in _move_to_monitor")
+        logger.info(f"Fallback: Detected {len(monitors)} monitor(s) in _move_to_monitor")
         
-        # Если запрошен второй монитор, но его нет - используем первый
         target_index = min(self.monitor_index, len(monitors) - 1)
         monitor = monitors[target_index]
         
-        logger.info(f"Moving to monitor {target_index + 1}: {monitor['width']}x{monitor['height']} at ({monitor['left']}, {monitor['top']})")
+        logger.info(f"Fallback: Moving to monitor {target_index + 1}: {monitor['width']}x{monitor['height']} at ({monitor['left']}, {monitor['top']})")
         
-        # Перемещаем окно
         try:
             self.window.move(monitor['left'], monitor['top'])
-            # Устанавливаем размер монитора
             self.window.resize(monitor['width'], monitor['height'])
-            logger.info("Window moved and resized successfully")
+            logger.info("Fallback: Window moved and resized successfully")
         except Exception as e:
-            logger.error(f"Error moving window: {e}")
+            logger.error(f"Fallback: Error moving window: {e}")
     
     def create_window(self):
         """Create fullscreen kiosk window."""
-        # Определяем начальную позицию и размер
         x, y, width, height = 0, 0, 1920, 1080
         
-        if HAS_WIN32:
+        # Приоритет - прямая геометрия
+        if self.geometry:
+            x, y = self.geometry['x'], self.geometry['y']
+            width, height = self.geometry['width'], self.geometry['height']
+            logger.info(f"Using provided geometry: {width}x{height} at ({x}, {y})")
+        
+        # Fallback - определение по индексу
+        elif HAS_WIN32:
             monitors = get_monitors()
-            if monitors and self.monitor_index < len(monitors):
-                monitor = monitors[self.monitor_index]
-                x = monitor['left']
-                y = monitor['top']
-                width = monitor['width']
-                height = monitor['height']
-                print(f"[Kiosk] Target monitor: {width}x{height} at ({x}, {y})")
+            if monitors:
+                target_index = min(self.monitor_index, len(monitors) - 1)
+                monitor = monitors[target_index]
+                x, y = monitor['left'], monitor['top']
+                width, height = monitor['width'], monitor['height']
+                logger.info(f"Using monitor index {target_index + 1}: {width}x{height} at ({x}, {y})")
         
         self.window = webview.create_window(
             title='Ekranchik Dashboard - Kiosk',
@@ -353,20 +357,37 @@ def main():
     
     parser = argparse.ArgumentParser(description='Kiosk Mode Dashboard')
     parser.add_argument('--monitor', type=int, default=1, help='Monitor index (0=first, 1=second)')
+    parser.add_argument('--geometry', type=str, default=None, help='Window geometry "x,y,width,height"')
     args = parser.parse_args()
     
     dashboard_url = "http://localhost"  # Порт 80
     
-    print(f"[Kiosk] Starting kiosk mode...")
-    print(f"[Kiosk] URL: {dashboard_url}")
-    print(f"[Kiosk] Target monitor: {args.monitor + 1}")
+    logger.info("Starting kiosk mode...")
+    logger.info(f"URL: {dashboard_url}")
     
+    # Обрабатываем аргументы
+    monitor_index = args.monitor
+    geometry = None
+    
+    if args.geometry:
+        try:
+            parts = list(map(int, args.geometry.split(',')))
+            if len(parts) == 4:
+                geometry = {'x': parts[0], 'y': parts[1], 'width': parts[2], 'height': parts[3]}
+                logger.info(f"Received geometry argument: {geometry}")
+            else:
+                logger.error(f"Invalid geometry format: {args.geometry}")
+        except ValueError:
+            logger.error(f"Could not parse geometry: {args.geometry}")
+    
+    if not geometry:
+        logger.info(f"Using monitor index: {monitor_index + 1}")
+
     # Проверяем сервер
-    print("[Kiosk] Checking server...")
+    logger.info("Checking server...")
     if not check_server_running(dashboard_url, timeout=5):
-        print("[Kiosk] ERROR: Server not running!")
+        logger.error("Server not running!")
         
-        # Показываем диалог с ошибкой
         try:
             import tkinter as tk
             from tkinter import messagebox
@@ -379,33 +400,15 @@ def main():
             )
             root.destroy()
         except Exception as e:
-            print(f"[Kiosk] Error showing dialog: {e}")
+            logger.error(f"Error showing dialog: {e}")
         
         sys.exit(1)
     
-    print("[Kiosk] Server is running")
+    logger.info("Server is running")
     
-    # Определяем мониторы
-    monitors = get_monitors() if HAS_WIN32 else []
-    
-    print(f"[Kiosk] Detected {len(monitors)} monitor(s)")
-    
-    if monitors:
-        for i, mon in enumerate(monitors):
-            print(f"  Monitor {i + 1}: {mon['width']}x{mon['height']} at ({mon['left']}, {mon['top']})")
-    
-    # Используем монитор из аргументов
-    monitor_index = args.monitor
-    
-    # Проверяем что монитор существует
-    if monitors and monitor_index >= len(monitors):
-        print(f"[Kiosk] Warning: Monitor {monitor_index + 1} not found, using monitor 1")
-        monitor_index = 0
-    
-    print(f"[Kiosk] Using monitor: {monitor_index + 1}")
-    print(f"[Kiosk] Starting webview...")
-    
-    app = KioskDashboard(url=dashboard_url, monitor_index=monitor_index)
+    # Запускаем приложение
+    logger.info("Starting webview...")
+    app = KioskDashboard(url=dashboard_url, monitor_index=monitor_index, geometry=geometry)
     app.run()
 
 

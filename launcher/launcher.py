@@ -1037,11 +1037,28 @@ if HAS_GUI:
                 self.pages[self.current_page].log.append(f"[ERROR] LAUNCHER_DIR: {LAUNCHER_DIR}")
                 return
             
-            # Обновляем команду с выбранным монитором
-            kiosk_cmd = [PYTHON_EXE, str(kiosk_script), "--monitor", str(self._kiosk_monitor)]
+            # Получаем геометрию нужного монитора
+            monitors = get_monitors()
+            kiosk_cmd = [PYTHON_EXE, str(kiosk_script)]
+
+            if monitors:
+                # Убедимся, что индекс не выходит за пределы списка
+                target_index = min(self._kiosk_monitor, len(monitors) - 1)
+                target_monitor = monitors[target_index]
+                
+                geom = target_monitor
+                geometry_str = f"{geom['left']},{geom['top']},{geom['width']},{geom['height']}"
+                
+                kiosk_cmd.extend(["--geometry", geometry_str])
+                self.pages[self.current_page].log.append(f"[SYSTEM] Запуск киоска на мониторе {target_index + 1} с геометрией {geometry_str}...")
+
+            else:
+                # Если мониторы не найдены, используем старый метод
+                kiosk_cmd.extend(["--monitor", str(self._kiosk_monitor)])
+                self.pages[self.current_page].log.append(f"[SYSTEM] Запуск киоска на мониторе {self._kiosk_monitor + 1} (мониторы не определены)...")
+
             self.kiosk_manager.cmd = kiosk_cmd
             
-            self.pages[self.current_page].log.append(f"[SYSTEM] Запуск киоска на мониторе {self._kiosk_monitor + 1}...")
             self.pages[self.current_page].log.append(f"[SYSTEM] Команда: {' '.join(kiosk_cmd)}")
             if self.kiosk_manager.start():
                 self.pages[self.current_page].log.append(f"[SYSTEM] Киоск запущен (PID: {self.kiosk_manager.pid})")
