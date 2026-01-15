@@ -84,6 +84,42 @@ function ProfileCard({
 }) {
   const photoUrl = getPhotoUrl(profile.photo_thumb, profile.updated_at)
 
+  if (isMobile) {
+    // Mobile layout - image on full height
+    return (
+      <Card className="cursor-pointer hover:shadow-md transition-shadow relative overflow-hidden">
+        <CardContent className="p-0" onClick={() => onSelect(profile)}>
+          <div className="flex h-32">
+            {/* Image - full height */}
+            <div className="w-32 h-32 bg-muted flex items-center justify-center overflow-hidden flex-shrink-0">
+              {photoUrl ? (
+                <img src={photoUrl} alt={profile.name} className="w-full h-full object-contain" />
+              ) : (
+                <Image className="w-8 h-8 text-muted-foreground" />
+              )}
+            </div>
+            {/* Content */}
+            <div className="flex-1 min-w-0 p-3 flex flex-col">
+              <h3 className="font-medium truncate">{profile.name}</h3>
+              <div className="flex gap-2 mt-1 flex-wrap">
+                {profile.quantity_per_hanger && (
+                  <Badge variant="secondary" className="text-xs">{profile.quantity_per_hanger} шт/подв</Badge>
+                )}
+                {profile.length && (
+                  <Badge variant="outline" className="text-xs">{profile.length} мм</Badge>
+                )}
+              </div>
+              {profile.notes && (
+                <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{profile.notes}</p>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Desktop layout - original
   return (
     <Card className="group cursor-pointer hover:shadow-md transition-shadow relative">
       <CardContent className="p-4" onClick={() => onSelect(profile)}>
@@ -112,16 +148,14 @@ function ProfileCard({
         </div>
       </CardContent>
       {/* Edit/Delete buttons - desktop only */}
-      {!isMobile && (
-        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); onEdit(profile) }}>
-            <Pencil className="h-4 w-4" />
-          </Button>
-          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(profile) }}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); onEdit(profile) }}>
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(profile) }}>
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
     </Card>
   )
 }
@@ -808,10 +842,17 @@ export default function Catalog() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768)
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768
+      setIsMobile(mobile)
+      // Force grid view on mobile
+      if (mobile && viewMode === 'table') {
+        setViewMode('grid')
+      }
+    }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [])
+  }, [viewMode])
 
   // Data
   const { data: allProfiles, isLoading: loadingAll } = useCatalogAll()
@@ -913,14 +954,14 @@ export default function Catalog() {
   }
 
   return (
-    <div className="container mx-auto p-6 max-w-6xl">
+    <div className="container mx-auto p-4 md:p-6 max-w-6xl pb-20 md:pb-6">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-4 md:mb-6">
         <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold">Каталог профилей</h1>
+          <div className="flex items-center gap-2 md:gap-4">
+            <h1 className="text-xl md:text-2xl font-bold">Каталог профилей</h1>
             {displayData.length > 0 && (
-              <Badge variant="secondary">{displayData.length} профилей</Badge>
+              <Badge variant="secondary" className="hidden sm:inline-flex">{displayData.length} профилей</Badge>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -945,11 +986,11 @@ export default function Catalog() {
         </div>
         
         {/* Search & Sort */}
-        <div className="flex gap-4">
+        <div className="flex gap-2 md:gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Поиск по названию, примечаниям..."
+              placeholder={isMobile ? "Поиск..." : "Поиск по названию, примечаниям..."}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="pl-10 pr-10"
@@ -966,8 +1007,8 @@ export default function Catalog() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="rounded-r-none border-r-0">
-                  <ArrowUpDown className="h-4 w-4 mr-2" />
-                  Сортировка
+                  <ArrowUpDown className="h-4 w-4 md:mr-2" />
+                  <span className="hidden md:inline">Сортировка</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1007,8 +1048,8 @@ export default function Catalog() {
       )}
 
       {/* Grid View */}
-      {!isLoading && viewMode === 'grid' && displayData.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {!isLoading && (isMobile || viewMode === 'grid') && displayData.length > 0 && (
+        <div className="grid gap-3 md:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {displayData.map((profile) => (
             <ProfileCard
               key={profile.id}
@@ -1077,6 +1118,17 @@ export default function Catalog() {
             </TableBody>
           </Table>
         </div>
+      )}
+
+      {/* Floating Action Button - Mobile only */}
+      {isMobile && (
+        <Button 
+          onClick={handleCreateNew}
+          size="icon"
+          className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-lg z-50"
+        >
+          <Plus className="h-6 w-6" />
+        </Button>
       )}
 
       {/* Dialogs */}

@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['D:\\KTM\\KTM2000\\launcher\\launcher.py'],
+    ['D:\\KTM\\Ekranchik-modern\\launcher\\launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[('D:\\KTM\\KTM2000\\launcher\\theme.json', '.'), ('D:\\KTM\\KTM2000\\launcher\\icons.py', '.'), ('D:\\KTM\\KTM2000\\launcher\\launcher.ico', '.')],
+    datas=[('D:\\KTM\\Ekranchik-modern\\launcher\\theme.json', '.'), ('D:\\KTM\\Ekranchik-modern\\launcher\\icons.py', '.'), ('D:\\KTM\\Ekranchik-modern\\launcher\\launcher.ico', '.')],
     hiddenimports=['customtkinter', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'pystray', 'pystray._win32', 'dotenv', 'win32gui', 'win32con', 'win32process', 'win32api'],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['D:\\KTM\\KTM2000\\launcher\\launcher.ico'],
+    icon=['D:\\KTM\\Ekranchik-modern\\launcher\\launcher.ico'],
 )

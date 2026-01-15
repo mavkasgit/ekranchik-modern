@@ -81,16 +81,6 @@ export function HangerTracking() {
     }
   }, [autoRefresh])
 
-  const formatTime = (timeStr: string | null) => {
-    if (!timeStr) return '—'
-    try {
-      const date = new Date(timeStr)
-      return date.toLocaleTimeString()
-    } catch {
-      return timeStr
-    }
-  }
-
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <div className="flex items-center justify-between mb-6">
