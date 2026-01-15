@@ -55,7 +55,9 @@ class LineMonitorService:
         self._task: Optional[asyncio.Task] = None
         self._poll_interval = 10  # seconds
         self._heartbeat_interval = 10  # seconds - отправка статуса на фронтенд
+        self._health_check_interval = 60  # seconds - проверка здоровья OPC UA соединения
         self._last_heartbeat = datetime.now()
+        self._last_health_check = datetime.now()
         self._consecutive_errors = 0
         self._max_consecutive_errors = 5  # После этого делаем полный reconnect
         
@@ -99,6 +101,14 @@ class LineMonitorService:
         
         logger.info("[Line Monitor] Stopped")
     
+    def clear_data(self) -> None:
+        """Очистить все данные мониторинга (подвесы, события)."""
+        self._hangers.clear()
+        self._bath34_pallete = None
+        self._processed_unloads.clear()
+        self._unload_events.clear()
+        logger.info("[Line Monitor] All data cleared")
+    
     async def _monitor_loop(self) -> None:
         """Main monitoring loop."""
         logger.info(f"[Line Monitor] Loop started, interval: {self._poll_interval}s")
@@ -115,6 +125,16 @@ class LineMonitorService:
                 if (now - self._last_heartbeat).total_seconds() >= self._heartbeat_interval:
                     await self._send_heartbeat()
                     self._last_heartbeat = now
+                
+                # Периодическая проверка здоровья OPC UA соединения
+                if (now - self._last_health_check).total_seconds() >= self._health_check_interval:
+                    health_ok = await opcua_service.ensure_connected()
+                    if not health_ok:
+                        logger.warning("[Line Monitor] OPC UA health check failed")
+                    self._last_health_check = now
+                
+                # Периодический flush батча ошибок OPC UA
+                await opcua_service._flush_error_batch()
 
                 # Periodically clean up old hangers
                 if now - self._last_cleanup_time > CLEANUP_INTERVAL:
@@ -157,16 +177,17 @@ class LineMonitorService:
     async def _poll_once(self) -> None:
         """Single poll cycle: scan baths and detect events."""
         # Ensure OPC UA connection with health check
+        connected = await opcua_service.ensure_connected()
+        if not connected:
+            logger.warning("[Line Monitor] Cannot connect to OPC UA. Skipping poll.")
+            # Отправляем статус отключения на фронтенд
+            await self._broadcast_connection_status(False)
+            return
+        
+        # Если только что переподключились - уведомляем фронтенд
         if not opcua_service.is_connected:
-            connected = await opcua_service.connect()
-            if not connected:
-                logger.warning("[Line Monitor] Cannot connect to OPC UA. Skipping poll.")
-                # Отправляем статус отключения на фронтенд
-                await self._broadcast_connection_status(False)
-                return
-            else:
-                # Успешно переподключились - уведомляем фронтенд
-                await self._broadcast_connection_status(True)
+            await self._broadcast_connection_status(False)
+            return
         
         # Scan all baths to update hanger states
         await self._scan_baths()

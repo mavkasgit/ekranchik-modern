@@ -69,9 +69,11 @@ async def connect_opcua():
 
 @router.post("/disconnect")
 async def disconnect_opcua():
-    """Отключиться от OPC UA сервера."""
+    """Отключиться от OPC UA сервера и очистить все данные."""
     await opcua_service.disconnect()
-    return {"status": "disconnected"}
+    # Также очищаем данные мониторинга линии
+    line_monitor.clear_data()
+    return {"status": "disconnected", "data_cleared": True}
 
 
 @router.get("/read/{node_id}", response_model=OPCUANodeValue)
@@ -527,19 +529,20 @@ async def get_completed_cycles(limit: int = 20):
     # Get cycles from line monitor
     all_hangers = list(line_monitor._hangers.values())
     
-    # Filter completed hangers (not currently in any bath)
-    completed = [h for h in all_hangers if h.current_bath is None and h.baths_visited]
+    # Filter completed hangers (not currently in any bath but have path history)
+    completed = [h for h in all_hangers if h.current_bath is None and h.path]
     
-    # Sort by entry time descending
-    completed.sort(key=lambda h: h.entry_time or "", reverse=True)
+    # Sort by last_seen descending
+    completed.sort(key=lambda h: h.last_seen, reverse=True)
     
     cycles = []
     for hanger in completed[:limit]:
-        if hanger.baths_visited:
+        if hanger.path:
+            baths_visited = [entry.bath_name for entry in hanger.path]
             cycles.append({
-                "timestamp": hanger.entry_time,
-                "pallete": hanger.number,
-                "baths_visited": hanger.baths_visited
+                "timestamp": hanger.path[0].entry_time.isoformat() if hanger.path else None,
+                "pallete": hanger.id,
+                "baths_visited": baths_visited
             })
     
     return {

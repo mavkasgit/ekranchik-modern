@@ -30,10 +30,10 @@ interface CycleEvent {
 
 // Bath layout configuration - baths 3-34 (excluding 1-2 and 35-39)
 const BATH_LAYOUT = {
-  // Top row: baths 3-19 (left to right)
-  topRow: Array.from({ length: 17 }, (_, i) => i + 3),
-  // Bottom row: baths 20-34 (left to right, same direction)
-  bottomRow: Array.from({ length: 15 }, (_, i) => i + 20),
+  // Top row: baths 18-3 (right to left, reversed)
+  topRow: Array.from({ length: 16 }, (_, i) => 18 - i),
+  // Bottom row: baths 19-34 (left to right)
+  bottomRow: Array.from({ length: 16 }, (_, i) => i + 19),
   // Control point (exit)
   controlPoint: 34,
 }
@@ -44,7 +44,7 @@ export function LineVisualization() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
-  const [pollInterval, setPollInterval] = useState(5)
+  const pollInterval = 10 // Фиксированный интервал 10 секунд (как на бэкенде)
 
   const fetchLineData = useCallback(async () => {
     setLoading(true)
@@ -175,15 +175,6 @@ export function LineVisualization() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <select
-            value={pollInterval}
-            onChange={(e) => setPollInterval(Number(e.target.value))}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-          >
-            <option value={2}>2s</option>
-            <option value={5}>5s</option>
-            <option value={10}>10s</option>
-          </select>
           <button
             onClick={() => setAutoRefresh(!autoRefresh)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
@@ -191,7 +182,7 @@ export function LineVisualization() {
             }`}
           >
             {autoRefresh ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            {autoRefresh ? 'Live' : 'Paused'}
+            {autoRefresh ? 'Live (10s)' : 'Paused'}
           </button>
           <button
             onClick={fetchLineData}
@@ -237,9 +228,9 @@ export function LineVisualization() {
       {/* Line Visualization */}
       <div className="bg-gray-50 rounded-lg p-6 mb-6">
         <div className="flex flex-col gap-6">
-          {/* Top row: Baths 3-19 */}
+          {/* Top row: Baths 18-3 (reversed) */}
           <div className="flex items-center gap-1">
-            <div className="w-16 text-right text-xs text-gray-500 mr-2">Ванны 3-19</div>
+            <div className="w-16 text-right text-xs text-gray-500 mr-2">Ванны 18-3</div>
             <div className="flex gap-1 flex-wrap">
               {BATH_LAYOUT.topRow.map(num => (
                 <BathCell key={num} bathNumber={num} />
@@ -247,9 +238,9 @@ export function LineVisualization() {
             </div>
           </div>
           
-          {/* Bottom row: Baths 20-34 */}
+          {/* Bottom row: Baths 19-34 */}
           <div className="flex items-center gap-1">
-            <div className="w-16 text-right text-xs text-gray-500 mr-2">Ванны 20-34</div>
+            <div className="w-16 text-right text-xs text-gray-500 mr-2">Ванны 19-34</div>
             <div className="flex gap-1 flex-wrap">
               {BATH_LAYOUT.bottomRow.map(num => (
                 <BathCell key={num} bathNumber={num} />

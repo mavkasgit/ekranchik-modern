@@ -41,6 +41,18 @@ class OPCUAService:
         self._cache_time: Dict[str, datetime] = {}
         self._cache_ttl: int = 10  # Секунды
         
+        # Кеш ошибок для предотвращения спама в логах
+        self._error_cache: Dict[str, datetime] = {}
+        self._error_log_ttl: int = 300  # Логировать ошибку для узла не чаще раза в 5 минут
+        
+        # Батчинг ошибок - собираем ошибки и логируем группами
+        self._error_batch: Dict[str, List[str]] = {}  # error_type -> [node_ids]
+        self._error_batch_time: Optional[datetime] = None
+        self._error_batch_interval: int = 5  # Логировать батч раз в 5 секунд
+        
+        # Черный список узлов, которые постоянно дают ошибки
+        self._blacklisted_nodes: set = set()
+        
         self._stats = {
             'connections': 0,
             'reads': 0,
@@ -94,6 +106,8 @@ class OPCUAService:
                     self._client = None
                 
                 client = Client(settings.OPCUA_ENDPOINT, timeout=10)
+                # Устанавливаем параметры сессии для долгого соединения
+                client.session_timeout = 3600000  # 1 час в миллисекундах
                 await client.connect()
                 
                 self._client = client
@@ -102,6 +116,8 @@ class OPCUAService:
                 self._stats['connections'] += 1
                 self._node_cache.clear()
                 self._cache_time.clear()
+                # Очищаем черный список при переподключении - может узлы появились
+                self._blacklisted_nodes.clear()
                 
                 logger.info(f"[OPC UA] Connected to {settings.OPCUA_ENDPOINT}")
                 return True
@@ -126,7 +142,8 @@ class OPCUAService:
             await root.get_children()
             return True
         except Exception as e:
-            logger.warning(f"[OPC UA] Health check failed, reconnecting: {e}")
+            error_str = str(e).lower()
+            logger.warning(f"[OPC UA] Health check failed ({type(e).__name__}), reconnecting: {e}")
             self._connected = False
             self._state = OPCUAState.DISCONNECTED
             if self._client:
@@ -139,6 +156,9 @@ class OPCUAService:
     
     async def disconnect(self) -> None:
         """Отключиться от OPC UA сервера."""
+        # Логируем накопленные ошибки перед отключением
+        await self._flush_error_batch()
+        
         if self._client:
             try:
                 await self._client.disconnect()
@@ -148,12 +168,73 @@ class OPCUAService:
         
         self._connected = False
         self._state = OPCUAState.DISCONNECTED
+        
+        # Очищаем все кеши
         self._node_cache.clear()
         self._cache_time.clear()
+        self._error_cache.clear()
+        self._blacklisted_nodes.clear()
+        self._error_batch.clear()
+        self._error_batch_time = None
+        
+        logger.info("[OPC UA] Disconnected and cleared all caches")
+    
+    async def _batch_error(self, error_type: str, node_id: str) -> None:
+        """Добавить ошибку в батч для группового логирования."""
+        now = datetime.now()
+        
+        # Инициализируем батч если нужно
+        if self._error_batch_time is None:
+            self._error_batch_time = now
+        
+        # Добавляем ошибку в батч
+        if error_type not in self._error_batch:
+            self._error_batch[error_type] = []
+        
+        # Добавляем только если узла еще нет в батче
+        if node_id not in self._error_batch[error_type]:
+            self._error_batch[error_type].append(node_id)
+        
+        # Если прошло достаточно времени - логируем батч
+        if (now - self._error_batch_time).total_seconds() >= self._error_batch_interval:
+            await self._flush_error_batch()
+    
+    async def _flush_error_batch(self) -> None:
+        """Залогировать накопленные ошибки одной строкой для каждого типа."""
+        if not self._error_batch:
+            return
+        
+        for error_type, node_ids in self._error_batch.items():
+            count = len(node_ids)
+            
+            # Показываем первые 3 узла как примеры
+            examples = node_ids[:3]
+            examples_str = ", ".join(examples)
+            
+            if count > 3:
+                examples_str += f" и еще {count - 3}"
+            
+            # Разные уровни логирования
+            if error_type == "TimeoutError":
+                logger.warning(f"[OPC UA] {error_type} для {count} узлов: {examples_str}")
+            elif "badnodeidunknown" in error_type.lower():
+                logger.warning(f"[OPC UA] Узлы не найдены ({count}): {examples_str}")
+            elif "badattributeidinvalid" in error_type.lower():
+                logger.warning(f"[OPC UA] Неверные атрибуты ({count}): {examples_str}")
+            else:
+                logger.error(f"[OPC UA] {error_type} для {count} узлов: {examples_str}")
+        
+        # Очищаем батч
+        self._error_batch.clear()
+        self._error_batch_time = None
     
     async def read_node(self, node_id: str) -> Optional[Any]:
         """Прочитать значение узла с кешированием."""
-        if not self._connected:
+        # Проверяем черный список
+        if node_id in self._blacklisted_nodes:
+            return None
+        
+        if not self._connected or not self._client:
             if not await self.connect():
                 return None
         
@@ -178,6 +259,7 @@ class OPCUAService:
             
         except Exception as e:
             error_str = str(e).lower()
+            error_type = type(e).__name__
             
             # Критические ошибки соединения - нужно переподключиться
             connection_errors = [
@@ -193,8 +275,18 @@ class OPCUAService:
             
             is_connection_error = any(err in error_str for err in connection_errors)
             
-            if is_connection_error:
-                logger.warning(f"[OPC UA] Connection lost, will reconnect: {e}")
+            # Проверяем также на ошибки истекшей сессии и таймауты
+            session_errors = ["badsessionclosed", "badsessionidinvalid"]
+            is_session_error = any(err in error_str for err in session_errors)
+            is_timeout = error_type == "TimeoutError"
+            
+            if is_connection_error or is_session_error or is_timeout:
+                if is_session_error:
+                    logger.warning(f"[OPC UA] Session expired, reconnecting: {e}")
+                elif is_timeout:
+                    logger.warning(f"[OPC UA] Request timeout, reconnecting")
+                else:
+                    logger.warning(f"[OPC UA] Connection lost, will reconnect: {e}")
                 # Сбрасываем состояние соединения для переподключения
                 self._connected = False
                 self._state = OPCUAState.DISCONNECTED
@@ -204,8 +296,14 @@ class OPCUAService:
                     except:
                         pass
                     self._client = None
-            elif "badnodeidunknown" not in error_str and "badattributeidinvalid" not in error_str:
-                logger.error(f"[OPC UA] Read error for {node_id}: {e}")
+            else:
+                # Добавляем в черный список узлы с постоянными ошибками атрибутов
+                if "badattributeidinvalid" in error_str or "badnodeidunknown" in error_str:
+                    self._blacklisted_nodes.add(node_id)
+                    logger.info(f"[OPC UA] Узел {node_id} добавлен в черный список (постоянные ошибки)")
+                
+                # Батчинг ошибок - собираем и логируем группами
+                await self._batch_error(error_type, node_id)
             
             self._stats['errors'] += 1
             return None
