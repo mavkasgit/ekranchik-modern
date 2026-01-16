@@ -107,7 +107,12 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
       ws.onmessage = (event) => {
         try {
           const message: WebSocketMessage = JSON.parse(event.data)
-          console.log('[WS] Received:', message.type)
+          
+          // Don't log heartbeat messages to reduce console spam
+          if (message.type !== 'heartbeat') {
+            console.log('[WS] Received:', message.type)
+          }
+          
           setLastMessage(message)
           onMessageRef.current?.(message)
 
@@ -118,7 +123,7 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
             console.log('[WS] Refetching unload-matched data...')
             queryClient.invalidateQueries({ queryKey: ['dashboard', 'unload-matched'] })
             queryClient.refetchQueries({ queryKey: ['dashboard', 'unload-matched'] })
-          } else if (message.type === 'opcua_status' || message.type === 'heartbeat') {
+          } else if (message.type === 'opcua_status') {
             queryClient.invalidateQueries({ queryKey: ['opcua'] })
           }
         } catch (e) {

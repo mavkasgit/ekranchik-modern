@@ -189,11 +189,13 @@ class LineMonitorService:
             await self._broadcast_connection_status(False)
             return
         
+        # ВАЖНО: Сначала проверяем выгрузку (ванна 34), потом сканируем остальные
+        # Это гарантирует что выгрузка будет зафиксирована до того как
+        # _scan_baths() создаст "новый цикл" для подвеса
+        await self._check_unload()
+        
         # Scan all baths to update hanger states
         await self._scan_baths()
-        
-        # Check for unload events at the control bath
-        await self._check_unload()
     
     async def _broadcast_connection_status(self, connected: bool) -> None:
         """Broadcast OPC UA connection status to all clients."""

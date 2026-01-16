@@ -53,6 +53,78 @@ async def get_opcua_status():
     )
 
 
+@router.get("/diagnose")
+async def diagnose_opcua():
+    """Диагностировать проблемы с OPC UA подключением."""
+    import socket
+    from urllib.parse import urlparse
+    
+    diagnostics = opcua_service.get_diagnostics()
+    
+    # Парсим endpoint
+    parsed = urlparse(settings.OPCUA_ENDPOINT)
+    host = parsed.hostname
+    port = parsed.port or 4840
+    
+    # Проверяем доступность хоста
+    host_reachable = False
+    try:
+        socket.create_connection((host, port), timeout=5)
+        host_reachable = True
+        logger.info(f"[OPC UA Diagnose] Host {host}:{port} is reachable")
+    except socket.timeout:
+        logger.warning(f"[OPC UA Diagnose] Host {host}:{port} timeout")
+    except socket.error as e:
+        logger.warning(f"[OPC UA Diagnose] Cannot reach {host}:{port}: {e}")
+    
+    # Измеряем ping
+    ping_ms = await opcua_service.ping_server()
+    
+    return {
+        "endpoint": settings.OPCUA_ENDPOINT,
+        "host": host,
+        "port": port,
+        "host_reachable": host_reachable,
+        "ping_ms": round(ping_ms, 1) if ping_ms else None,
+        "opcua_connected": diagnostics['connected'],
+        "opcua_state": diagnostics['state'],
+        "reconnect_attempts": diagnostics.get('reconnect_attempts', 0),
+        "blacklisted_nodes": diagnostics.get('blacklisted_nodes', 0),
+        "stats": diagnostics['stats'],
+        "metrics": diagnostics.get('metrics', {}),
+        "recommendations": [
+            "Check if OPC UA server is running" if not host_reachable else "Host is reachable",
+            "Check firewall rules for port 4840" if not host_reachable else "Port 4840 is open",
+            "Verify network connectivity" if not host_reachable else "Network is OK",
+            "Check OPC UA endpoint configuration" if not diagnostics['connected'] else "OPC UA is connected",
+            f"Network latency: {ping_ms:.1f}ms" if ping_ms else "Cannot measure network latency",
+        ]
+    }
+
+
+@router.get("/metrics")
+async def get_opcua_metrics():
+    """
+    Получить детальные метрики подключения OPC UA.
+    Полезно для диагностики проблем со стабильностью.
+    """
+    diagnostics = opcua_service.get_diagnostics()
+    metrics = diagnostics.get('metrics', {})
+    
+    # Измеряем текущий ping
+    ping_ms = await opcua_service.ping_server()
+    
+    return {
+        "connected": diagnostics['connected'],
+        "state": diagnostics['state'],
+        "current_ping_ms": round(ping_ms, 1) if ping_ms else None,
+        "metrics": metrics,
+        "stats": diagnostics['stats'],
+        "reconnect_attempts": diagnostics.get('reconnect_attempts', 0),
+        "blacklisted_nodes": diagnostics.get('blacklisted_nodes', 0),
+    }
+
+
 @router.post("/connect")
 async def connect_opcua():
     """Подключиться к OPC UA серверу."""
@@ -234,43 +306,16 @@ async def get_plc_data():
             raise HTTPException(status_code=500, detail="Cannot connect to OPC UA server")
     
     try:
-        # Основные узлы для чтения
+        # Основные узлы для чтения - используем параллельное чтение
         node_ids = [
             "i=2258",                    # Server CurrentTime
             "ns=4;s=NumOfVars",          # Количество переменных
             "ns=4;s=NumOfValues",        # Количество значений
             "ns=4;s=PLC.DeviceStatus",   # Статус устройства
-            "ns=4;s=NxController.GlobalVars",  # Глобальные переменные
         ]
         
+        # Используем параллельное чтение для скорости
         values = await opcua_service.read_nodes(node_ids)
-        
-        # Пробуем прочитать дополнительные важные переменные
-        important_vars = {}
-        
-        # Пытаемся получить статус работы
-        try:
-            status = await opcua_service.read_node("ns=4;s=PLC.DeviceStatus")
-            if status:
-                important_vars['device_status'] = str(status)
-        except:
-            pass
-        
-        # Пытаемся получить информацию о сервере
-        try:
-            server_status = await opcua_service.read_node("i=2256")  # ServerStatus
-            if server_status:
-                important_vars['server_status'] = str(server_status)
-        except:
-            pass
-        
-        # Пытаемся получить информацию о сборке
-        try:
-            build_info = await opcua_service.read_node("i=2257")  # BuildInfo
-            if build_info:
-                important_vars['build_info'] = str(build_info)
-        except:
-            pass
         
         return {
             "status": "ok",
@@ -278,7 +323,6 @@ async def get_plc_data():
             "num_vars": values.get("ns=4;s=NumOfVars"),
             "num_values": values.get("ns=4;s=NumOfValues"),
             "device_status": values.get("ns=4;s=PLC.DeviceStatus"),
-            "important_vars": important_vars,
             "connected": True
         }
         
@@ -403,10 +447,25 @@ async def get_line_status():
             raise HTTPException(status_code=500, detail="Cannot connect to OPC UA server")
     
     try:
-        baths = []
+        # Подготавливаем список всех узлов для параллельного чтения
+        node_ids = []
         bath_props = ["InUse", "Free", "Pallete", "InTime", "OutTime", "dTime"]
         
         for i in range(1, 40):  # Bath[1] to Bath[39]
+            for prop in bath_props:
+                node_ids.append(f"ns=4;s=Bath[{i}].{prop}")
+        
+        # Добавляем узлы блока питания
+        power_props = ["Current", "Voltage"]
+        for prop in power_props:
+            node_ids.append(f"ns=4;s=S8VK_X.{prop}")
+        
+        # Читаем все узлы параллельно
+        values = await opcua_service.read_nodes_batch(node_ids)
+        
+        # Формируем результат
+        baths = []
+        for i in range(1, 40):
             bath_data = {
                 "bath_number": i,
                 "in_use": False,
@@ -418,39 +477,29 @@ async def get_line_status():
             }
             
             for prop in bath_props:
-                try:
-                    value = await opcua_service.read_node(f"ns=4;s=Bath[{i}].{prop}")
-                    if prop == "InUse":
-                        bath_data["in_use"] = bool(value) if value is not None else False
-                    elif prop == "Free":
-                        bath_data["free"] = bool(value) if value is not None else True
-                    elif prop == "Pallete":
-                        bath_data["pallete"] = int(value) if value is not None else 0
-                    elif prop == "InTime":
-                        bath_data["in_time"] = float(value) if value is not None else 0
-                    elif prop == "OutTime":
-                        bath_data["out_time"] = float(value) if value is not None else 0
-                    elif prop == "dTime":
-                        bath_data["d_time"] = float(value) if value is not None else 0
-                except Exception as e:
-                    logger.debug(f"Error reading Bath[{i}].{prop}: {e}")
+                key = f"ns=4;s=Bath[{i}].{prop}"
+                value = values.get(key)
+                
+                if prop == "InUse":
+                    bath_data["in_use"] = bool(value) if value is not None else False
+                elif prop == "Free":
+                    bath_data["free"] = bool(value) if value is not None else True
+                elif prop == "Pallete":
+                    bath_data["pallete"] = int(value) if value is not None else 0
+                elif prop == "InTime":
+                    bath_data["in_time"] = float(value) if value is not None else 0
+                elif prop == "OutTime":
+                    bath_data["out_time"] = float(value) if value is not None else 0
+                elif prop == "dTime":
+                    bath_data["d_time"] = float(value) if value is not None else 0
             
             baths.append(bath_data)
         
-        # Read power supply data
-        power_supply = None
-        try:
-            current = await opcua_service.read_node("ns=4;s=S8VK_X.Current")
-            voltage = await opcua_service.read_node("ns=4;s=S8VK_X.Voltage")
-            run_time = await opcua_service.read_node("ns=4;s=S8VK_X.ContinuousRunTime")
-            
-            power_supply = {
-                "current": float(current) if current is not None else 0,
-                "voltage": float(voltage) if voltage is not None else 0,
-                "continuous_run_time": float(run_time) if run_time is not None else 0
-            }
-        except Exception as e:
-            logger.debug(f"Error reading power supply: {e}")
+        # Получаем данные блока питания
+        power_supply = {
+            "current": float(values.get("ns=4;s=S8VK_X.Current", 0)) if values.get("ns=4;s=S8VK_X.Current") else 0,
+            "voltage": float(values.get("ns=4;s=S8VK_X.Voltage", 0)) if values.get("ns=4;s=S8VK_X.Voltage") else 0,
+        }
         
         from datetime import datetime
         return {
