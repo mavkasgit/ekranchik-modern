@@ -77,7 +77,13 @@ class WebSocketManager:
             if websocket.client_state == WebSocketState.CONNECTED:
                 await websocket.send_json(message.model_dump(mode='json'))
                 return True
-        except Exception:
+            else:
+                # Connection not ready, remove it
+                await self.disconnect(websocket)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"[WS] Failed to send personal message: {e}")
             await self.disconnect(websocket)
         return False
     

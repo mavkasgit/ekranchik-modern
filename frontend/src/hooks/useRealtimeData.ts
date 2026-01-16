@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { WebSocketMessage } from '@/types/dashboard'
-import { WS_RECONNECT_INTERVAL } from '@/config/intervals'
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
@@ -14,8 +13,7 @@ interface UseRealtimeDataOptions {
 export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
   const { 
     onMessage, 
-    autoReconnect = true, 
-    reconnectInterval = WS_RECONNECT_INTERVAL 
+    autoReconnect = true
   } = options
   
   const [status, setStatus] = useState<ConnectionStatus>('disconnected')
@@ -24,6 +22,9 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
   const reconnectTimeoutRef = useRef<number | null>(null)
   const onMessageRef = useRef(onMessage)
   const queryClient = useQueryClient()
+  const reconnectAttemptsRef = useRef(0)
+  const maxReconnectAttemptsRef = useRef(10)
+  const isUnmountingRef = useRef(false)
   
   // Keep onMessage ref updated without triggering reconnects
   useEffect(() => {
@@ -34,7 +35,20 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
     // Prevent multiple connections
     if (wsRef.current?.readyState === WebSocket.OPEN || 
         wsRef.current?.readyState === WebSocket.CONNECTING) {
+      console.log('[WS] Already connecting or connected, skipping')
       return
+    }
+
+    // Prevent reconnection attempts if unmounting
+    if (isUnmountingRef.current) {
+      return
+    }
+
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s max
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 60000)
+    
+    if (reconnectAttemptsRef.current > 0) {
+      console.log(`[WS] Reconnect attempt ${reconnectAttemptsRef.current}, waiting ${delay}ms`)
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -47,15 +61,25 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws
 
+      // Set connection timeout
+      const connectionTimeout = setTimeout(() => {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          console.warn('[WS] Connection timeout, closing')
+          ws.close()
+        }
+      }, 10000) // 10 second timeout
+
       ws.onopen = () => {
+        clearTimeout(connectionTimeout)
+        reconnectAttemptsRef.current = 0 // Reset on successful connection
         setStatus('connected')
-        console.log('[WS] Connected')
+        console.log('[WS] Connected successfully')
       }
 
       ws.onmessage = (event) => {
         try {
           const message: WebSocketMessage = JSON.parse(event.data)
-          console.log('[WS] Received:', message.type, message.payload)
+          console.log('[WS] Received:', message.type)
           setLastMessage(message)
           onMessageRef.current?.(message)
 
@@ -63,12 +87,10 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
           if (message.type === 'data_update') {
             queryClient.invalidateQueries({ queryKey: ['dashboard'] })
           } else if (message.type === 'unload_event') {
-            // Force immediate refetch for unload events
             console.log('[WS] Refetching unload-matched data...')
             queryClient.invalidateQueries({ queryKey: ['dashboard', 'unload-matched'] })
             queryClient.refetchQueries({ queryKey: ['dashboard', 'unload-matched'] })
           } else if (message.type === 'opcua_status' || message.type === 'heartbeat') {
-            // OPC UA status updates - invalidate dashboard to refresh connection status
             queryClient.invalidateQueries({ queryKey: ['opcua'] })
           }
         } catch (e) {
@@ -77,33 +99,57 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
       }
 
       ws.onclose = () => {
+        clearTimeout(connectionTimeout)
         console.log('[WS] Disconnected')
         setStatus('disconnected')
         wsRef.current = null
         
-        if (autoReconnect) {
-          reconnectTimeoutRef.current = window.setTimeout(connect, reconnectInterval)
+        if (autoReconnect && !isUnmountingRef.current) {
+          reconnectAttemptsRef.current++
+          
+          if (reconnectAttemptsRef.current <= maxReconnectAttemptsRef.current) {
+            const nextDelay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 60000)
+            console.log(`[WS] Scheduling reconnect in ${nextDelay}ms (attempt ${reconnectAttemptsRef.current})`)
+            reconnectTimeoutRef.current = window.setTimeout(connect, nextDelay)
+          } else {
+            console.error('[WS] Max reconnection attempts reached')
+            setStatus('error')
+          }
         }
       }
 
       ws.onerror = (e) => {
-        console.error('[WS] Error:', e)
+        console.error('[WS] WebSocket error:', e)
         setStatus('error')
       }
     } catch (e) {
       setStatus('error')
       console.error('[WS] Connection error:', e)
+      
+      if (autoReconnect && !isUnmountingRef.current) {
+        reconnectAttemptsRef.current++
+        if (reconnectAttemptsRef.current <= maxReconnectAttemptsRef.current) {
+          const nextDelay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 60000)
+          reconnectTimeoutRef.current = window.setTimeout(connect, nextDelay)
+        }
+      }
     }
-  }, [autoReconnect, reconnectInterval, queryClient])
+  }, [autoReconnect, queryClient])
 
   const disconnect = useCallback(() => {
+    isUnmountingRef.current = true
+    
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current)
       reconnectTimeoutRef.current = null
     }
     
     if (wsRef.current) {
-      wsRef.current.close()
+      try {
+        wsRef.current.close()
+      } catch (e) {
+        console.warn('[WS] Error closing WebSocket:', e)
+      }
       wsRef.current = null
     }
     
@@ -111,8 +157,13 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
   }, [])
 
   useEffect(() => {
+    isUnmountingRef.current = false
+    reconnectAttemptsRef.current = 0
     connect()
-    return () => disconnect()
+    
+    return () => {
+      disconnect()
+    }
   }, [connect, disconnect])
 
   return {
