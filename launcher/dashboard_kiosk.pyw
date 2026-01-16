@@ -379,6 +379,25 @@ class KioskDashboard:
         webview.start(debug=False)
 
 # --- Main ---
+import json
+
+CONFIG_FILE = Path(__file__).parent / "kiosk_config.json"
+
+def load_kiosk_config():
+    """Загрузить конфиг киоска."""
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"url": "http://localhost:5173", "monitor": 1}
+
+def save_kiosk_config(config):
+    """Сохранить конфиг киоска."""
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+
 def check_server_running(url: str, timeout: int = 5) -> bool:
     import urllib.request
     import urllib.error
@@ -391,18 +410,162 @@ def check_server_running(url: str, timeout: int = 5) -> bool:
             time.sleep(0.5)
     return False
 
+
+class KioskLauncher:
+    """GUI для выбора монитора и URL перед запуском киоска."""
+    
+    def __init__(self):
+        import tkinter as tk
+        self.tk = tk
+        
+        self.result = None
+        self.monitors = get_monitors()
+        self.config = load_kiosk_config()
+        
+        self.root = tk.Tk()
+        self.root.title("Ekranchik Kiosk - Настройки")
+        self.root.resizable(False, False)
+        
+        # Устанавливаем иконку
+        if ICON_FILE.exists():
+            try:
+                self.root.iconbitmap(str(ICON_FILE))
+            except:
+                pass
+        
+        # Центрируем окно
+        window_width = 500
+        window_height = 320 + len(self.monitors) * 45
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        self._create_widgets()
+    
+    def _create_widgets(self):
+        tk = self.tk
+        
+        # === URL секция ===
+        url_frame = tk.LabelFrame(self.root, text="URL дашборда", font=("Segoe UI", 11))
+        url_frame.pack(fill=tk.X, padx=20, pady=(15, 10))
+        
+        self.url_var = tk.StringVar(value=self.config.get("url", "http://localhost:5173"))
+        url_entry = tk.Entry(url_frame, textvariable=self.url_var, font=("Segoe UI", 11), width=50)
+        url_entry.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Быстрые кнопки для URL
+        url_buttons_frame = tk.Frame(url_frame)
+        url_buttons_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        tk.Button(url_buttons_frame, text="localhost:5173", 
+                  command=lambda: self.url_var.set("http://localhost:5173"),
+                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
+        tk.Button(url_buttons_frame, text="localhost:3000", 
+                  command=lambda: self.url_var.set("http://localhost:3000"),
+                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
+        tk.Button(url_buttons_frame, text="localhost:80", 
+                  command=lambda: self.url_var.set("http://localhost"),
+                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
+        
+        # === Монитор секция ===
+        monitor_frame = tk.LabelFrame(self.root, text="Монитор", font=("Segoe UI", 11))
+        monitor_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        saved_monitor = self.config.get("monitor", 1)
+        if saved_monitor >= len(self.monitors):
+            saved_monitor = 0
+        
+        self.monitor_var = tk.IntVar(value=saved_monitor)
+        
+        for i, mon in enumerate(self.monitors):
+            primary_text = " ★" if mon.get('is_primary') else ""
+            text = f"Монитор {i + 1}: {mon['width']}x{mon['height']}{primary_text} ({mon['name']})"
+            
+            rb = tk.Radiobutton(
+                monitor_frame, 
+                text=text,
+                variable=self.monitor_var,
+                value=i,
+                font=("Segoe UI", 10),
+                anchor="w",
+                padx=10
+            )
+            rb.pack(fill=tk.X, pady=3)
+        
+        # === Кнопки ===
+        btn_frame = tk.Frame(self.root)
+        btn_frame.pack(pady=15)
+        
+        start_btn = tk.Button(
+            btn_frame, 
+            text="▶ Запустить",
+            command=self._on_start,
+            font=("Segoe UI", 12, "bold"),
+            width=14,
+            height=2,
+            bg="#2E7D32",
+            fg="white"
+        )
+        start_btn.pack(side=tk.LEFT, padx=10)
+        
+        cancel_btn = tk.Button(
+            btn_frame,
+            text="Отмена",
+            command=self._on_cancel,
+            font=("Segoe UI", 11),
+            width=12,
+            height=2
+        )
+        cancel_btn.pack(side=tk.LEFT, padx=10)
+    
+    def _on_start(self):
+        url = self.url_var.get().strip()
+        monitor = self.monitor_var.get()
+        
+        # Сохраняем настройки
+        self.config["url"] = url
+        self.config["monitor"] = monitor
+        save_kiosk_config(self.config)
+        
+        self.result = {"url": url, "monitor": monitor}
+        self.root.destroy()
+    
+    def _on_cancel(self):
+        self.result = None
+        self.root.destroy()
+    
+    def run(self):
+        self.root.mainloop()
+        return self.result
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--monitor', type=int, default=1, help='Monitor index (0=leftmost, 1=next, etc.)')
+    parser.add_argument('--monitor', type=int, default=None, help='Monitor index (0=leftmost, 1=next, etc.)')
+    parser.add_argument('--url', type=str, default=None, help='Dashboard URL')
     parser.add_argument('--geometry', type=str, default=None, help='Window geometry "x,y,width,height"')
+    parser.add_argument('--no-gui', action='store_true', help='Skip GUI launcher, use args/config directly')
     args = parser.parse_args()
     
-    url = "http://localhost:5173"
-    
-    # Используем monitor из аргументов как стартовый
-    # Если в системе мониторов 2, то индексы: 0 (левый), 1 (правый)
-    # По умолчанию --monitor 1, чтобы открываться на втором экране.
+    # Если переданы аргументы или --no-gui, пропускаем GUI
+    if args.no_gui or (args.url and args.monitor is not None):
+        config = load_kiosk_config()
+        url = args.url or config.get("url", "http://localhost:5173")
+        monitor = args.monitor if args.monitor is not None else config.get("monitor", 1)
+    else:
+        # Показываем GUI для выбора
+        launcher = KioskLauncher()
+        result = launcher.run()
+        
+        if result is None:
+            logger.info("User cancelled")
+            sys.exit(0)
+        
+        url = result["url"]
+        monitor = result["monitor"]
     
     geometry = None
     if args.geometry:
@@ -414,11 +577,23 @@ def main():
         except ValueError:
             logger.error(f"Could not parse geometry: {args.geometry}")
 
+    logger.info(f"Starting kiosk: URL={url}, Monitor={monitor}")
+    
     if not check_server_running(url, timeout=3):
         logger.error(f"Server at {url} is not running! Exiting.")
+        # Показываем сообщение об ошибке
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Ошибка", f"Сервер {url} не отвечает!\n\nУбедитесь что сервер запущен.")
+            root.destroy()
+        except:
+            pass
         sys.exit(1)
     
-    app = KioskDashboard(url=url, monitor_index=args.monitor, geometry=geometry)
+    app = KioskDashboard(url=url, monitor_index=monitor, geometry=geometry)
     app.run()
 
 if __name__ == "__main__":

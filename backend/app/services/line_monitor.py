@@ -301,11 +301,12 @@ class LineMonitorService:
         for bath_num in range(1, 40):
             bath_name = str(bath_num)
             try:
-                in_use = await opcua_service.read_node(f"ns=4;s=Bath[{bath_num}].InUse")
+                # ВАЖНО: Читаем из кэша, а не напрямую из OPC UA!
+                in_use = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].InUse")
                 if not in_use:
                     continue
                 
-                pallete = await opcua_service.read_node(f"ns=4;s=Bath[{bath_num}].Pallete")
+                pallete = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].Pallete")
                 if not pallete or pallete == 0:
                     continue
 
@@ -356,7 +357,8 @@ class LineMonitorService:
     async def _check_unload(self) -> None:
         """Check Bath[34] for unload events."""
         try:
-            pallete = await opcua_service.read_node(f"ns=4;s=Bath[{CONTROL_BATH}].Pallete")
+            # ВАЖНО: Читаем из кэша, а не напрямую из OPC UA!
+            pallete = opcua_service.get_value(f"ns=4;s=Bath[{CONTROL_BATH}].Pallete")
             current_pallete = int(pallete) if pallete and pallete > 0 else 0
             
             # First poll - just initialize
@@ -426,9 +428,18 @@ class LineMonitorService:
             # Cache event (deque автоматически удаляет старые)
             self._unload_events.append(event)
             
-            # Broadcast via WebSocket
+            # Broadcast via WebSocket с retry для надёжности
             message = WebSocketMessage(type="unload_event", payload=event, timestamp=now)
-            await websocket_manager.broadcast(message)
+            
+            # Пробуем отправить до 3 раз с небольшой задержкой
+            for attempt in range(3):
+                sent = await websocket_manager.broadcast(message)
+                if sent > 0:
+                    logger.info(f"[Line Monitor] Unload broadcast OK: Hanger {hanger_id}, sent to {sent} clients")
+                    break
+                elif websocket_manager.connection_count > 0:
+                    logger.warning(f"[Line Monitor] Unload broadcast attempt {attempt+1} failed, retrying...")
+                    await asyncio.sleep(0.1)
             
             logger.info(f"[Line Monitor] Unload recorded: Hanger {hanger_id} at {now.strftime('%H:%M:%S')}")
         
