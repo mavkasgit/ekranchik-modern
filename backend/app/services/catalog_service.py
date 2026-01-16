@@ -4,6 +4,7 @@ Catalog Service - handles profile search, CRUD operations, and photo management.
 import io
 import os
 import uuid
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional, List, Tuple
@@ -459,6 +460,10 @@ class CatalogService:
         images_dir = settings.images_path
         images_dir.mkdir(parents=True, exist_ok=True)
         
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[upload_photo] images_dir: {images_dir}, exists: {images_dir.exists()}, absolute: {images_dir.absolute()}")
+        
         # Generate safe filename
         # Use profile name directly (keep original format: name.jpg, name-thumb.jpg)
         # safe_filename handles transliteration for Latin-only names
@@ -471,9 +476,13 @@ class CatalogService:
         full_path = images_dir / full_filename
         thumb_path = images_dir / thumb_filename
         
+        logger.info(f"[upload_photo] Saving to full_path: {full_path.absolute()}, thumb_path: {thumb_path.absolute()}")
+        
         # Save full-size image
         with open(full_path, 'wb') as f:
             f.write(image_data)
+        
+        logger.info(f"[upload_photo] Full image saved, size: {full_path.stat().st_size if full_path.exists() else 'NOT FOUND'}")
         
         # Generate or save thumbnail
         try:
@@ -589,6 +598,7 @@ class CatalogService:
                 raise ValueError(f"Profile '{profile_name}' not found")
             
             profile.photo_thumb = rel_thumb
+            profile.updated_at = datetime.now(timezone.utc)  # Force update timestamp
             await sess.flush()
         
         if session:

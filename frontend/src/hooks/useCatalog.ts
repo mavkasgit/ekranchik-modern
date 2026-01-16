@@ -15,6 +15,7 @@ export function useCatalogAll() {
   return useQuery({
     queryKey: ['catalog', 'all'],
     queryFn: () => catalogApi.getAll(),
+    staleTime: 30000, // 30 seconds - prevent unnecessary refetches
   })
 }
 
@@ -67,7 +68,8 @@ export function useUploadPhoto() {
     mutationFn: ({ name, file, thumbnail }: { name: string; file: File; thumbnail?: File }) => 
       catalogApi.uploadPhoto(name, file, thumbnail),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['catalog'] })
+      // Force refetch and reset cache with timestamp
+      queryClient.resetQueries({ queryKey: ['catalog'] })
     },
   })
 }
@@ -79,7 +81,8 @@ export function useUpdateThumbnail() {
     mutationFn: ({ name, thumbnail }: { name: string; thumbnail: File }) => 
       catalogApi.updateThumbnail(name, thumbnail),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['catalog'] })
+      // Force refetch and reset cache with timestamp
+      queryClient.resetQueries({ queryKey: ['catalog'] })
     },
   })
 }

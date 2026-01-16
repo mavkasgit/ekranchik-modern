@@ -66,7 +66,9 @@ const STORAGE_KEYS = {
 function getPhotoUrl(path: string | null, cacheBuster?: string | number): string | null {
   if (!path) return null
   const base = path.startsWith('/') ? path : `/static/${path}`
-  return cacheBuster ? `${base}?v=${cacheBuster}` : base
+  // Use both updated_at and current timestamp to bust browser cache
+  const bust = cacheBuster ? `${cacheBuster}_${Date.now()}` : Date.now()
+  return `${base}?v=${bust}`
 }
 
 function ProfileCard({ 
@@ -193,6 +195,11 @@ function ProfileDialog({
   const [cropArea, setCropArea] = useState({ x: 0, y: 0, width: 0, height: 0 })
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
+  // Separate thumbnail editing mode
+  const [editingThumbnail, setEditingThumbnail] = useState(false)
+  const [separateThumbnailFile, setSeparateThumbnailFile] = useState<File | null>(null)
+  const [separateThumbnailUrl, setSeparateThumbnailUrl] = useState<string | null>(null)
+  const [thumbnailCropArea, setThumbnailCropArea] = useState({ x: 0, y: 0, width: 0, height: 0 })
 
   useEffect(() => {
     if (profile && (mode === 'edit' || mode === 'view')) {
@@ -214,7 +221,13 @@ function ProfileDialog({
     setPhotoMode(isEditMode ? 'crop' : 'view')
     // No crop area by default - user draws it
     setCropArea({ x: 0, y: 0, width: 0, height: 0 })
-  }, [profile, mode, open, isEditMode])
+    // Reset separate thumbnail
+    setSeparateThumbnailFile(null)
+    setSeparateThumbnailUrl(null)
+    setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+    setEditingThumbnail(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id, mode, open])
 
   // Load image dimensions when previewUrl changes
   useEffect(() => {
@@ -244,21 +257,90 @@ function ProfileDialog({
       setPreviewUrl(URL.createObjectURL(file))
       setPhotoMode('crop')
       setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      // Clear separate thumbnail when new main photo is uploaded
+      setSeparateThumbnailFile(null)
+      setSeparateThumbnailUrl(null)
     }
   }, [])
+
+  const handleThumbnailFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setSeparateThumbnailFile(file)
+      setSeparateThumbnailUrl(URL.createObjectURL(file))
+      setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      // Clear main photo crop area since we're using separate thumbnail
+      setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+    }
+  }, [])
+
+  // Paste from clipboard for thumbnail (called when in thumbnail editing mode)
+  const handleThumbnailPaste = useCallback((file: File) => {
+    setSeparateThumbnailFile(file)
+    setSeparateThumbnailUrl(URL.createObjectURL(file))
+    setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+    setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+  }, [])
+
+  // Crop thumbnail image
+  const cropThumbnailImage = useCallback(async (): Promise<File | null> => {
+    if (!separateThumbnailUrl) return null
+    
+    // If no crop area, return original file
+    if (thumbnailCropArea.width === 0 || thumbnailCropArea.height === 0) {
+      return separateThumbnailFile
+    }
+
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { resolve(separateThumbnailFile); return }
+
+      const image = new window.Image()
+      image.crossOrigin = 'anonymous'
+      image.onload = () => {
+        const cropX = (thumbnailCropArea.x / 100) * image.naturalWidth
+        const cropY = (thumbnailCropArea.y / 100) * image.naturalHeight
+        const cropW = (thumbnailCropArea.width / 100) * image.naturalWidth
+        const cropH = (thumbnailCropArea.height / 100) * image.naturalHeight
+
+        canvas.width = cropW
+        canvas.height = cropH
+        ctx.drawImage(image, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
+        
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(new File([blob], 'thumbnail.jpg', { type: 'image/jpeg' }))
+          } else {
+            resolve(separateThumbnailFile)
+          }
+        }, 'image/jpeg', 0.9)
+      }
+      image.onerror = () => resolve(separateThumbnailFile)
+      image.src = separateThumbnailUrl
+    })
+  }, [separateThumbnailUrl, thumbnailCropArea, separateThumbnailFile])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     const file = e.dataTransfer.files[0]
     if (file?.type.startsWith('image/')) {
-      setPendingFile(file)
-      setPreviewUrl(URL.createObjectURL(file))
-      setPhotoMode('crop')
-      setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      // If in thumbnail editing mode, set thumbnail
+      if (editingThumbnail) {
+        setSeparateThumbnailFile(file)
+        setSeparateThumbnailUrl(URL.createObjectURL(file))
+        setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+        setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      } else {
+        setPendingFile(file)
+        setPreviewUrl(URL.createObjectURL(file))
+        setPhotoMode('crop')
+        setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      }
     }
-  }, [])
+  }, [editingThumbnail])
 
-  // Handle paste
+  // Handle paste - respects editingThumbnail mode
   useEffect(() => {
     if (!open) return
     const handlePaste = (e: ClipboardEvent) => {
@@ -268,17 +350,22 @@ function ProfileDialog({
         if (item.type.startsWith('image/')) {
           const file = item.getAsFile()
           if (file) {
-            setPendingFile(file)
-            setPreviewUrl(URL.createObjectURL(file))
-            setPhotoMode('crop')
-            setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+            if (editingThumbnail) {
+              handleThumbnailPaste(file)
+            } else {
+              setPendingFile(file)
+              const url = URL.createObjectURL(file)
+              setPreviewUrl(url)
+              setPhotoMode('crop')
+              setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+            }
           }
         }
       }
     }
     window.addEventListener('paste', handlePaste)
     return () => window.removeEventListener('paste', handlePaste)
-  }, [open])
+  }, [open, editingThumbnail, handleThumbnailPaste])
 
   // Crop the image using canvas
   // cropArea stores percentages (0-100), convert to actual pixels
@@ -329,12 +416,31 @@ function ProfileDialog({
       let fullFile = pendingFile
       let thumbnailFile: File | undefined = undefined
 
-      // If crop area is drawn, create thumbnail from crop
-      const isCropped = cropArea.width > 0 && cropArea.height > 0
-      if (isCropped && previewUrl) {
-        const croppedFile = await cropImage()
-        if (croppedFile) {
-          thumbnailFile = croppedFile
+      // If previewUrl is a blob but pendingFile is null, recreate file from blob
+      if (!fullFile && previewUrl?.startsWith('blob:')) {
+        try {
+          const response = await fetch(previewUrl)
+          const blob = await response.blob()
+          fullFile = new File([blob], 'photo.jpg', { type: blob.type || 'image/jpeg' })
+        } catch (err) {
+          console.error('Failed to recreate file from blob:', err)
+        }
+      }
+
+      // Priority: separate thumbnail file (with optional crop) > crop from main image
+      if (separateThumbnailFile) {
+        const croppedThumb = await cropThumbnailImage()
+        if (croppedThumb) {
+          thumbnailFile = croppedThumb
+        }
+      } else {
+        // If crop area is drawn on main image, create thumbnail from crop
+        const isCropped = cropArea.width > 0 && cropArea.height > 0
+        if (isCropped && previewUrl) {
+          const croppedFile = await cropImage()
+          if (croppedFile) {
+            thumbnailFile = croppedFile
+          }
         }
       }
 
@@ -344,7 +450,7 @@ function ProfileDialog({
           // New photo uploaded - send both full and thumbnail
           await uploadPhoto.mutateAsync({ name: formData.name, file: fullFile, thumbnail: thumbnailFile })
         } else if (thumbnailFile && profile.photo_full) {
-          // Only crop changed on existing photo - update just thumbnail
+          // Only thumbnail changed on existing photo - update just thumbnail
           await updateThumbnail.mutateAsync({ name: formData.name, thumbnail: thumbnailFile })
         }
         toast({ title: 'Профиль обновлён' })
@@ -356,7 +462,8 @@ function ProfileDialog({
         toast({ title: 'Профиль создан' })
       }
       onOpenChange(false)
-    } catch {
+    } catch (err) {
+      console.error('[handleSubmit] Error:', err)
       toast({ title: 'Ошибка сохранения', variant: 'destructive' })
     }
   }
@@ -364,6 +471,11 @@ function ProfileDialog({
   const cancelCrop = () => {
     // Clear crop area - no custom thumbnail will be created
     setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+    // Also clear separate thumbnail
+    setSeparateThumbnailFile(null)
+    setSeparateThumbnailUrl(null)
+    setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+    setEditingThumbnail(false)
   }
 
   const dialogTitle = mode === 'create' ? 'Новый профиль' : mode === 'edit' ? 'Редактирование' : profile?.name || 'Просмотр'
@@ -423,16 +535,174 @@ function ProfileDialog({
     <>
       {/* Photo area - left side on desktop, top on mobile */}
       <div 
-        className={`bg-muted flex items-center justify-center overflow-auto relative ${
+        className={`bg-muted flex flex-col items-center justify-center overflow-auto relative ${
           isMobile ? 'h-[80vh] w-full' : 'flex-1'
         }`}
-        onDrop={isEditMode ? handleDrop : undefined}
+        onDrop={isEditMode && !editingThumbnail ? handleDrop : undefined}
         onDragOver={isEditMode ? (e) => e.preventDefault() : undefined}
       >
-        {previewUrl ? (
+        {/* Label for thumbnail editing mode */}
+        {editingThumbnail && isEditMode && (
+          <div className="absolute top-2 left-2 z-10 bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+            Редактирование превью
+          </div>
+        )}
+        
+        {/* Show thumbnail image when in thumbnail editing mode */}
+        {editingThumbnail && isEditMode ? (
+          separateThumbnailUrl ? (
+            <div 
+              className="relative w-full h-full flex items-center justify-center"
+              onDrop={(e) => {
+                e.preventDefault()
+                const file = e.dataTransfer.files[0]
+                if (file?.type.startsWith('image/')) {
+                  setSeparateThumbnailFile(file)
+                  setSeparateThumbnailUrl(URL.createObjectURL(file))
+                  setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+                  setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+                }
+              }}
+              onDragOver={(e) => e.preventDefault()}
+            >
+              <div 
+                className="relative select-none"
+                style={{ maxWidth: '100%', maxHeight: '100%' }}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  const container = e.currentTarget
+                  const rect = container.getBoundingClientRect()
+                  const startX = ((e.clientX - rect.left) / rect.width) * 100
+                  const startY = ((e.clientY - rect.top) / rect.height) * 100
+                  
+                  setThumbnailCropArea({ x: startX, y: startY, width: 0, height: 0 })
+                  
+                  const onMove = (moveE: MouseEvent) => {
+                    const currentX = ((moveE.clientX - rect.left) / rect.width) * 100
+                    const currentY = ((moveE.clientY - rect.top) / rect.height) * 100
+                    
+                    const newX = Math.min(startX, currentX)
+                    const newY = Math.min(startY, currentY)
+                    const newW = Math.abs(currentX - startX)
+                    const newH = Math.abs(currentY - startY)
+                    
+                    setThumbnailCropArea({
+                      x: Math.max(0, newX),
+                      y: Math.max(0, newY),
+                      width: Math.min(newW, 100 - Math.max(0, newX)),
+                      height: Math.min(newH, 100 - Math.max(0, newY)),
+                    })
+                  }
+                  const onUp = () => {
+                    window.removeEventListener('mousemove', onMove)
+                    window.removeEventListener('mouseup', onUp)
+                  }
+                  window.addEventListener('mousemove', onMove)
+                  window.addEventListener('mouseup', onUp)
+                }}
+              >
+                <img 
+                  src={separateThumbnailUrl} 
+                  alt="Thumbnail Preview" 
+                  className="max-w-full max-h-full object-contain pointer-events-none block"
+                  style={{ maxHeight: 'calc(80vh - 50px)' }}
+                  crossOrigin="anonymous"
+                />
+                {/* Crop overlay for thumbnail */}
+                {thumbnailCropArea.width > 0 && thumbnailCropArea.height > 0 && (
+                  <div 
+                    className="absolute border-2 border-blue-500 bg-blue-500/20 cursor-move shadow-lg"
+                    style={{
+                      left: `${thumbnailCropArea.x}%`,
+                      top: `${thumbnailCropArea.y}%`,
+                      width: `${thumbnailCropArea.width}%`,
+                      height: `${thumbnailCropArea.height}%`,
+                    }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      const startX = e.clientX
+                      const startY = e.clientY
+                      const startArea = { ...thumbnailCropArea }
+                      const container = e.currentTarget.parentElement
+                      if (!container) return
+
+                      const onMove = (moveE: MouseEvent) => {
+                        const rect = container.getBoundingClientRect()
+                        const dx = ((moveE.clientX - startX) / rect.width) * 100
+                        const dy = ((moveE.clientY - startY) / rect.height) * 100
+                        setThumbnailCropArea({
+                          ...startArea,
+                          x: Math.max(0, Math.min(100 - startArea.width, startArea.x + dx)),
+                          y: Math.max(0, Math.min(100 - startArea.height, startArea.y + dy)),
+                        })
+                      }
+                      const onUp = () => {
+                        window.removeEventListener('mousemove', onMove)
+                        window.removeEventListener('mouseup', onUp)
+                      }
+                      window.addEventListener('mousemove', onMove)
+                      window.addEventListener('mouseup', onUp)
+                    }}
+                  >
+                    <div 
+                      className="absolute bottom-0 right-0 w-4 h-4 bg-primary cursor-se-resize"
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        const startX = e.clientX
+                        const startY = e.clientY
+                        const startArea = { ...thumbnailCropArea }
+                        const container = e.currentTarget.parentElement?.parentElement
+                        if (!container) return
+
+                        const onMove = (moveE: MouseEvent) => {
+                          const rect = container.getBoundingClientRect()
+                          const dw = ((moveE.clientX - startX) / rect.width) * 100
+                          const dh = ((moveE.clientY - startY) / rect.height) * 100
+                          setThumbnailCropArea({
+                            ...startArea,
+                            width: Math.max(10, Math.min(100 - startArea.x, startArea.width + dw)),
+                            height: Math.max(10, Math.min(100 - startArea.y, startArea.height + dh)),
+                          })
+                        }
+                        const onUp = () => {
+                          window.removeEventListener('mousemove', onMove)
+                          window.removeEventListener('mouseup', onUp)
+                        }
+                        window.addEventListener('mousemove', onMove)
+                        window.addEventListener('mouseup', onUp)
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div 
+              className="text-center text-muted-foreground w-full h-full flex flex-col items-center justify-center"
+              onClick={() => document.getElementById('thumbnail-input')?.click()}
+              onDrop={(e) => {
+                e.preventDefault()
+                const file = e.dataTransfer.files[0]
+                if (file?.type.startsWith('image/')) {
+                  setSeparateThumbnailFile(file)
+                  setSeparateThumbnailUrl(URL.createObjectURL(file))
+                  setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+                  setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+                }
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              style={{ cursor: 'pointer' }}
+            >
+              <Upload className="w-16 h-16 mx-auto mb-4" />
+              <p className="text-lg px-4">{isMobile ? 'Нажмите для загрузки превью' : 'Нажмите, перетащите или вставьте (Ctrl+V) превью'}</p>
+            </div>
+          )
+        ) : previewUrl ? (
           <div 
             className="relative w-full h-full flex items-center justify-center select-none"
-            onMouseDown={isEditMode && photoMode === 'crop' ? (e) => {
+            onMouseDown={isEditMode && photoMode === 'crop' && !separateThumbnailUrl ? (e) => {
               e.preventDefault() // Prevent browser selection
               // Start drawing new crop area from click point
               const container = e.currentTarget
@@ -466,7 +736,7 @@ function ProfileDialog({
               window.addEventListener('mouseup', onUp)
             } : undefined}
             // Touch support for mobile crop
-            onTouchStart={isEditMode && photoMode === 'crop' ? (e) => {
+            onTouchStart={isEditMode && photoMode === 'crop' && !separateThumbnailUrl ? (e) => {
               e.preventDefault()
               const touch = e.touches[0]
               const container = e.currentTarget
@@ -508,8 +778,8 @@ function ProfileDialog({
                   className="max-w-full max-h-full object-contain pointer-events-none"
                   crossOrigin="anonymous"
                 />
-                {/* Crop overlay - only in edit mode */}
-                {isEditMode && photoMode === 'crop' && cropArea.width > 0 && cropArea.height > 0 && (
+                {/* Crop overlay - only in edit mode and when no separate thumbnail */}
+                {isEditMode && photoMode === 'crop' && !separateThumbnailUrl && cropArea.width > 0 && cropArea.height > 0 && (
                   <div 
                     className="absolute border-2 border-blue-500 bg-blue-500/20 cursor-move shadow-lg"
                     style={{
@@ -598,13 +868,22 @@ function ProfileDialog({
               </div>
             )}
             {isEditMode && (
-              <input 
-                id="photo-input"
-                type="file" 
-                accept="image/*" 
-                className="hidden" 
-                onChange={handleFileChange} 
-              />
+              <>
+                <input 
+                  id="photo-input"
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={handleFileChange} 
+                />
+                <input 
+                  id="thumbnail-input"
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={handleThumbnailFileChange} 
+                />
+              </>
             )}
           </div>
 
@@ -689,16 +968,43 @@ function ProfileDialog({
                   {/* Photo buttons */}
                   {previewUrl && (
                     <div className="space-y-2 pt-2 border-t">
-                      <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => document.getElementById('photo-input')?.click()}>
-                        Заменить фото
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" className="w-full" onClick={cancelCrop}>
-                        Сбросить превью
-                      </Button>
-                      {!isMobile && (
-                        <p className="text-xs text-muted-foreground text-center">
-                          Перетащите синюю область для превью
-                        </p>
+                      {editingThumbnail ? (
+                        <>
+                          <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => setEditingThumbnail(false)}>
+                            ← Вернуться к фото
+                          </Button>
+                          {separateThumbnailUrl && (
+                            <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => {
+                              setSeparateThumbnailFile(null)
+                              setSeparateThumbnailUrl(null)
+                              setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+                            }}>
+                              Очистить превью
+                            </Button>
+                          )}
+                          <p className="text-xs text-muted-foreground text-center">
+                            {separateThumbnailUrl 
+                              ? 'Выделите область для кропа или оставьте как есть' 
+                              : 'Перетащите, вставьте (Ctrl+V) или нажмите для загрузки'}
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => document.getElementById('photo-input')?.click()}>
+                            Заменить фото
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => setEditingThumbnail(true)}>
+                            {separateThumbnailUrl ? 'Редактировать превью' : 'Загрузить превью отдельно'}
+                          </Button>
+                          <Button type="button" variant="outline" size="sm" className="w-full" onClick={cancelCrop}>
+                            Сбросить превью
+                          </Button>
+                          {!isMobile && !separateThumbnailUrl && (
+                            <p className="text-xs text-muted-foreground text-center">
+                              Можно выделить область на фото или загрузить превью отдельно
+                            </p>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

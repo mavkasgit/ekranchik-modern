@@ -74,6 +74,10 @@ async def upload_photo(
     Supported formats: JPEG, PNG, GIF, WebP.
     Max size: 10MB.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[upload_photo API] name={name}, file={file.filename}, thumbnail={thumbnail.filename if thumbnail else None}")
+    
     # Validate file type
     if not file.content_type or not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File must be an image")
@@ -82,10 +86,13 @@ async def upload_photo(
     full_content = await file.read()
     thumb_content = None
     
+    logger.info(f"[upload_photo API] Read {len(full_content)} bytes from file")
+    
     if thumbnail:
         if not thumbnail.content_type or not thumbnail.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="Thumbnail must be an image")
         thumb_content = await thumbnail.read()
+        logger.info(f"[upload_photo API] Read {len(thumb_content)} bytes from thumbnail")
     
     try:
         thumb_path, full_path = await catalog_service.upload_photo(
@@ -95,12 +102,15 @@ async def upload_photo(
             thumbnail_data=thumb_content
         )
         
+        logger.info(f"[upload_photo API] Success! thumb={thumb_path}, full={full_path}")
+        
         return {
             "success": True,
             "thumbnail": thumb_path,
             "full": full_path
         }
     except ValueError as e:
+        logger.error(f"[upload_photo API] Error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
