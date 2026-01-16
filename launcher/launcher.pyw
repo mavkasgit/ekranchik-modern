@@ -65,7 +65,7 @@ else:
 
 BACKEND_CMD = [PYTHON_EXE, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 FRONTEND_CMD = ["npm", "run", "dev"]
-KIOSK_CMD = [PYTHON_EXE, "dashboard_kiosk.py"]
+KIOSK_CMD = [PYTHON_EXE, "dashboard_kiosk.pyw", "--no-gui"]
 
 # Настройки браузера в трее
 CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -986,10 +986,10 @@ if HAS_GUI:
             killed_5173 = kill_process_on_port(5173)
             if killed_8000:
                 self.pages["backend"].log.append(f"[SYSTEM] Убиты процессы на порту 8000: {killed_8000}")
-            if killed_80:
-                self.pages["frontend"].log.append(f"[SYSTEM] Убиты процессы на порту 80: {killed_80}")
+            if killed_5173:
+                self.pages["frontend"].log.append(f"[SYSTEM] Убиты процессы на порту 5173: {killed_5173}")
             
-            if killed_8000 or killed_80:
+            if killed_8000 or killed_5173:
                 time.sleep(1)  # Даём время освободить порты
             
             # Запускаем бэкенд
@@ -1015,8 +1015,8 @@ if HAS_GUI:
                 self.pages[self.current_page].log.append("[SYSTEM] Киоск уже запущен")
                 return
             
-            # Полный путь к dashboard_kiosk.py
-            kiosk_script = LAUNCHER_DIR / "dashboard_kiosk.py"
+            # Полный путь к dashboard_kiosk.pyw
+            kiosk_script = LAUNCHER_DIR / "dashboard_kiosk.pyw"
             
             if not kiosk_script.exists():
                 self.pages[self.current_page].log.append(f"[ERROR] Файл не найден: {kiosk_script}")
@@ -1278,8 +1278,12 @@ if HAS_GUI:
             self.root.destroy()
         
         def run(self):
-            # Показываем диалог автозапуска
-            self.root.after(500, self._show_autostart_dialog)
+            # Сразу сворачиваем в трей (без показа окна)
+            self.root.withdraw()
+            
+            # Автоматически запускаем всё при старте
+            self._kiosk_monitor = 1 if len(get_monitors()) > 1 else 0  # Второй монитор если есть
+            self.root.after(100, self._start_all)
             self.root.mainloop()
         
         def _show_autostart_dialog(self):
