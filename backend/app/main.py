@@ -15,6 +15,7 @@ from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
 from app.services.excel_watcher import excel_watcher
 from app.services.line_monitor import line_monitor
+from app.services.opcua_service import opcua_service
 from app.services.websocket_manager import websocket_manager
 
 # Configure logging
@@ -53,12 +54,16 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("[STARTUP] Excel path not configured, ExcelWatcher not started")
     
-    # Line Monitor - unified OPC UA monitoring (replaces opcua_poller)
+    # OPC UA Service - пакетное чтение с защитой от зомби-сессий
     if settings.OPCUA_ENABLED:
+        await opcua_service.start()
+        logger.info("[STARTUP] OPC UA Service started")
+        
+        # Line Monitor - unified OPC UA monitoring
         await line_monitor.start()
         logger.info("[STARTUP] LineMonitor started")
     else:
-        logger.info("[STARTUP] LineMonitor disabled (OPCUA_ENABLED=False)")
+        logger.info("[STARTUP] OPC UA disabled (OPCUA_ENABLED=False)")
     
     yield
     
@@ -69,6 +74,8 @@ async def lifespan(app: FastAPI):
     excel_watcher.stop()
     if line_monitor.is_running:
         await line_monitor.stop()
+    if opcua_service.is_connected:
+        await opcua_service.stop()
     await websocket_manager.close_all()
     
     logger.info("[SHUTDOWN] All services stopped")

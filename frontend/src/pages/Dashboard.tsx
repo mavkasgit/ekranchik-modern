@@ -807,6 +807,9 @@ export default function Dashboard() {
       if (msg.type === 'unload_event') {
         // New unload event - refetch matched data
         refetchMatched()
+      } else if (msg.type === 'line_update') {
+        // Line update - данные обновляются каждую секунду
+        // Можно использовать для обновления статуса OPC UA
       }
     }
   })

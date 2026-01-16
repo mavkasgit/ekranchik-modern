@@ -1,0 +1,5 @@
+{
+    "kiosk_monitor": 0,
+    "frontend_url": "http://localhost:80",
+    "backend_port": 8000
+}

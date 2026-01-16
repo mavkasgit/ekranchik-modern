@@ -1,14 +1,15 @@
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, Play, Pause, AlertCircle } from 'lucide-react'
+import { RefreshCw, AlertCircle, Wifi, WifiOff } from 'lucide-react'
+import { useRealtimeData } from '@/hooks/useRealtimeData'
 
 interface BathData {
   bath_number: number
   in_use: boolean
-  free: boolean
+  free?: boolean
   pallete: number
   in_time: number
   out_time: number
-  d_time: number
+  d_time?: number
 }
 
 interface LineData {
@@ -16,9 +17,11 @@ interface LineData {
   power_supply?: {
     current: number
     voltage: number
-    continuous_run_time: number
+    continuous_run_time?: number
   }
   timestamp: string
+  opcua_connected?: boolean
+  active_hangers?: number
 }
 
 interface CycleEvent {
@@ -43,8 +46,31 @@ export function LineVisualization() {
   const [cycles, setCycles] = useState<CycleEvent[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [autoRefresh, setAutoRefresh] = useState(true)
-  const pollInterval = 10 // Фиксированный интервал 10 секунд (как на бэкенде)
+
+  // WebSocket для реалтайм обновлений
+  const { isConnected } = useRealtimeData({
+    onMessage: (msg) => {
+      if (msg.type === 'line_update' && msg.payload) {
+        const payload = msg.payload as {
+          baths?: BathData[]
+          timestamp?: string
+          opcua_connected?: boolean
+          active_hangers?: number
+        }
+        // Обновляем данные из WebSocket
+        setLineData({
+          baths: payload.baths || [],
+          timestamp: payload.timestamp || new Date().toISOString(),
+          opcua_connected: payload.opcua_connected,
+          active_hangers: payload.active_hangers,
+        })
+        setError(null)
+      } else if (msg.type === 'unload_event') {
+        // Обновляем циклы при выгрузке
+        fetchCycles()
+      }
+    }
+  })
 
   const fetchLineData = useCallback(async () => {
     setLoading(true)
@@ -73,18 +99,11 @@ export function LineVisualization() {
     }
   }, [])
 
+  // Начальная загрузка
   useEffect(() => {
     fetchLineData()
     fetchCycles()
-    
-    if (autoRefresh) {
-      const interval = setInterval(() => {
-        fetchLineData()
-        fetchCycles()
-      }, pollInterval * 1000)
-      return () => clearInterval(interval)
-    }
-  }, [autoRefresh, pollInterval, fetchLineData, fetchCycles])
+  }, [fetchLineData, fetchCycles])
 
   const getBathData = (bathNumber: number): BathData | undefined => {
     return lineData?.baths.find(b => b.bath_number === bathNumber)
@@ -175,15 +194,15 @@ export function LineVisualization() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setAutoRefresh(!autoRefresh)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
-              autoRefresh ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'
-            }`}
-          >
-            {autoRefresh ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-            {autoRefresh ? 'Live (10s)' : 'Paused'}
-          </button>
+          {/* WebSocket статус */}
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${
+            isConnected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          }`}>
+            {isConnected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+            <span className="text-sm font-medium">
+              {isConnected ? 'Live (1s)' : 'Offline'}
+            </span>
+          </div>
           <button
             onClick={fetchLineData}
             disabled={loading}
@@ -210,7 +229,7 @@ export function LineVisualization() {
         <div className="bg-green-50 rounded-lg p-4">
           <div className="text-sm text-green-600 font-medium">Pallets in Line</div>
           <div className="text-2xl font-bold text-green-900">
-            {lineData?.baths.filter(b => b.pallete > 0).length || 0}
+            {lineData?.active_hangers ?? lineData?.baths.filter(b => b.pallete > 0).length ?? 0}
           </div>
         </div>
         <div className="bg-purple-50 rounded-lg p-4">

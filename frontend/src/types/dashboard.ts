@@ -50,7 +50,7 @@ export interface FileStatus {
 }
 
 export interface WebSocketMessage {
-  type: 'data_update' | 'unload_event' | 'status' | 'error' | 'ping' | 'pong' | 'opcua_status' | 'heartbeat'
+  type: 'data_update' | 'unload_event' | 'status' | 'error' | 'ping' | 'pong' | 'opcua_status' | 'heartbeat' | 'line_update'
   payload: Record<string, unknown>
   timestamp: string
 }

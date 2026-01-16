@@ -53,9 +53,9 @@ class LineMonitorService:
     def __init__(self):
         self._running = False
         self._task: Optional[asyncio.Task] = None
-        self._poll_interval = 10  # seconds
-        self._heartbeat_interval = 10  # seconds - отправка статуса на фронтенд
-        self._health_check_interval = 60  # seconds - проверка здоровья OPC UA соединения
+        self._poll_interval = 1  # seconds - обновление каждую секунду
+        self._heartbeat_interval = 1  # seconds - отправка статуса на фронтенд каждую секунду
+        self._health_check_interval = 30  # seconds - проверка здоровья OPC UA соединения
         self._last_heartbeat = datetime.now()
         self._last_health_check = datetime.now()
         self._consecutive_errors = 0
@@ -155,11 +155,28 @@ class LineMonitorService:
             await asyncio.sleep(self._poll_interval)
     
     async def _send_heartbeat(self) -> None:
-        """Send heartbeat with current status to all clients."""
+        """Send heartbeat with current status and line data to all clients."""
         try:
             active_hangers = self.get_active_hangers()
+            
+            # Собираем данные о ваннах для визуализации
+            baths_data = []
+            for bath_num in range(1, 40):
+                in_use = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].InUse")
+                pallete = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].Pallete")
+                in_time = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].InTime")
+                out_time = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].OutTime")
+                
+                baths_data.append({
+                    "bath_number": bath_num,
+                    "in_use": bool(in_use) if in_use is not None else False,
+                    "pallete": int(pallete) if pallete else 0,
+                    "in_time": float(in_time) if in_time else 0,
+                    "out_time": float(out_time) if out_time else 0,
+                })
+            
             heartbeat = WebSocketMessage(
-                type="heartbeat",
+                type="line_update",
                 payload={
                     "opcua_connected": opcua_service.is_connected,
                     "opcua_state": opcua_service.state.value,
@@ -167,6 +184,8 @@ class LineMonitorService:
                     "total_tracked": len(self._hangers),
                     "recent_unloads": len(self._unload_events),
                     "stats": opcua_service.stats,
+                    "baths": baths_data,
+                    "timestamp": datetime.now().isoformat(),
                 },
                 timestamp=datetime.now()
             )

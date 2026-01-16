@@ -1,13 +1,16 @@
 /**
  * Интервалы обновления данных (в миллисекундах).
  * 
- * Это fallback интервалы - основное обновление идёт через WebSocket мгновенно.
- * Эти интервалы используются только если WebSocket не работает.
+ * Основное обновление идёт через WebSocket каждую секунду.
+ * Эти интервалы используются только как fallback если WebSocket не работает.
  */
 
 // Быстрые проверки (критичные для UX)
 export const FILE_STATUS_INTERVAL = 5000      // 5 сек - проверка изменений Excel
-export const WS_RECONNECT_INTERVAL = 5000     // 5 сек - переподключение WebSocket
+export const WS_RECONNECT_INTERVAL = 3000     // 3 сек - переподключение WebSocket
 
-// Основные данные (fallback)
-export const DATA_REFRESH_INTERVAL = 30000    // 30 сек - все остальные данные
+// Основные данные (fallback когда WS не работает)
+export const DATA_REFRESH_INTERVAL = 10000    // 10 сек - fallback для данных
+
+// WebSocket обновления (реальные интервалы на бэкенде)
+export const WS_LINE_UPDATE_INTERVAL = 1000   // 1 сек - обновление линии через WS
