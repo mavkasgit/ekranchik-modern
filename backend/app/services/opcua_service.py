@@ -99,8 +99,9 @@ class OPCUAService:
                 self._client = None # Просто отбрасываем старый клиент
                 
                 client = Client(settings.OPCUA_ENDPOINT, timeout=10)
-                # Устанавливаем параметры сессии для долгого соединения
-                client.session_timeout = 3600000  # 1 час в миллисекундах
+                # Настройки таймаутов для Omron, как предложил пользователь
+                client.session_timeout = 30000  # 30 секунд
+                client.secure_channel_timeout = 30000 # 30 секунд
                 await client.connect()
                 
                 self._client = client
@@ -134,8 +135,16 @@ class OPCUAService:
             await root.get_children()
             return True
         except Exception as e:
-            error_str = str(e).lower()
             logger.warning(f"[OPC UA] Health check failed ({type(e).__name__}), reconnecting: {e}")
+            if self._client:
+                try:
+                    # Даём 2 секунды на корректное отключение, чтобы убить watchdog
+                    await asyncio.wait_for(self._client.disconnect(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.warning("[OPC UA] Disconnect timed out during health check.")
+                except Exception as ex:
+                    logger.warning(f"[OPC UA] Error during background disconnect: {ex}")
+
             self._connected = False
             self._state = OPCUAState.DISCONNECTED
             self._client = None
@@ -274,6 +283,16 @@ class OPCUAService:
                     logger.warning(f"[OPC UA] Request timeout, reconnecting")
                 else:
                     logger.warning(f"[OPC UA] Connection lost, will reconnect: {e}")
+                
+                # Попытка корректного отключения с таймаутом
+                if self._client:
+                    try:
+                        await asyncio.wait_for(self._client.disconnect(), timeout=2.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("[OPC UA] Disconnect timed out on connection loss.")
+                    except Exception as ex:
+                        logger.warning(f"[OPC UA] Error during background disconnect: {ex}")
+
                 # Сбрасываем состояние соединения для переподключения
                 self._connected = False
                 self._state = OPCUAState.DISCONNECTED
