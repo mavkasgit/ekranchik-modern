@@ -55,8 +55,6 @@ class OPCUAService:
         self._last_update = datetime.min
         
         # --- НАСТРОЙКИ ---
-        # 15 сек - чтобы Omron быстро убивал зависшие сессии
-        self._session_timeout = 15000
         # 1.0 сек - частота обновления данных (1 раз в секунду)
         self._poll_interval = 1.0
         # Размер пачки для чтения (безопасно для Omron NX)
@@ -268,24 +266,34 @@ class OPCUAService:
         logger.info(f"[OPC UA] Worker started, URL: {self._url}")
         
         while self._running:
-            # client = None # This is no longer needed as self._client is used
             try:
                 # 1. Создаем клиента
                 logger.debug(f"[OPC UA] Creating client for {self._url}")
-                self._client = Client(url=self._url, timeout=10)  # 10 сек таймаут на операции
-                # Важно: короткий таймаут сессии для борьбы с "зомби"
-                self._client.session_timeout = self._session_timeout
+                self._client = Client(url=self._url, timeout=10)
+                
+                # === ВАЖНЫЕ НАСТРОЙКИ ДЛЯ OMRON ===
+                # Таймаут сессии 1 час - если опрашиваем постоянно, она не умрет
+                self._client.session_timeout = 3600000
+                
+                # ОТКЛЮЧАЕМ ВСТРОЕННЫЙ WATCHDOG/KEEP-ALIVE
+                # 0 = не слать пустые пакеты фоном
+                # Наш опрос (_poll_data_batched) держит сессию живой
+                self._client.keepalive_interval = 0
+                
+                # Увеличиваем таймаут канала безопасности (реже обновляет ключи)
+                self._client.secure_channel_timeout = 3600000
+                # ===================================
                 
                 logger.info(f"[OPC UA] Подключение к {self._url}...")
                 self._state = OPCUAState.CONNECTING
                 
-                # 2. Подключаемся с таймаутом
+                # 2. Подключаемся с таймаутом (чуть больше времени на старт)
                 try:
-                    await asyncio.wait_for(self._client.connect(), timeout=15.0)
+                    await asyncio.wait_for(self._client.connect(), timeout=20.0)
                 except asyncio.TimeoutError:
-                    logger.error("[OPC UA] Таймаут подключения (15 сек)")
+                    logger.error("[OPC UA] Таймаут подключения (20 сек)")
                     self._stats['errors'] += 1
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(10)  # Даем ПЛК время сбросить слот
                     continue
                 
                 logger.info("[OPC UA] Успешно подключено! Начинаем опрос.")
@@ -306,26 +314,35 @@ class OPCUAService:
                         sleep_time = max(0, self._poll_interval - elapsed)
                         await asyncio.sleep(sleep_time)
                 finally:
-                    # Гарантируем отключение
+                    # Гарантируем корректное отключение
                     try:
-                        await asyncio.wait_for(self._client.disconnect(), timeout=5.0)
+                        await asyncio.wait_for(self._client.disconnect(), timeout=2.0)
                     except:
                         pass
+            
+            except BadSessionIdInvalid as e:
+                # Сессия "испортилась" - ПЛК её убил
+                self._connected = False
+                self._state = OPCUAState.ERROR
+                self._stats['errors'] += 1
+                logger.error(f"[OPC UA] BadSessionIdInvalid: {e}. Ждем 10 сек очистки слота на ПЛК...")
+                # ВАЖНО ДЛЯ OMRON: даем время сбросить зомби-сессию
+                await asyncio.sleep(10)
             
             except BadTooManySessions:
                 self._connected = False
                 self._state = OPCUAState.ERROR
                 self._stats['errors'] += 1
                 logger.error("[OPC UA] Ошибка: Нет свободных слотов! Ждем 20 сек очистки...")
-                # Ждем дольше таймаута, чтобы контроллер сбросил старую сессию
                 await asyncio.sleep(20)
             
             except (OSError, asyncio.TimeoutError) as e:
                 self._connected = False
                 self._state = OPCUAState.ERROR
                 self._stats['errors'] += 1
-                logger.warning(f"[OPC UA] Ошибка сети: {type(e).__name__}: {e}. Реконнект через 5 сек...")
-                await asyncio.sleep(5)
+                logger.warning(f"[OPC UA] Ошибка сети: {type(e).__name__}: {e}. Ждем 10 сек...")
+                # Omron держит порт занятым (TIME_WAIT), нужна пауза
+                await asyncio.sleep(10)
             
             except Exception as e:
                 self._connected = False
@@ -338,7 +355,6 @@ class OPCUAService:
                 self._connected = False
                 self._state = OPCUAState.DISCONNECTED
                 self._last_update = datetime.min
-                # Ensure self._client is None after disconnection
                 self._client = None
                 logger.debug("[OPC UA] Connection closed, will retry...")
     
