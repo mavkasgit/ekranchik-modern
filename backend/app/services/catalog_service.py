@@ -832,6 +832,7 @@ class CatalogService:
                     'thumb': profile.photo_thumb,
                     'full': profile.photo_full,
                     'name': profile.name,
+                    'updated_at': profile.updated_at.isoformat() if profile.updated_at else None,
                 }
                 
                 # Exact (lowercase)

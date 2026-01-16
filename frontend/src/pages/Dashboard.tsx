@@ -253,10 +253,11 @@ function PhotoModal({
 }
 
 // Helper to build photo URL (paths in DB already include /static/)
-function getPhotoUrl(path: string | null | undefined): string | null {
+function getPhotoUrl(path: string | null | undefined, cacheBuster?: string): string | null {
   if (!path) return null
-  // Paths in DB are like "/static/images/..." or "images/..."
-  return path.startsWith('/') ? path : `/${path}`
+  // Paths in DB can be like "/static/images/..." or "images/..."
+  const base = path.startsWith('/') ? path : `/static/${path}`
+  return cacheBuster ? `${base}?v=${cacheBuster}` : base
 }
 
 // Photo cell - wrapping layout, max 700px width, photos wrap to new rows
@@ -321,8 +322,8 @@ function ProfilePhoto({
   profile: ProfileInfo
   onPhotoClick: (url: string, name: string) => void
 }) {
-  const thumbUrl = getPhotoUrl(profile.photo_thumb)
-  const fullUrl = getPhotoUrl(profile.photo_full || profile.photo_thumb)
+  const thumbUrl = getPhotoUrl(profile.photo_thumb, profile.updated_at)
+  const fullUrl = getPhotoUrl(profile.photo_full || profile.photo_thumb, profile.updated_at)
   const hasPhoto = profile.has_photo && thumbUrl
 
   return (

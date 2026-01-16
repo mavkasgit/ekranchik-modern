@@ -56,6 +56,7 @@ class ProfileInfo(BaseModel):
     has_photo: bool = False
     photo_thumb: Optional[str] = None
     photo_full: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class ProfileSearchResult(ProfileResponse):

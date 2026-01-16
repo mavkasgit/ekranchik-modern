@@ -116,7 +116,8 @@ async def get_dashboard(
                             has_photo=bool(photo_info.get('thumb')),
                             photo_thumb=photo_info.get('thumb'),
                             photo_full=photo_info.get('full'),
-                            processing=processing
+                            processing=processing,
+                            updated_at=photo_info.get('updated_at')
                         ))
             
             hanger = HangerData(
@@ -168,7 +169,8 @@ async def get_dashboard(
                             has_photo=bool(photo_info.get('thumb')),
                             photo_thumb=photo_info.get('thumb'),
                             photo_full=photo_info.get('full'),
-                            processing=processing
+                            processing=processing,
+                            updated_at=photo_info.get('updated_at')
                         ))
             
             hanger = HangerData(
@@ -452,7 +454,8 @@ async def get_matched_unload_events(
                                 has_photo=bool(photo_info.get('thumb')),
                                 photo_thumb=photo_info.get('thumb'),
                                 photo_full=photo_info.get('full'),
-                                processing=processing
+                                processing=processing,
+                                updated_at=photo_info.get('updated_at')
                             ))
             
             matched.append(MatchedUnloadEvent(
@@ -643,7 +646,8 @@ async def get_opcua_matched_unload_events(
                                 has_photo=bool(photo_info.get('thumb')),
                                 photo_thumb=photo_info.get('thumb'),
                                 photo_full=photo_info.get('full'),
-                                processing=processing
+                                processing=processing,
+                                updated_at=photo_info.get('updated_at')
                             ))
             
             matched.append(MatchedUnloadEvent(

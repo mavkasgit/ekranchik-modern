@@ -5,6 +5,7 @@ export interface ProfileInfo {
   has_photo: boolean
   photo_thumb?: string
   photo_full?: string
+  updated_at?: string
 }
 
 export interface HangerData {
