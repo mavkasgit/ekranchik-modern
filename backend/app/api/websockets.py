@@ -3,6 +3,7 @@ WebSocket API endpoint for real-time updates.
 """
 from datetime import datetime
 import logging
+import asyncio
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -26,14 +27,18 @@ async def websocket_endpoint(websocket: WebSocket):
     Protocol:
     - Server sends JSON messages with type, data, timestamp
     - Client can send ping messages to keep connection alive
+    - Server sends heartbeat every 30 seconds to keep connection alive
     
     Features:
     - Handles multiple concurrent connections
     - Exponential backoff for reconnection
     - Connection timeout handling
     - Graceful disconnection
+    - Heartbeat to prevent connection drops
     """
     client_id = None
+    heartbeat_task = None
+    
     try:
         await websocket_manager.connect(websocket)
         client_id = id(websocket)
@@ -51,6 +56,24 @@ async def websocket_endpoint(websocket: WebSocket):
             timestamp=datetime.now()
         )
         await websocket_manager.send_personal(websocket, welcome)
+        
+        # Start heartbeat task
+        async def send_heartbeat():
+            """Send heartbeat every 30 seconds to keep connection alive"""
+            try:
+                while True:
+                    await asyncio.sleep(30)
+                    if websocket.client_state.name == 'CONNECTED':
+                        heartbeat = WebSocketMessage(
+                            type="heartbeat",
+                            payload={"timestamp": datetime.now().isoformat()},
+                            timestamp=datetime.now()
+                        )
+                        await websocket_manager.send_personal(websocket, heartbeat)
+            except Exception as e:
+                logger.debug(f"[WS] Heartbeat error for client {client_id}: {e}")
+        
+        heartbeat_task = asyncio.create_task(send_heartbeat())
         
         try:
             while True:
@@ -79,3 +102,12 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=1011, reason="Internal server error")
         except Exception:
             pass
+    
+    finally:
+        # Cancel heartbeat task
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
