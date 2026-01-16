@@ -1,5 +1,5 @@
 """
-autostart.pyw - Надёжный автозапуск киоска с retry и логированием.
+autostart.pyw - Автозапуск Backend + Frontend (без киоска).
 Добавить в автозагрузку Windows или Планировщик задач.
 """
 import subprocess
@@ -11,15 +11,17 @@ from datetime import datetime
 
 # === Пути ===
 CURRENT_DIR = Path(__file__).parent.absolute()
-KIOSK_SCRIPT = CURRENT_DIR / "dashboard_kiosk.pyw"
+BASE_DIR = CURRENT_DIR.parent
+BACKEND_DIR = BASE_DIR / "backend"
+FRONTEND_DIR = BASE_DIR / "frontend"
 LOG_FILE = CURRENT_DIR / "autostart.log"
 PID_FILE = CURRENT_DIR / "autostart.pid"
 
 # === Настройки ===
-MAX_RETRIES = 5           # Максимум попыток запуска
-RETRY_DELAY = 10          # Секунд между попытками
-STARTUP_DELAY = 15        # Задержка перед первым запуском (ждём загрузку Windows)
-CHECK_INTERVAL = 30       # Интервал проверки что киоск жив
+STARTUP_DELAY = 10        # Задержка перед запуском (ждём загрузку Windows)
+BACKEND_PORT = 8000
+FRONTEND_URL = "http://localhost:5173"
+BACKEND_URL = f"http://localhost:{BACKEND_PORT}"
 
 # === Логирование ===
 logging.basicConfig(
@@ -33,143 +35,147 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_pythonw():
-    """Получить путь к pythonw.exe"""
-    pythonw = sys.executable.replace("python.exe", "pythonw.exe")
-    if Path(pythonw).exists():
-        return pythonw
-    return sys.executable
+def get_python():
+    """Получить путь к python.exe (не pythonw!)"""
+    # sys.executable может быть pythonw.exe, нужен python.exe для uvicorn
+    return sys.executable.replace("pythonw.exe", "python.exe")
 
 
-def is_process_running(pid: int) -> bool:
-    """Проверить, запущен ли процесс с данным PID."""
+def get_hidden_startup_info():
+    """Настройки для скрытия консольного окна."""
     if sys.platform == 'win32':
-        try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            SYNCHRONIZE = 0x00100000
-            handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
-        except:
-            pass
-    
-    # Fallback через tasklist
-    try:
-        result = subprocess.run(
-            f'tasklist /FI "PID eq {pid}"',
-            capture_output=True, text=True, shell=True,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        return str(pid) in result.stdout
-    except:
-        return False
-
-
-def save_pid(pid: int):
-    """Сохранить PID в файл."""
-    PID_FILE.write_text(str(pid))
-
-
-def load_pid() -> int | None:
-    """Загрузить PID из файла."""
-    if PID_FILE.exists():
-        try:
-            return int(PID_FILE.read_text().strip())
-        except:
-            pass
-    return None
-
-
-def start_kiosk() -> subprocess.Popen | None:
-    """Запустить киоск."""
-    pythonw = get_pythonw()
-    cmd = [pythonw, str(KIOSK_SCRIPT), "--no-gui"]
-    
-    logger.info(f"Starting kiosk: {' '.join(cmd)}")
-    
-    try:
-        # Скрытый запуск
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = subprocess.SW_HIDE
-        
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(CURRENT_DIR),
-            startupinfo=startupinfo,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        
-        logger.info(f"Kiosk started with PID: {proc.pid}")
-        save_pid(proc.pid)
-        return proc
-        
-    except Exception as e:
-        logger.error(f"Failed to start kiosk: {e}")
-        return None
+        return {
+            'startupinfo': startupinfo,
+            'creationflags': subprocess.CREATE_NO_WINDOW
+        }
+    return {}
+
+
+def kill_process_on_port(port):
+    """Убить процесс на порту."""
+    if sys.platform == 'win32':
+        try:
+            cmd = f'netstat -ano | findstr :{port}'
+            proc = subprocess.run(cmd, capture_output=True, shell=True, text=True,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
+            lines = proc.stdout.strip().split('\n')
+            pids = set()
+            for line in lines:
+                if 'LISTENING' in line:
+                    parts = line.split()
+                    pids.add(parts[-1])
+            for pid in pids:
+                subprocess.run(f'taskkill /F /PID {pid}', shell=True,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                logger.info(f"Killed process on port {port}, PID: {pid}")
+        except Exception as e:
+            logger.warning(f"Failed to kill process on port {port}: {e}")
+
+
+def check_server_running(url: str, timeout: int = 30) -> bool:
+    """Проверить, запущен ли сервер."""
+    import urllib.request
+    import urllib.error
+    
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            urllib.request.urlopen(url, timeout=2)
+            return True
+        except:
+            time.sleep(1)
+    return False
+
+
+def is_server_running(url: str) -> bool:
+    """Быстрая проверка - запущен ли сервер."""
+    import urllib.request
+    try:
+        urllib.request.urlopen(url, timeout=2)
+        return True
+    except:
+        return False
 
 
 def main():
     logger.info("=" * 50)
     logger.info(f"Autostart initiated at {datetime.now()}")
-    logger.info(f"Kiosk script: {KIOSK_SCRIPT}")
-    
-    # Проверяем что скрипт киоска существует
-    if not KIOSK_SCRIPT.exists():
-        logger.error(f"Kiosk script not found: {KIOSK_SCRIPT}")
-        sys.exit(1)
+    logger.info(f"Backend dir: {BACKEND_DIR}")
+    logger.info(f"Frontend dir: {FRONTEND_DIR}")
     
     # Задержка при старте Windows
-    logger.info(f"Waiting {STARTUP_DELAY}s for Windows to fully load...")
+    logger.info(f"Waiting {STARTUP_DELAY}s for Windows to load...")
     time.sleep(STARTUP_DELAY)
     
-    # Проверяем, может киоск уже запущен
-    existing_pid = load_pid()
-    if existing_pid and is_process_running(existing_pid):
-        logger.info(f"Kiosk already running (PID: {existing_pid}), exiting")
-        sys.exit(0)
+    # Проверяем, может сервисы уже запущены
+    backend_running = is_server_running(BACKEND_URL)
+    frontend_running = is_server_running(FRONTEND_URL)
     
-    # Пробуем запустить с retry
-    proc = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        logger.info(f"Attempt {attempt}/{MAX_RETRIES}")
-        
-        proc = start_kiosk()
-        
-        if proc:
-            # Ждём немного и проверяем что процесс не упал сразу
-            time.sleep(3)
-            if proc.poll() is None:  # Процесс ещё жив
-                logger.info("Kiosk started successfully!")
-                break
-            else:
-                logger.warning(f"Kiosk exited immediately with code: {proc.returncode}")
-                proc = None
-        
-        if attempt < MAX_RETRIES:
-            logger.info(f"Retrying in {RETRY_DELAY}s...")
-            time.sleep(RETRY_DELAY)
+    logger.info(f"Backend already running: {backend_running}")
+    logger.info(f"Frontend already running: {frontend_running}")
     
-    if not proc:
-        logger.error("Failed to start kiosk after all retries!")
-        sys.exit(1)
+    if backend_running and frontend_running:
+        logger.info("Services already running, exiting")
+        return
     
-    # Мониторинг - перезапуск если упал
-    logger.info(f"Monitoring kiosk (check every {CHECK_INTERVAL}s)...")
+    hidden_kwargs = get_hidden_startup_info()
+    python_exe = get_python()
     
-    while True:
-        time.sleep(CHECK_INTERVAL)
+    # === Backend ===
+    if not backend_running:
+        logger.info("Starting backend...")
+        kill_process_on_port(BACKEND_PORT)
+        time.sleep(1)
         
-        if proc.poll() is not None:
-            logger.warning(f"Kiosk died (exit code: {proc.returncode}), restarting...")
-            proc = start_kiosk()
+        try:
+            backend_cmd = [python_exe, "-m", "uvicorn", "app.main:app",
+                          "--host", "0.0.0.0", "--port", str(BACKEND_PORT)]
             
-            if not proc:
-                logger.error("Failed to restart kiosk!")
-                time.sleep(RETRY_DELAY)
+            subprocess.Popen(
+                backend_cmd,
+                cwd=str(BACKEND_DIR),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **hidden_kwargs
+            )
+            logger.info("Backend process started")
+        except Exception as e:
+            logger.error(f"Failed to start backend: {e}")
+    
+    # === Frontend ===
+    if not frontend_running:
+        logger.info("Starting frontend...")
+        
+        try:
+            subprocess.Popen(
+                ["npm", "run", "dev"],
+                cwd=str(FRONTEND_DIR),
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **hidden_kwargs
+            )
+            logger.info("Frontend process started")
+        except Exception as e:
+            logger.error(f"Failed to start frontend: {e}")
+    
+    # Ждём запуска
+    logger.info("Waiting for services to start...")
+    
+    if check_server_running(BACKEND_URL, timeout=30):
+        logger.info(f"Backend is running at {BACKEND_URL}")
+    else:
+        logger.error("Backend failed to start!")
+    
+    if check_server_running(FRONTEND_URL, timeout=60):
+        logger.info(f"Frontend is running at {FRONTEND_URL}")
+    else:
+        logger.error("Frontend failed to start!")
+    
+    logger.info("Autostart complete")
 
 
 if __name__ == "__main__":

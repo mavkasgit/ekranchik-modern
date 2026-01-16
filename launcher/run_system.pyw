@@ -347,17 +347,18 @@ class MonitorSelector:
 def start_system(monitor_index, config):
     """Запустить систему."""
     # Определяем путь к Python
+    # ВАЖНО: Backend требует python.exe (не pythonw.exe) для uvicorn
     if getattr(sys, 'frozen', False):
         import shutil
         PYTHON_EXE = shutil.which("python") or shutil.which("python3") or "python"
-        PYTHONW_EXE = PYTHON_EXE.replace("python.exe", "pythonw.exe")
-        if not Path(PYTHONW_EXE).exists():
-            PYTHONW_EXE = PYTHON_EXE
     else:
-        PYTHON_EXE = sys.executable
-        PYTHONW_EXE = PYTHON_EXE.replace("python.exe", "pythonw.exe")
-        if not Path(PYTHONW_EXE).exists():
-            PYTHONW_EXE = PYTHON_EXE
+        # sys.executable может быть pythonw.exe, нужен python.exe для backend
+        PYTHON_EXE = sys.executable.replace("pythonw.exe", "python.exe")
+    
+    # pythonw.exe для киоска (без консоли)
+    PYTHONW_EXE = PYTHON_EXE.replace("python.exe", "pythonw.exe")
+    if not Path(PYTHONW_EXE).exists():
+        PYTHONW_EXE = PYTHON_EXE
     
     BACKEND_PORT = config.get("backend_port", 8000)
     BACKEND_URL = f"http://localhost:{BACKEND_PORT}"
