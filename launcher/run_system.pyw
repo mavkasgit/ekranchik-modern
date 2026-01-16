@@ -62,7 +62,7 @@ def load_config():
                 return json.load(f)
         except:
             pass
-    return {"kiosk_monitor": 0, "backend_port": 8000}
+    return {"kiosk_monitor": 0, "backend_port": 8000, "frontend_url": "http://localhost:5173"}
 
 
 def save_config(config):

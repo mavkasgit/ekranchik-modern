@@ -11,8 +11,8 @@ export default defineConfig({
   },
   server: {
     host: true,  // Слушать на всех интерфейсах (для ktm.local)
-    port: 80,    // Стандартный HTTP порт (требует запуск от администратора)
-    strictPort: true,  // НЕ пытаться использовать другой порт, если 80 занят
+    port: 5173,    // Стандартный Vite порт
+    strictPort: true,  // НЕ пытаться использовать другой порт, если 5173 занят
     allowedHosts: true,  // Разрешить все хосты
     proxy: {
       '/api': {

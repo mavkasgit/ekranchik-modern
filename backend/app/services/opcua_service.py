@@ -57,8 +57,8 @@ class OPCUAService:
         # --- НАСТРОЙКИ ---
         # 15 сек - чтобы Omron быстро убивал зависшие сессии
         self._session_timeout = 15000
-        # 0.5 сек - частота обновления данных (2 раза в секунду)
-        self._poll_interval = 0.5
+        # 1.0 сек - частота обновления данных (1 раз в секунду)
+        self._poll_interval = 1.0
         # Размер пачки для чтения (безопасно для Omron NX)
         self._batch_size = 100
         
@@ -69,13 +69,15 @@ class OPCUAService:
         # Черный список (битые адреса)
         self._blacklist: Set[str] = set()
         
-        # Статистика
+        # Статистика (с защитой от переполнения)
         self._stats = {
             'connections': 0,
             'reads': 0,
             'errors': 0,
             'cache_hits': 0,
         }
+        self._stats_max = 1_000_000_000  # Сброс после 1 млрд
+        self._client: Optional[Client] = None
     
     @property
     def is_available(self) -> bool:
@@ -99,6 +101,13 @@ class OPCUAService:
     
     def get_diagnostics(self) -> dict:
         """Получить диагностическую информацию (совместимость с API)."""
+        import sys
+        
+        # Размер кэша в памяти (приблизительно)
+        cache_size_bytes = sys.getsizeof(self._cache)
+        for k, v in self._cache.items():
+            cache_size_bytes += sys.getsizeof(k) + sys.getsizeof(v)
+        
         return {
             'available': OPCUA_AVAILABLE,
             'enabled': settings.OPCUA_ENABLED,
@@ -108,6 +117,8 @@ class OPCUAService:
             'stats': self._stats.copy(),
             'monitored_nodes': len(self._monitored_nodes),
             'blacklisted_nodes': len(self._blacklist),
+            'cache_entries': len(self._cache),
+            'cache_size_kb': round(cache_size_bytes / 1024, 2),
         }
     
     async def ping_server(self) -> Optional[float]:
@@ -129,9 +140,23 @@ class OPCUAService:
     
     async def browse_node(self, node_id: str) -> List[Dict[str, str]]:
         """Получить дочерние узлы (совместимость с API)."""
-        # Эта функция требует активного клиента, возвращаем пустой список
-        # так как worker управляет клиентом
-        return []
+        if not self._client or not self._connected:
+            return []
+        
+        try:
+            node = self._client.get_node(node_id)
+            children = await node.get_children()
+            results = []
+            for child in children:
+                # Получаем имя и ID
+                name = await child.read_display_name()
+                child_node_id = child.nodeid.to_string()
+                results.append({"name": name.Text, "id": child_node_id})
+            return results
+        except Exception as e:
+            logger.error(f"Browse error: {e}")
+            return []
+
     
     async def browse_recursive(self, node_id: str, max_depth: int = 3) -> List[dict]:
         """Рекурсивный обход узлов (совместимость с API)."""
@@ -139,11 +164,6 @@ class OPCUAService:
     
     async def read_nodes_batch(self, node_ids: List[str]) -> Dict[str, Any]:
         """Пакетное чтение узлов из кэша (совместимость с API)."""
-        # Добавляем все узлы в мониторинг
-        for node_id in node_ids:
-            if node_id not in self._monitored_nodes and node_id not in self._blacklist:
-                self._monitored_nodes.add(node_id)
-        
         # Возвращаем значения из кэша
         return {node_id: self._cache.get(node_id) for node_id in node_ids}
     
@@ -170,22 +190,41 @@ class OPCUAService:
     
     def get_value(self, node_id: str) -> Any:
         """
-        Мгновенно вернуть значение из памяти.
-        Если переменной нет в списке опроса - добавляем её.
+        Мгновенно вернуть значение из памяти (RAM).
+        НЕ делает сетевых запросов к ПЛК!
+        Если узла нет в кэше — возвращает None.
         """
-        # Автоматическое добавление в мониторинг
-        if node_id not in self._monitored_nodes and node_id not in self._blacklist:
-            self._monitored_nodes.add(node_id)
-        
         self._stats['cache_hits'] += 1
+        # Защита от переполнения счётчика
+        if self._stats['cache_hits'] > self._stats_max:
+            self._stats['cache_hits'] = 0
+            logger.info("[OPC UA] Stats counter reset (cache_hits)")
         return self._cache.get(node_id)
     
     async def read_node(self, node_id: str) -> Optional[Any]:
         """
-        Прочитать значение узла (совместимость с line_monitor).
-        Возвращает значение из кэша, автоматически добавляя узел в мониторинг.
+        Прочитать значение узла из кэша (совместимость с line_monitor).
+        НЕ делает сетевых запросов — только чтение из RAM.
         """
         return self.get_value(node_id)
+    
+    def register_nodes(self, node_ids: List[str]) -> None:
+        """
+        Зарегистрировать узлы для постоянного опроса.
+        Worker будет читать эти узлы каждый цикл и обновлять кэш.
+        Вызывать при старте line_monitor.
+        """
+        before = len(self._monitored_nodes)
+        self._monitored_nodes.update(node_ids)
+        added = len(self._monitored_nodes) - before
+        if added > 0:
+            logger.info(f"[OPC UA] Registered {added} new nodes for polling (total: {len(self._monitored_nodes)})")
+    
+    def unregister_nodes(self, node_ids: List[str]) -> None:
+        """Убрать узлы из списка опроса."""
+        for node_id in node_ids:
+            self._monitored_nodes.discard(node_id)
+            self._cache.pop(node_id, None)
     
     async def read_nodes(self, node_ids: List[str]) -> Dict[str, Any]:
         """Прочитать несколько узлов (совместимость с line_monitor)."""
@@ -229,20 +268,20 @@ class OPCUAService:
         logger.info(f"[OPC UA] Worker started, URL: {self._url}")
         
         while self._running:
-            client = None
+            # client = None # This is no longer needed as self._client is used
             try:
                 # 1. Создаем клиента
                 logger.debug(f"[OPC UA] Creating client for {self._url}")
-                client = Client(url=self._url, timeout=10)  # 10 сек таймаут на операции
+                self._client = Client(url=self._url, timeout=10)  # 10 сек таймаут на операции
                 # Важно: короткий таймаут сессии для борьбы с "зомби"
-                client.session_timeout = self._session_timeout
+                self._client.session_timeout = self._session_timeout
                 
                 logger.info(f"[OPC UA] Подключение к {self._url}...")
                 self._state = OPCUAState.CONNECTING
                 
                 # 2. Подключаемся с таймаутом
                 try:
-                    await asyncio.wait_for(client.connect(), timeout=15.0)
+                    await asyncio.wait_for(self._client.connect(), timeout=15.0)
                 except asyncio.TimeoutError:
                     logger.error("[OPC UA] Таймаут подключения (15 сек)")
                     self._stats['errors'] += 1
@@ -260,7 +299,7 @@ class OPCUAService:
                         start_time = time.time()
                         
                         # Читаем данные пачками
-                        await self._poll_data_batched(client)
+                        await self._poll_data_batched(self._client)
                         
                         # Вычисляем время сна для стабильного ритма
                         elapsed = time.time() - start_time
@@ -269,7 +308,7 @@ class OPCUAService:
                 finally:
                     # Гарантируем отключение
                     try:
-                        await asyncio.wait_for(client.disconnect(), timeout=5.0)
+                        await asyncio.wait_for(self._client.disconnect(), timeout=5.0)
                     except:
                         pass
             
@@ -299,6 +338,8 @@ class OPCUAService:
                 self._connected = False
                 self._state = OPCUAState.DISCONNECTED
                 self._last_update = datetime.min
+                # Ensure self._client is None after disconnection
+                self._client = None
                 logger.debug("[OPC UA] Connection closed, will retry...")
     
     async def _poll_data_batched(self, client: Client):
@@ -323,15 +364,24 @@ class OPCUAService:
                 # Получаем объекты Node (локальная операция, быстро)
                 ua_nodes = [client.get_node(nid) for nid in chunk]
                 
-                # СЕТЕВОЙ ЗАПРОС: Читаем пачку значений
-                values = await client.read_values(ua_nodes)
+                # СЕТЕВОЙ ЗАПРОС: Читаем пачку значений с атрибутами
+                data_values = await client.read_attributes(ua_nodes, ua.AttributeIds.Value)
                 
-                # Обновляем кэш
-                for node_id, val in zip(chunk, values):
-                    self._cache[node_id] = val
+                # Обновляем кэш, проверяя статус каждого значения
+                for node_id, dv in zip(chunk, data_values):
+                    if dv.StatusCode.is_good():
+                        self._cache[node_id] = dv.Value.Value
+                    else:
+                        logger.warning(f"Bad status for node {node_id}: {dv.StatusCode}")
+                        # Можно добавить логику добавления в blacklist здесь, если нужно
+                        # self._blacklist.add(node_id)
                 
-                updated_count += len(values)
-                self._stats['reads'] += len(values)
+                updated_count += len(data_values)
+                self._stats['reads'] += len(data_values)
+                # Защита от переполнения счётчика
+                if self._stats['reads'] > self._stats_max:
+                    self._stats['reads'] = 0
+                    logger.info("[OPC UA] Stats counter reset (reads)")
             
             except Exception as e:
                 # Если ошибка связи - пробрасываем выше для реконнекта

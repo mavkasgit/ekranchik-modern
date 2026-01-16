@@ -115,7 +115,7 @@ def get_monitors():
 
 
 class KioskDashboard:
-    def __init__(self, url: str = "http://localhost", monitor_index: int = 1, geometry: dict = None):
+    def __init__(self, url: str = "http://localhost:5173", monitor_index: int = 1, geometry: dict = None):
         self.url = url
         self.window = None
         self.tray_icon = None
@@ -313,7 +313,7 @@ def main():
     parser.add_argument('--geometry', type=str, default=None, help='Window geometry "x,y,width,height"')
     args = parser.parse_args()
     
-    dashboard_url = "http://localhost"  # Порт 80
+    dashboard_url = "http://localhost:5173"  # Vite dev server
     
     logger.info("Starting kiosk mode...")
     logger.info(f"URL: {dashboard_url}")

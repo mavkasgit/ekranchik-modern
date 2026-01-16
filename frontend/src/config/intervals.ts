@@ -1,7 +1,7 @@
 /**
  * Интервалы обновления данных (в миллисекундах).
  * 
- * Основное обновление идёт через WebSocket каждую секунду.
+ * Основное обновление идёт через WebSocket.
  * Эти интервалы используются только как fallback если WebSocket не работает.
  */
 
@@ -13,4 +13,7 @@ export const WS_RECONNECT_INTERVAL = 3000     // 3 сек - переподклю
 export const DATA_REFRESH_INTERVAL = 10000    // 10 сек - fallback для данных
 
 // WebSocket обновления (реальные интервалы на бэкенде)
-export const WS_LINE_UPDATE_INTERVAL = 1000   // 1 сек - обновление линии через WS
+export const WS_LINE_UPDATE_INTERVAL = 2000   // 2 сек - heartbeat с бэкенда (line_monitor._heartbeat_interval)
+
+// Для отображения в UI
+export const WS_UPDATE_INTERVAL_SEC = WS_LINE_UPDATE_INTERVAL / 1000

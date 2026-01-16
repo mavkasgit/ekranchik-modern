@@ -1,8 +1,8 @@
 """
 WebSocket Manager - handles WebSocket connections and broadcasting.
+Optimized for high throughput with timeout protection.
 """
 import asyncio
-import json
 from typing import Dict, Set, Any, Optional
 from datetime import datetime
 
@@ -15,17 +15,12 @@ from app.schemas.websocket import WebSocketMessage
 class WebSocketManager:
     """
     Manager for WebSocket connections.
-    
-    Features:
-    - Connection tracking
-    - Broadcast to all connected clients
-    - Individual message sending
-    - Connection health monitoring
+    Non-blocking, optimized for high throughput.
     """
     
     def __init__(self):
+        # Используем set напрямую — операции add/discard атомарны в Python
         self._connections: Set[WebSocket] = set()
-        self._lock = asyncio.Lock()
     
     @property
     def connection_count(self) -> int:
@@ -38,25 +33,13 @@ class WebSocketManager:
         return self._connections.copy()
     
     async def connect(self, websocket: WebSocket) -> None:
-        """
-        Accept and register a new WebSocket connection.
-        
-        Args:
-            websocket: WebSocket connection to register
-        """
+        """Accept and register a new WebSocket connection."""
         await websocket.accept()
-        async with self._lock:
-            self._connections.add(websocket)
+        self._connections.add(websocket)
     
     async def disconnect(self, websocket: WebSocket) -> None:
-        """
-        Remove a WebSocket connection.
-        
-        Args:
-            websocket: WebSocket connection to remove
-        """
-        async with self._lock:
-            self._connections.discard(websocket)
+        """Remove a WebSocket connection."""
+        self._connections.discard(websocket)
     
     async def send_personal(
         self,
@@ -94,52 +77,53 @@ class WebSocketManager:
     ) -> int:
         """
         Broadcast a message to all connected clients.
-        
-        Args:
-            message: Message to broadcast
-            exclude: Optional WebSocket to exclude from broadcast
-        
-        Returns:
-            Number of clients that received the message
+        Non-blocking with timeout protection.
         """
-        import logging
-        logger = logging.getLogger(__name__)
-        
         if not self._connections:
-            logger.debug(f"[WS] No connections to broadcast to (type={message.type})")
             return 0
         
-        # Get snapshot of connections
-        async with self._lock:
-            connections = self._connections.copy()
+        # Get snapshot of connections (без лока для скорости)
+        connections = list(self._connections)
         
         sent_count = 0
         disconnected = []
         
         data = message.model_dump(mode='json')
-        logger.info(f"[WS] Broadcasting {message.type} to {len(connections)} clients")
-        
-        for websocket in connections:
-            if websocket == exclude:
-                continue
-            
+
+        async def send_with_timeout(ws: WebSocket) -> bool:
+            """Отправка с таймаутом 1 сек."""
             try:
-                if websocket.client_state == WebSocketState.CONNECTED:
-                    await websocket.send_json(data)
+                if ws.client_state == WebSocketState.CONNECTED:
+                    await asyncio.wait_for(ws.send_json(data), timeout=1.0)
+                    return True
+            except (asyncio.TimeoutError, Exception):
+                return False
+            return False
+
+        # Отправляем всем параллельно с таймаутом
+        tasks = []
+        for ws in connections:
+            if ws != exclude:
+                tasks.append((ws, asyncio.create_task(send_with_timeout(ws))))
+        
+        if not tasks:
+            return 0
+        
+        # Ждём все задачи (они уже с таймаутом внутри)
+        for ws, task in tasks:
+            try:
+                success = await task
+                if success:
                     sent_count += 1
                 else:
-                    disconnected.append(websocket)
-            except Exception as e:
-                logger.warning(f"[WS] Failed to send to client: {e}")
-                disconnected.append(websocket)
+                    disconnected.append(ws)
+            except Exception:
+                disconnected.append(ws)
         
-        # Clean up disconnected clients
-        if disconnected:
-            async with self._lock:
-                for ws in disconnected:
-                    self._connections.discard(ws)
+        # Чистим отключённых (без лока — atomic операция)
+        for ws in disconnected:
+            self._connections.discard(ws)
         
-        logger.info(f"[WS] Broadcast complete: sent to {sent_count}/{len(connections)} clients")
         return sent_count
     
     async def broadcast_dict(
@@ -168,13 +152,12 @@ class WebSocketManager:
     
     async def close_all(self) -> None:
         """Close all active connections."""
-        async with self._lock:
-            connections = self._connections.copy()
-            self._connections.clear()
+        connections = list(self._connections)
+        self._connections.clear()
         
         for websocket in connections:
             try:
-                await websocket.close()
+                await asyncio.wait_for(websocket.close(), timeout=1.0)
             except Exception:
                 pass
 

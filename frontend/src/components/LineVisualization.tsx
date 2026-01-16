@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, AlertCircle, Wifi, WifiOff } from 'lucide-react'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { WS_UPDATE_INTERVAL_SEC } from '@/config/intervals'
 
 interface BathData {
   bath_number: number
@@ -200,7 +201,7 @@ export function LineVisualization() {
           }`}>
             {isConnected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
             <span className="text-sm font-medium">
-              {isConnected ? 'Live (1s)' : 'Offline'}
+              {isConnected ? `Live (${WS_UPDATE_INTERVAL_SEC}s)` : 'Offline'}
             </span>
           </div>
           <button

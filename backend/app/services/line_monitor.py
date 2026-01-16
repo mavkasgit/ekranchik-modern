@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 CONTROL_BATH = 34  # Unload point bath number
 HANGER_TTL = timedelta(minutes=30)  # Time to keep inactive hanger data before cleanup
 CLEANUP_INTERVAL = timedelta(minutes=5)  # How often to run the cleanup task
+MAX_HANGERS = 500  # Максимум отслеживаемых подвесов
+MAX_PATH_LENGTH = 100  # Максимум записей в пути подвеса
+MAX_UNLOAD_EVENTS = 500  # Максимум событий выгрузки в памяти
 
 
 # --- Data Classes ---
@@ -54,7 +57,7 @@ class LineMonitorService:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._poll_interval = 1  # seconds - обновление каждую секунду
-        self._heartbeat_interval = 1  # seconds - отправка статуса на фронтенд каждую секунду
+        self._heartbeat_interval = 2  # seconds - отправка статуса на фронтенд каждые 2 секунды
         self._health_check_interval = 30  # seconds - проверка здоровья OPC UA соединения
         self._last_heartbeat = datetime.now()
         self._last_health_check = datetime.now()
@@ -67,8 +70,8 @@ class LineMonitorService:
         self._processed_unloads: deque = deque(maxlen=1000)
         self._last_cleanup_time = datetime.now()
 
-        # Unload events cache
-        self._unload_events: List[dict] = []
+        # Unload events cache (deque для O(1) операций)
+        self._unload_events: deque = deque(maxlen=MAX_UNLOAD_EVENTS)
     
     @property
     def is_running(self) -> bool:
@@ -80,10 +83,38 @@ class LineMonitorService:
             logger.warning("[Line Monitor] Already running")
             return False
         
+        # Регистрируем все узлы для опроса в OPC UA сервисе
+        self._register_monitored_nodes()
+        
         self._running = True
         self._task = asyncio.create_task(self._monitor_loop())
         logger.info("[Line Monitor] Started")
         return True
+    
+    def _register_monitored_nodes(self) -> None:
+        """
+        Регистрирует все необходимые OPC UA узлы для постоянного опроса.
+        Это "герметизирует" список — только эти узлы будут опрашиваться.
+        """
+        node_ids = []
+        
+        # Узлы для всех 39 ванн
+        bath_props = ["InUse", "Free", "Pallete", "InTime", "OutTime", "dTime"]
+        for bath_num in range(1, 40):
+            for prop in bath_props:
+                node_ids.append(f"ns=4;s=Bath[{bath_num}].{prop}")
+        
+        # Узлы блока питания
+        power_props = ["Current", "Voltage", "Status"]
+        for prop in power_props:
+            node_ids.append(f"ns=4;s=S8VK_X.{prop}")
+        
+        # Системные узлы
+        node_ids.append("i=2258")  # Server CurrentTime
+        
+        # Регистрируем в OPC UA сервисе
+        opcua_service.register_nodes(node_ids)
+        logger.info(f"[Line Monitor] Registered {len(node_ids)} nodes for OPC UA polling")
     
     async def stop(self) -> None:
         """Stop the line monitoring loop."""
@@ -123,7 +154,7 @@ class LineMonitorService:
                 # Периодический heartbeat для фронтенда
                 now = datetime.now()
                 if (now - self._last_heartbeat).total_seconds() >= self._heartbeat_interval:
-                    await self._send_heartbeat()
+                    asyncio.create_task(self._send_heartbeat()) # Запускаем как фоновую задачу
                     self._last_heartbeat = now
                 
                 # Периодическая проверка здоровья OPC UA соединения
@@ -235,6 +266,8 @@ class LineMonitorService:
     async def _cleanup_hangers(self) -> None:
         """Remove hanger data that has been inactive for too long."""
         now = datetime.now()
+        
+        # 1. Удаляем неактивные подвесы по TTL
         inactive_hangers = [
             hanger_id
             for hanger_id, state in self._hangers.items()
@@ -245,6 +278,18 @@ class LineMonitorService:
             for hanger_id in inactive_hangers:
                 del self._hangers[hanger_id]
             logger.info(f"[Line Monitor] Cleaned up {len(inactive_hangers)} inactive hangers.")
+        
+        # 2. Защита от переполнения: если слишком много подвесов, удаляем самые старые
+        if len(self._hangers) > MAX_HANGERS:
+            # Сортируем по last_seen, удаляем самые старые
+            sorted_hangers = sorted(
+                self._hangers.items(),
+                key=lambda x: x[1].last_seen
+            )
+            to_remove = len(self._hangers) - MAX_HANGERS
+            for hanger_id, _ in sorted_hangers[:to_remove]:
+                del self._hangers[hanger_id]
+            logger.warning(f"[Line Monitor] Force-cleaned {to_remove} oldest hangers (overflow protection)")
 
     async def _scan_baths(self) -> None:
         """Scan all baths and update hanger positions, handling new cycles."""
@@ -289,6 +334,9 @@ class LineMonitorService:
                                 duration=duration,
                             )
                         )
+                        # Защита от переполнения path
+                        if len(hanger_state.path) > MAX_PATH_LENGTH:
+                            hanger_state.path = hanger_state.path[-MAX_PATH_LENGTH:]
                     # Record entry into the new bath
                     hanger_state.current_bath = bath_name
                     hanger_state.entry_time = now
@@ -375,10 +423,8 @@ class LineMonitorService:
                 "timestamp": now.isoformat()
             }
             
-            # Cache event
+            # Cache event (deque автоматически удаляет старые)
             self._unload_events.append(event)
-            if len(self._unload_events) > 500:
-                self._unload_events.pop(0)
             
             # Broadcast via WebSocket
             message = WebSocketMessage(type="unload_event", payload=event, timestamp=now)
@@ -391,7 +437,9 @@ class LineMonitorService:
     
     def get_unload_events(self, limit: int = 100) -> List[dict]:
         """Get recent unload events."""
-        return self._unload_events[-limit:]
+        # Конвертируем deque в list для API
+        events = list(self._unload_events)
+        return events[-limit:] if limit < len(events) else events
     
     def get_hanger_state(self, hanger_num: int) -> Optional[HangerState]:
         """Get current state of a hanger."""

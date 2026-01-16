@@ -1,0 +1,153 @@
+{
+  "duration": 122.27037596702576,
+  "ws_connected": 60,
+  "ws_disconnected": 15,
+  "ws_messages": 1230,
+  "ws_errors": 30,
+  "api_requests": 4828,
+  "api_errors": 0,
+  "api_latency_avg": 3.0005979537963867,
+  "api_latency_p95": 12.02702522277832,
+  "server_metrics": [
+    {
+      "time": "2026-01-16T20:50:55.115631",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 116620,
+        "errors": 0,
+        "cache_hits": 623824
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:51:05.372673",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 119000,
+        "errors": 0,
+        "cache_hits": 648790
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:51:15.627278",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 121380,
+        "errors": 0,
+        "cache_hits": 672581
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:51:25.883471",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 123998,
+        "errors": 0,
+        "cache_hits": 697752
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:51:36.138521",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 125902,
+        "errors": 0,
+        "cache_hits": 716065
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:51:49.676499",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 127668,
+        "errors": 0,
+        "cache_hits": 735055
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:52:00.601897",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 128144,
+        "errors": 0,
+        "cache_hits": 735943
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:52:10.866796",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 130900,
+        "errors": 0,
+        "cache_hits": 760437
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:52:21.130409",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 133280,
+        "errors": 0,
+        "cache_hits": 784700
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    },
+    {
+      "time": "2026-01-16T20:52:31.385782",
+      "connected": true,
+      "state": "connected",
+      "stats": {
+        "connections": 1,
+        "reads": 135660,
+        "errors": 0,
+        "cache_hits": 809674
+      },
+      "hangers": 10,
+      "cache_kb": 27.6,
+      "warnings": []
+    }
+  ]
+}

@@ -337,9 +337,9 @@ class ProcessManager:
                 time.sleep(1)  # Даём время освободить порт
         
         if "frontend" in self.name.lower() or "npm" in str(self.cmd):
-            killed = kill_process_on_port(80)
+            killed = kill_process_on_port(5173)
             if killed:
-                self.output_queue.put(f"[SYSTEM] Убиты предыдущие процессы на порту 80: {killed}")
+                self.output_queue.put(f"[SYSTEM] Убиты предыдущие процессы на порту 5173: {killed}")
                 time.sleep(1)  # Даём время освободить порт
             
         try:
@@ -983,7 +983,7 @@ if HAS_GUI:
             
             # Принудительно убиваем процессы на портах
             killed_8000 = kill_process_on_port(8000)
-            killed_80 = kill_process_on_port(80)
+            killed_5173 = kill_process_on_port(5173)
             if killed_8000:
                 self.pages["backend"].log.append(f"[SYSTEM] Убиты процессы на порту 8000: {killed_8000}")
             if killed_80:
@@ -1066,7 +1066,7 @@ if HAS_GUI:
             # Принудительно убиваем оставшиеся процессы на портах
             time.sleep(0.5)
             kill_process_on_port(8000)
-            kill_process_on_port(80)
+            kill_process_on_port(5173)
         
         def _open_tray_browser(self):
             """Открыть браузер в трее (из tray_kiosk.py)"""
