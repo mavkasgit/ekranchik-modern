@@ -11,6 +11,8 @@ import time
 import json
 import tkinter as tk
 from pathlib import Path
+import urllib.request
+import urllib.error
 
 # === НАСТРОЙКИ ПУТЕЙ ===
 # Определяем базовую директорию
@@ -26,9 +28,10 @@ else:
 BASE_DIR = CURRENT_DIR.parent
 BACKEND_DIR = BASE_DIR / "backend"
 FRONTEND_DIR = BASE_DIR / "frontend"
-KIOSK_SCRIPT = CURRENT_DIR / "dashboard_kiosk.py"
+KIOSK_SCRIPT = CURRENT_DIR / "dashboard_kiosk.pyw"
 CONFIG_FILE = CURRENT_DIR / "run_system_config.json"
 ERROR_LOG = CURRENT_DIR / "launcher_error.log"
+ICON_FILE = CURRENT_DIR / "launcher.ico"
 
 # === ФУНКЦИИ ===
 
@@ -76,6 +79,19 @@ def log_error(msg):
     with open(ERROR_LOG, "a", encoding="utf-8") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {msg}\n")
 
+def check_server_running(url: str, timeout: int = 30) -> bool:
+    """Check if a server at the given URL is running."""
+    import urllib.request
+    import urllib.error
+    
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            urllib.request.urlopen(url, timeout=1)
+            return True
+        except (urllib.error.URLError, ConnectionRefusedError):
+            time.sleep(0.5)
+    return False
 
 def get_hidden_startup_info():
     """Настройки для скрытия консольного окна."""
@@ -121,6 +137,13 @@ class MonitorSelector:
         self.root = tk.Tk()
         self.root.title("Ekranchik - Выбор монитора")
         self.root.resizable(False, False)
+        
+        # Устанавливаем иконку
+        if ICON_FILE.exists():
+            try:
+                self.root.iconbitmap(str(ICON_FILE))
+            except:
+                pass  # Если не получилось - используем стандартную
         
         # Центрируем окно
         window_width = 450
@@ -273,11 +296,30 @@ def start_system(monitor_index, config):
         
         # Ждём запуска сервисов
         log_error("Waiting for services to start...")
-        time.sleep(5)
         
+        BACKEND_URL = f"http://localhost:{config.get('backend_port', 8000)}"
+        FRONTEND_URL = config.get("frontend_url", "http://localhost:5173")
+
+        log_error(f"Checking Backend at {BACKEND_URL}...")
+        if not check_server_running(BACKEND_URL, timeout=30): # Increased timeout for backend
+            log_error(f"ERROR: Backend server at {BACKEND_URL} failed to start in time. Exiting.")
+            return # Exit start_system, then finally block cleans up
+
+        log_error(f"Checking Frontend at {FRONTEND_URL}...")
+        if not check_server_running(FRONTEND_URL, timeout=60): # Increased timeout for frontend (npm run dev can be slow)
+            log_error(f"ERROR: Frontend server at {FRONTEND_URL} failed to start in time. Exiting.")
+            return # Exit start_system, then finally block cleans up
+            
+        log_error("All services are running.")
+
         # Kiosk
         log_error(f"Starting kiosk on monitor {monitor_index}...")
-        kiosk_cmd = [PYTHON_EXE, str(KIOSK_SCRIPT), "--monitor", str(monitor_index)]
+        kiosk_cmd = [PYTHONW_EXE, str(KIOSK_SCRIPT), "--monitor", str(monitor_index)]
+        
+        # Pass geometry to kiosk if specified in config
+        if config.get("kiosk_geometry"):
+            kiosk_cmd.extend(["--geometry", config["kiosk_geometry"]])
+        
         kiosk_proc = subprocess.Popen(
             kiosk_cmd,
             cwd=str(CURRENT_DIR),
