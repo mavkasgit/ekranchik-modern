@@ -1045,11 +1045,12 @@ if HAS_GUI:
 
             self.kiosk_manager.cmd = kiosk_cmd
             
-            self.pages[self.current_page].log.append(f"[SYSTEM] Команда: {' '.join(kiosk_cmd)}")
-            if self.kiosk_manager.start():
-                self.pages[self.current_page].log.append(f"[SYSTEM] Киоск запущен (PID: {self.kiosk_manager.pid})")
-            else:
-                self.pages[self.current_page].log.append("[ERROR] Не удалось запустить киоск")
+            # self.pages[self.current_page].log.append(f"[SYSTEM] Команда: {' '.join(kiosk_cmd)}")
+            # if self.kiosk_manager.start():
+            #     self.pages[self.current_page].log.append(f"[SYSTEM] Киоск запущен (PID: {self.kiosk_manager.pid})")
+            # else:
+            #     self.pages[self.current_page].log.append("[ERROR] Не удалось запустить киоск")
+            self.pages[self.current_page].log.append("[SYSTEM] Запуск киоска отключен (только Backend + Frontend)")
         
         def _stop_all(self):
             # Сначала киоск
@@ -1459,12 +1460,13 @@ class ConsoleMode:
         
         time.sleep(3)
         
-        print("\nЗапуск Kiosk...")
-        if self.kiosk_manager.start():
-            print("Kiosk запущен")
-        else:
-            print("Не удалось запустить Kiosk")
-            # Продолжаем работу без киоска
+        # print("\nЗапуск Kiosk...")
+        # if self.kiosk_manager.start():
+        #     print("Kiosk запущен")
+        # else:
+        #     print("Не удалось запустить Kiosk")
+        #     # Продолжаем работу без киоска
+        print("\n[INFO] Запуск киоска отключен (только Backend + Frontend)")
         
         print("\n" + "="*60)
         print("Система запущена! (Ctrl+C для остановки)")
