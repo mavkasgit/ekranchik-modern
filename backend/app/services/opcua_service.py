@@ -349,6 +349,13 @@ class OPCUAService:
                 self._state = OPCUAState.ERROR
                 self._stats['errors'] += 1
                 logger.error(f"[OPC UA] Критическая ошибка: {type(e).__name__}: {e}", exc_info=True)
+                
+                # Если слишком много ошибок подряд - перезапускаем бекенд
+                if self._stats['errors'] > 10:
+                    logger.critical("[OPC UA] Слишком много ошибок! Перезапуск бекенда...")
+                    import os
+                    os._exit(1)  # Принудительный выход, launcher перезапустит
+                
                 await asyncio.sleep(5)
             
             finally:

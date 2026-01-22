@@ -305,7 +305,7 @@ FONTS = {
 
 
 class ProcessManager:
-    """Управление процессом с логами"""
+    """Управление процессом с логами и автоматическим перезапуском"""
     
     def __init__(self, name: str, cmd: list, cwd: Path):
         self.name = name
@@ -314,6 +314,10 @@ class ProcessManager:
         self.process: subprocess.Popen = None
         self.output_queue = queue.Queue()
         self._stop_reading = threading.Event()
+        self._auto_restart = False  # Флаг автоперезапуска
+        self._watchdog_thread = None
+        self._restart_count = 0
+        self._restart_times = []
         
     @property
     def is_running(self) -> bool:
@@ -325,9 +329,11 @@ class ProcessManager:
     def pid(self) -> int:
         return self.process.pid if self.process else None
     
-    def start(self) -> bool:
+    def start(self, auto_restart: bool = False) -> bool:
         if self.is_running:
             return False
+        
+        self._auto_restart = auto_restart
         
         # ОБЯЗАТЕЛЬНО убиваем предыдущие процессы на нужных портах
         if "backend" in self.name.lower() or "8000" in str(self.cmd):
@@ -360,7 +366,13 @@ class ProcessManager:
             self._stop_reading.clear()
             threading.Thread(target=self._read_output, daemon=True).start()
             
+            # Запускаем watchdog если включен автоперезапуск
+            if auto_restart and "backend" in self.name.lower():
+                self._start_watchdog()
+            
             self.output_queue.put(f"[SYSTEM] {self.name} запущен (PID: {self.pid})")
+            if auto_restart:
+                self.output_queue.put(f"[SYSTEM] Автоперезапуск включен для {self.name}")
             return True
         except Exception as e:
             self.output_queue.put(f"[ERROR] Ошибка запуска {self.name}: {e}")
@@ -369,6 +381,9 @@ class ProcessManager:
     def stop(self) -> bool:
         if not self.is_running:
             return False
+        
+        # Отключаем автоперезапуск
+        self._auto_restart = False
             
         try:
             self._stop_reading.set()
@@ -409,6 +424,60 @@ class ProcessManager:
                         break
         except Exception:
             pass
+    
+    def _start_watchdog(self):
+        """Запускает watchdog для автоматического перезапуска"""
+        def watchdog():
+            while self._auto_restart:
+                if self.process and self.process.poll() is not None:
+                    # Процесс упал
+                    exit_code = self.process.returncode
+                    
+                    # Проверка на слишком частые перезапуски
+                    now = time.time()
+                    self._restart_times = [t for t in self._restart_times if now - t < 60]
+                    
+                    if len(self._restart_times) >= 5:
+                        self.output_queue.put(f"[ERROR] {self.name}: Слишком много перезапусков (5 за минуту). Автоперезапуск отключен.")
+                        self._auto_restart = False
+                        break
+                    
+                    self._restart_times.append(now)
+                    self._restart_count += 1
+                    
+                    self.output_queue.put(f"[WATCHDOG] {self.name} упал (exit code: {exit_code}). Перезапуск #{self._restart_count}...")
+                    
+                    # Очищаем порт
+                    if "backend" in self.name.lower():
+                        kill_process_on_port(8000)
+                    
+                    time.sleep(3)  # Пауза перед перезапуском
+                    
+                    # Перезапускаем
+                    try:
+                        hidden_args = get_hidden_subprocess_args()
+                        self.process = subprocess.Popen(
+                            self.cmd,
+                            cwd=self.cwd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            bufsize=1,
+                            shell=True if "npm" in self.cmd[0] else False,
+                            **hidden_args
+                        )
+                        self._stop_reading.clear()
+                        threading.Thread(target=self._read_output, daemon=True).start()
+                        self.output_queue.put(f"[WATCHDOG] {self.name} перезапущен (PID: {self.pid})")
+                    except Exception as e:
+                        self.output_queue.put(f"[WATCHDOG ERROR] Не удалось перезапустить {self.name}: {e}")
+                        self._auto_restart = False
+                        break
+                
+                time.sleep(2)  # Проверяем каждые 2 секунды
+        
+        self._watchdog_thread = threading.Thread(target=watchdog, daemon=True)
+        self._watchdog_thread.start()
     
     def get_output(self) -> str:
         try:
@@ -992,15 +1061,18 @@ if HAS_GUI:
             if killed_8000 or killed_5173:
                 time.sleep(1)  # Даём время освободить порты
             
-            # Запускаем бэкенд
+            # Запускаем бэкенд с автоперезапуском
             if not self.backend_manager.is_running:
-                self.pages["backend"].start()
+                self.pages["backend"].log.add_separator("АВТОЗАПУСК")
+                if self.backend_manager.start(auto_restart=True):
+                    self.pages["backend"]._update_status(True)
             
             # Ждём запуска бэкенда
             time.sleep(2)
             
             # Запускаем фронтенд
             if not self.frontend_manager.is_running:
+                self.pages["frontend"].log.add_separator("АВТОЗАПУСК")
                 self.pages["frontend"].start()
             
             # Ждём запуска фронтенда
