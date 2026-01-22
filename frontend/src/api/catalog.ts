@@ -65,4 +65,12 @@ export const catalogApi = {
   deletePhoto: async (name: string): Promise<void> => {
     await api.delete(`/catalog/${encodeURIComponent(name)}/photo`)
   },
+
+  deleteFullPhoto: async (name: string): Promise<void> => {
+    await api.delete(`/catalog/${encodeURIComponent(name)}/photo/full`)
+  },
+
+  deleteThumbnail: async (name: string): Promise<void> => {
+    await api.delete(`/catalog/${encodeURIComponent(name)}/photo/thumbnail`)
+  },
 }

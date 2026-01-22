@@ -97,3 +97,25 @@ export function useDeletePhoto() {
     },
   })
 }
+
+export function useDeleteFullPhoto() {
+  const queryClient = useQueryClient()
+  
+  return useMutation({
+    mutationFn: (name: string) => catalogApi.deleteFullPhoto(name),
+    onSuccess: () => {
+      queryClient.resetQueries({ queryKey: ['catalog'] })
+    },
+  })
+}
+
+export function useDeleteThumbnail() {
+  const queryClient = useQueryClient()
+  
+  return useMutation({
+    mutationFn: (name: string) => catalogApi.deleteThumbnail(name),
+    onSuccess: () => {
+      queryClient.resetQueries({ queryKey: ['catalog'] })
+    },
+  })
+}

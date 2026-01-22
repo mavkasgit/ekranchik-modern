@@ -3,6 +3,7 @@ Catalog Service - handles profile search, CRUD operations, and photo management.
 """
 import io
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -656,6 +657,90 @@ class CatalogService:
             async with get_session() as sess:
                 return await _delete(sess)
     
+    async def delete_full_photo(
+        self,
+        profile_name: str,
+        session: Optional[AsyncSession] = None
+    ) -> bool:
+        """
+        Delete only the full photo for a profile (keeps thumbnail).
+        
+        Args:
+            profile_name: Name of the profile
+            session: Optional database session
+        
+        Returns:
+            True if full photo was deleted, False if profile not found
+        """
+        async def _delete(sess: AsyncSession) -> bool:
+            stmt = select(Profile).where(Profile.name == profile_name)
+            result = await sess.execute(stmt)
+            profile = result.scalar_one_or_none()
+            
+            if not profile:
+                return False
+            
+            # Delete full photo file
+            if profile.photo_full:
+                full_path = settings.images_path.parent / profile.photo_full
+                if full_path.exists():
+                    full_path.unlink()
+            
+            # Clear DB field
+            profile.photo_full = None
+            profile.updated_at = datetime.now(timezone.utc)
+            await sess.flush()
+            
+            return True
+        
+        if session:
+            return await _delete(session)
+        else:
+            async with get_session() as sess:
+                return await _delete(sess)
+    
+    async def delete_thumbnail(
+        self,
+        profile_name: str,
+        session: Optional[AsyncSession] = None
+    ) -> bool:
+        """
+        Delete only the thumbnail for a profile (keeps full photo).
+        
+        Args:
+            profile_name: Name of the profile
+            session: Optional database session
+        
+        Returns:
+            True if thumbnail was deleted, False if profile not found
+        """
+        async def _delete(sess: AsyncSession) -> bool:
+            stmt = select(Profile).where(Profile.name == profile_name)
+            result = await sess.execute(stmt)
+            profile = result.scalar_one_or_none()
+            
+            if not profile:
+                return False
+            
+            # Delete thumbnail file
+            if profile.photo_thumb:
+                thumb_path = settings.images_path.parent / profile.photo_thumb
+                if thumb_path.exists():
+                    thumb_path.unlink()
+            
+            # Clear DB field
+            profile.photo_thumb = None
+            profile.updated_at = datetime.now(timezone.utc)
+            await sess.flush()
+            
+            return True
+        
+        if session:
+            return await _delete(session)
+        else:
+            async with get_session() as sess:
+                return await _delete(sess)
+    
     def _calculate_similarity(self, s1: str, s2: str) -> float:
         """
         Calculate similarity ratio between two strings using SequenceMatcher.
@@ -827,17 +912,35 @@ class CatalogService:
             return {}
         
         async def _get_batch(sess: AsyncSession) -> dict[str, dict]:
-            # Get all profiles with photos
-            stmt = select(Profile).where(Profile.photo_thumb.isnot(None))
-            result = await sess.execute(stmt)
-            profiles = result.scalars().all()
+            # Get ALL profiles (with and without photos) to know which ones exist
+            stmt_all = select(Profile)
+            result_all = await sess.execute(stmt_all)
+            all_profiles = result_all.scalars().all()
+            
+            # Get only profiles with photos for photo lookup
+            stmt_photos = select(Profile).where(Profile.photo_thumb.isnot(None))
+            result_photos = await sess.execute(stmt_photos)
+            profiles_with_photos = result_photos.scalars().all()
             
             # Build lookup dicts
             exact_lookup = {}  # lowercase name → photo_info
             normalized_lookup = {}  # normalized name → photo_info
+            prefix_digits_lookup = {}  # (prefix, digits) → photo_info
             digits_lookup = {}  # digits → [photo_info, ...]
             
-            for profile in profiles:
+            # Track all profile names that exist in DB (with or without photos)
+            all_profile_names = {p.name.lower() for p in all_profiles}
+            all_profile_names_normalized = {normalize_text(p.name) for p in all_profiles}
+            
+            # Track how many profiles (with or without photos) have each digit sequence
+            # This prevents "80" from matching when multiple profiles have "80" (ПТ80, СРЛ80, etc.)
+            all_digits_count = {}  # digits → count of ALL profiles with these digits
+            for profile in all_profiles:
+                digits = self._extract_digits(profile.name)
+                if digits:
+                    all_digits_count[digits] = all_digits_count.get(digits, 0) + 1
+            
+            for profile in profiles_with_photos:
                 photo_info = {
                     'thumb': profile.photo_thumb,
                     'full': profile.photo_full,
@@ -852,14 +955,22 @@ class CatalogService:
                 norm_name = normalize_text(profile.name)
                 normalized_lookup[norm_name] = photo_info
                 
-                # Digits
+                # Extract prefix and digits for prefix+digits matching
+                # e.g., "СРЛ80" → prefix="срл", digits="80"
+                match = re.match(r'^([А-Яа-яA-Za-z]+)(\d+)', profile.name)
+                if match:
+                    prefix = normalize_text(match.group(1))  # Normalize prefix
+                    digits = match.group(2)
+                    prefix_digits_lookup[(prefix, digits)] = photo_info
+                
+                # Digits only (for last resort fallback)
                 digits = self._extract_digits(profile.name)
                 if digits:
                     if digits not in digits_lookup:
                         digits_lookup[digits] = []
                     digits_lookup[digits].append(photo_info)
             
-            # Match input names to profiles using 3-stage search
+            # Match input names to profiles using 4-stage search
             result_dict = {}
             for name in profile_names:
                 if not name or name == '—':
@@ -881,12 +992,31 @@ class CatalogService:
                     result_dict[name] = normalized_lookup[norm_input]
                     continue
                 
-                # Stage 3: Digits match (only if unique)
+                # Stage 3: Prefix + digits match (most specific)
+                match = re.match(r'^([А-Яа-яA-Za-z]+)(\d+)', clean_name)
+                if match:
+                    prefix = normalize_text(match.group(1))  # Normalize prefix
+                    digits = match.group(2)
+                    if (prefix, digits) in prefix_digits_lookup:
+                        result_dict[name] = prefix_digits_lookup[(prefix, digits)]
+                        continue
+                
+                # Stage 4: Digits match (LAST RESORT - only if unique AND profile doesn't exist in DB)
+                # This prevents false positives: if ПТ80 exists in DB, don't match it to СРЛ80
+                # Also prevents "80" from matching when multiple profiles have "80" (ПТ80, СРЛ80, СРМ480, etc.)
                 digits = self._extract_digits(clean_name)
                 if digits and digits in digits_lookup:
                     matches = digits_lookup[digits]
-                    if len(matches) == 1:
-                        result_dict[name] = matches[0]
+                    # Only use digits matching if:
+                    # 1. There's exactly one profile WITH PHOTOS with these digits
+                    # 2. There's exactly one profile IN TOTAL (with or without photos) with these digits
+                    # 3. The input name doesn't exist in DB (so it's not a known profile)
+                    if len(matches) == 1 and all_digits_count.get(digits, 0) == 1:
+                        input_lower = clean_name.lower()
+                        input_norm = normalize_text(clean_name)
+                        # Check if this exact profile name exists in DB
+                        if input_lower not in all_profile_names and input_norm not in all_profile_names_normalized:
+                            result_dict[name] = matches[0]
             
             return result_dict
         

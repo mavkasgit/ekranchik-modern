@@ -149,6 +149,30 @@ async def delete_photo(name: str):
     return {"success": True, "message": "Photos deleted"}
 
 
+@router.delete("/{name}/photo/full")
+async def delete_full_photo(name: str):
+    """
+    Delete only the full photo for a profile (keeps thumbnail).
+    """
+    deleted = await catalog_service.delete_full_photo(profile_name=name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    return {"success": True, "message": "Full photo deleted"}
+
+
+@router.delete("/{name}/photo/thumbnail")
+async def delete_thumbnail(name: str):
+    """
+    Delete only the thumbnail for a profile (keeps full photo).
+    """
+    deleted = await catalog_service.delete_thumbnail(profile_name=name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    return {"success": True, "message": "Thumbnail deleted"}
+
+
 @router.put("/{profile_id}", response_model=ProfileResponse)
 async def update_profile(profile_id: int, data: ProfileCreate):
     """

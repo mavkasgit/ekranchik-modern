@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { 
   Search, Image, X, Upload, Grid, List, Plus, Pencil, Trash2,
-  ArrowUpDown, ArrowUp, ArrowDown
+  ArrowUpDown, ArrowUp, ArrowDown, Maximize2, Minimize2
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -50,6 +50,8 @@ import {
   useCreateOrUpdateProfile,
   useUpdateProfile,
   useDeleteProfile,
+  useDeleteFullPhoto,
+  useDeleteThumbnail,
 } from '@/hooks/useCatalog'
 import type { Profile, ProfileCreate } from '@/types/profile'
 
@@ -182,6 +184,8 @@ function ProfileDialog({
   const updateProfile = useUpdateProfile()
   const uploadPhoto = useUploadPhoto()
   const updateThumbnail = useUpdateThumbnail()
+  const deleteFullPhoto = useDeleteFullPhoto()
+  const deleteThumbnail = useDeleteThumbnail()
   
   const [formData, setFormData] = useState<ProfileCreate>({
     name: '',
@@ -200,6 +204,8 @@ function ProfileDialog({
   const [separateThumbnailFile, setSeparateThumbnailFile] = useState<File | null>(null)
   const [separateThumbnailUrl, setSeparateThumbnailUrl] = useState<string | null>(null)
   const [thumbnailCropArea, setThumbnailCropArea] = useState({ x: 0, y: 0, width: 0, height: 0 })
+  // Fullscreen mode
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   useEffect(() => {
     if (profile && (mode === 'edit' || mode === 'view')) {
@@ -226,6 +232,7 @@ function ProfileDialog({
     setSeparateThumbnailUrl(null)
     setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
     setEditingThumbnail(false)
+    setIsFullscreen(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id, mode, open])
 
@@ -249,6 +256,50 @@ function ProfileDialog({
       img.onload = null // Cleanup to prevent setting state on unmounted component
     }
   }, [previewUrl])
+
+  // Handle ESC key for fullscreen
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        e.stopPropagation()
+        setIsFullscreen(false)
+      }
+    }
+    
+    if (open && isFullscreen) {
+      window.addEventListener('keydown', handleEsc)
+      return () => window.removeEventListener('keydown', handleEsc)
+    }
+  }, [open, isFullscreen])
+
+  // Fullscreen API management
+  useEffect(() => {
+    if (!isFullscreen) return
+
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setIsFullscreen(false)
+      }
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    }
+  }, [isFullscreen])
+
+  // Request fullscreen when isFullscreen becomes true
+  useEffect(() => {
+    if (!isFullscreen) return
+
+    const fullscreenElement = document.getElementById('fullscreen-photo-container-catalog')
+    if (fullscreenElement && !document.fullscreenElement) {
+      fullscreenElement.requestFullscreen().catch(() => {
+        console.log('Fullscreen not supported')
+      })
+    }
+  }, [isFullscreen])
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -468,17 +519,81 @@ function ProfileDialog({
     }
   }
 
-  const cancelCrop = () => {
-    // Clear crop area - no custom thumbnail will be created
-    setCropArea({ x: 0, y: 0, width: 0, height: 0 })
-    // Also clear separate thumbnail
-    setSeparateThumbnailFile(null)
-    setSeparateThumbnailUrl(null)
-    setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
-    setEditingThumbnail(false)
+  const handleDeleteFullPhoto = async () => {
+    if (!profile) return
+    try {
+      await deleteFullPhoto.mutateAsync(profile.name)
+      // Clear preview and pending file
+      setPreviewUrl(null)
+      setPendingFile(null)
+      setImageSize(null)
+      setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      setSeparateThumbnailFile(null)
+      setSeparateThumbnailUrl(null)
+      setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      setEditingThumbnail(false)
+      toast({ title: 'Полное фото удалено' })
+    } catch {
+      toast({ title: 'Ошибка удаления фото', variant: 'destructive' })
+    }
+  }
+
+  const handleDeleteThumbnail = async () => {
+    if (!profile) return
+    try {
+      await deleteThumbnail.mutateAsync(profile.name)
+      // Clear thumbnail-related state
+      setSeparateThumbnailFile(null)
+      setSeparateThumbnailUrl(null)
+      setThumbnailCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      setCropArea({ x: 0, y: 0, width: 0, height: 0 })
+      setEditingThumbnail(false)
+      toast({ title: 'Превью удалено' })
+    } catch {
+      toast({ title: 'Ошибка удаления превью', variant: 'destructive' })
+    }
   }
 
   const dialogTitle = mode === 'create' ? 'Новый профиль' : mode === 'edit' ? 'Редактирование' : profile?.name || 'Просмотр'
+
+  // Fullscreen overlay - using browser fullscreen API
+  useEffect(() => {
+    if (!isFullscreen) return
+
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setIsFullscreen(false)
+      }
+    }
+
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsFullscreen(false)
+      }
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    window.addEventListener('keydown', handleEsc)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      window.removeEventListener('keydown', handleEsc)
+    }
+  }, [isFullscreen])
+
+  useEffect(() => {
+    if (isFullscreen && previewUrl) {
+      const fullscreenElement = document.getElementById('fullscreen-photo-container')
+      if (fullscreenElement && !document.fullscreenElement) {
+        fullscreenElement.requestFullscreen().catch(() => {
+          // Fallback if fullscreen not supported
+          console.log('Fullscreen not supported')
+        })
+      }
+    } else if (!isFullscreen && document.fullscreenElement) {
+      document.exitFullscreen()
+    }
+  }, [isFullscreen, previewUrl])
 
   // Calculate dialog size based on actual image pixels
   // Image should be shown at 1:1 scale or smaller, never stretched
@@ -536,11 +651,23 @@ function ProfileDialog({
       {/* Photo area - left side on desktop, top on mobile */}
       <div 
         className={`bg-muted flex flex-col items-center justify-center overflow-auto relative ${
-          isMobile ? 'h-[80vh] w-full' : 'flex-1'
+          isMobile ? 'h-[70vh] w-full' : 'flex-1'
         }`}
         onDrop={isEditMode && !editingThumbnail ? handleDrop : undefined}
         onDragOver={isEditMode ? (e) => e.preventDefault() : undefined}
       >
+        {/* Fullscreen button - show in view mode or when photo exists (desktop only) */}
+        {previewUrl && !isEditMode && !isMobile && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`absolute z-10 top-2 right-2`}
+            onClick={() => setIsFullscreen(true)}
+            title="Развернуть на весь экран"
+          >
+            <Maximize2 className="h-5 w-5" />
+          </Button>
+        )}
         {/* Label for thumbnail editing mode */}
         {editingThumbnail && isEditMode && (
           <div className="absolute top-2 left-2 z-10 bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-medium">
@@ -701,7 +828,8 @@ function ProfileDialog({
           )
         ) : previewUrl ? (
           <div 
-            className="relative w-full h-full flex items-center justify-center select-none"
+            className={`relative w-full h-full flex items-center justify-center select-none ${isViewMode ? 'cursor-pointer' : ''}`}
+            onClick={isViewMode ? () => setIsFullscreen(true) : undefined}
             onMouseDown={isEditMode && photoMode === 'crop' && !separateThumbnailUrl ? (e) => {
               e.preventDefault() // Prevent browser selection
               // Start drawing new crop area from click point
@@ -990,14 +1118,28 @@ function ProfileDialog({
                         </>
                       ) : (
                         <>
-                          <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => document.getElementById('photo-input')?.click()}>
-                            Заменить фото
-                          </Button>
                           <Button type="button" variant="outline" size="sm" className="w-full" onClick={() => setEditingThumbnail(true)}>
                             {separateThumbnailUrl ? 'Редактировать превью' : 'Загрузить превью отдельно'}
                           </Button>
-                          <Button type="button" variant="outline" size="sm" className="w-full" onClick={cancelCrop}>
-                            Сбросить превью
+                          <Button 
+                            type="button" 
+                            variant="destructive" 
+                            size="sm" 
+                            className="w-full" 
+                            onClick={handleDeleteFullPhoto}
+                            disabled={deleteFullPhoto.isPending}
+                          >
+                            Удалить полное фото
+                          </Button>
+                          <Button 
+                            type="button" 
+                            variant="destructive" 
+                            size="sm" 
+                            className="w-full" 
+                            onClick={handleDeleteThumbnail}
+                            disabled={deleteThumbnail.isPending}
+                          >
+                            Удалить превью
                           </Button>
                           {!isMobile && !separateThumbnailUrl && (
                             <p className="text-xs text-muted-foreground text-center">
@@ -1028,7 +1170,8 @@ function ProfileDialog({
       )
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent 
         className={`p-0 gap-0 ${
           isMobile 
@@ -1054,6 +1197,57 @@ function ProfileDialog({
         )}
       </DialogContent>
     </Dialog>
+    
+    {/* Fullscreen overlay - desktop only */}
+    {isFullscreen && previewUrl && !isMobile && (
+      <div 
+        id="fullscreen-photo-container-catalog"
+        className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
+        onClick={() => setIsFullscreen(false)}
+      >
+        {/* Large close area for mobile - top-left corner */}
+        {isMobile && (
+          <div
+            className="absolute top-0 left-0 w-16 h-16 z-20 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation()
+              setIsFullscreen(false)
+            }}
+          />
+        )}
+        
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute top-4 right-4 text-white hover:bg-white/20 z-10"
+          onClick={(e) => {
+            e.stopPropagation()
+            setIsFullscreen(false)
+          }}
+        >
+          <Minimize2 className="h-6 w-6" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute top-4 right-16 text-white hover:bg-white/20 z-10"
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpenChange(false)
+            setIsFullscreen(false)
+          }}
+        >
+          <X className="h-6 w-6" />
+        </Button>
+        <img
+          src={previewUrl}
+          alt={profile?.name || 'Фото'}
+          className="max-w-full max-h-full object-contain cursor-pointer"
+          onClick={(e) => e.stopPropagation()}
+        />
+      </div>
+    )}
+  </>
   )
 }
 
