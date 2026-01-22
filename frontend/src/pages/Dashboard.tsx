@@ -128,7 +128,7 @@ interface ProfileData {
   notes: string | null
 }
 
-// Photo Modal - exact copy of Catalog ProfileDialog view mode
+// Photo Modal - with fullscreen support
 function PhotoModal({
   open,
   onClose,
@@ -142,6 +142,7 @@ function PhotoModal({
 }) {
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
   const [profileData, setProfileData] = useState<ProfileData | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   // Load image dimensions
   useEffect(() => {
@@ -167,6 +168,68 @@ function PhotoModal({
       .then(data => setProfileData(data))
       .catch(() => setProfileData(null))
   }, [open, profileName])
+
+  // Reset fullscreen when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setIsFullscreen(false)
+    }
+  }, [open])
+
+  // Handle ESC key
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isFullscreen) {
+          setIsFullscreen(false)
+        } else {
+          onClose()
+        }
+      }
+    }
+    
+    if (open) {
+      window.addEventListener('keydown', handleEsc)
+      return () => window.removeEventListener('keydown', handleEsc)
+    }
+  }, [open, isFullscreen, onClose])
+
+  // Fullscreen API management
+  useEffect(() => {
+    if (!isFullscreen) return
+
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setIsFullscreen(false)
+      }
+    }
+
+    const handleEscFullscreen = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsFullscreen(false)
+      }
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    window.addEventListener('keydown', handleEscFullscreen)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      window.removeEventListener('keydown', handleEscFullscreen)
+    }
+  }, [isFullscreen])
+
+  // Request fullscreen when isFullscreen becomes true
+  useEffect(() => {
+    if (!isFullscreen) return
+
+    const fullscreenElement = document.getElementById('fullscreen-photo-container')
+    if (fullscreenElement && !document.fullscreenElement) {
+      fullscreenElement.requestFullscreen().catch(() => {
+        console.log('Fullscreen not supported')
+      })
+    }
+  }, [isFullscreen])
 
   // Calculate dialog size based on actual image pixels (like Catalog)
   const dialogSize = useMemo(() => {
@@ -205,8 +268,11 @@ function PhotoModal({
 
   if (!photoUrl) return null
 
+  // Fullscreen mode - using browser fullscreen API (rendered at end of component)
+
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <>
+      <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent 
         className="p-0 gap-0 top-[5%] translate-y-0"
         style={{ width: `${dialogSize.width}px`, height: `${dialogSize.height}px`, maxWidth: 'calc(100vw - 100px)' }}
@@ -215,7 +281,19 @@ function PhotoModal({
         <div className="flex h-full">
           {/* Photo area - left side */}
           <div className="flex-1 bg-muted flex items-center justify-center overflow-auto relative">
-            <div className="relative w-full h-full flex items-center justify-center select-none">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute top-2 right-2 z-10"
+              onClick={() => setIsFullscreen(true)}
+              title="Развернуть на весь экран"
+            >
+              <Maximize2 className="h-5 w-5" />
+            </Button>
+            <div 
+              className="relative w-full h-full flex items-center justify-center select-none cursor-pointer"
+              onClick={() => setIsFullscreen(true)}
+            >
               <img 
                 src={photoUrl} 
                 alt={profileName} 
@@ -249,6 +327,57 @@ function PhotoModal({
         </div>
       </DialogContent>
     </Dialog>
+    
+    {/* Fullscreen overlay - desktop only */}
+    {isFullscreen && photoUrl && typeof window !== 'undefined' && window.innerWidth >= 768 && (
+      <div 
+        id="fullscreen-photo-container"
+        className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
+        onClick={() => setIsFullscreen(false)}
+      >
+        {/* Large close area for mobile - top-left corner */}
+        {typeof window !== 'undefined' && window.innerWidth < 768 && (
+          <div
+            className="absolute top-0 left-0 w-16 h-16 z-20 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation()
+              setIsFullscreen(false)
+            }}
+          />
+        )}
+        
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute top-4 right-4 text-white hover:bg-white/20 z-10"
+          onClick={(e) => {
+            e.stopPropagation()
+            setIsFullscreen(false)
+          }}
+        >
+          <Minimize2 className="h-6 w-6" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute top-4 right-16 text-white hover:bg-white/20 z-10"
+          onClick={(e) => {
+            e.stopPropagation()
+            onClose()
+            setIsFullscreen(false)
+          }}
+        >
+          <X className="h-6 w-6" />
+        </Button>
+        <img
+          src={photoUrl}
+          alt={profileName}
+          className="max-w-full max-h-full object-contain cursor-pointer"
+          onClick={(e) => e.stopPropagation()}
+        />
+      </div>
+    )}
+    </>
   )
 }
 
