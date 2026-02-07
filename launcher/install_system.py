@@ -7,7 +7,8 @@ def run_command(command, cwd=None):
     """Helper function to run shell commands."""
     try:
         print(f"Executing: {' '.join(command)} in {cwd if cwd else os.getcwd()}")
-        result = subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True)
+        # On Windows, use shell=True for .CMD files like npm
+        result = subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True, shell=True)
         print(result.stdout)
         if result.stderr:
             print(result.stderr)
@@ -15,18 +16,17 @@ def run_command(command, cwd=None):
         print(f"Error executing command: {' '.join(command)}")
         print(f"Stdout: {e.stdout}")
         print(f"Stderr: {e.stderr}")
-        sys.exit(1)
     except FileNotFoundError:
         print(f"Error: Command not found. Make sure {' '.join(command).split(' ')[0]} is installed and in your PATH.")
-        sys.exit(1)
 
 def check_command(command_name):
     """Checks if a command is available in the system's PATH."""
-    if shutil.which(command_name):
+    result = shutil.which(command_name)
+    print(f"Checking for '{command_name}': {result}")
+    if result:
         return True
     else:
         print(f"Error: '{command_name}' not found. Please install it and add to your system PATH.")
-        sys.exit(1)
 
 def install_backend_dependencies():
     """Installs backend Python dependencies."""
@@ -67,8 +67,9 @@ def main():
     install_frontend_dependencies()
     install_launcher_dependencies()
 
-    print("
-System installation completed successfully!")
+    print("System installation completed successfully!")
+    print("\nPress Enter to close this window...")
+    input()
 
 if __name__ == "__main__":
     main()
