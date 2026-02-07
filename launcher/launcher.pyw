@@ -1284,16 +1284,6 @@ if HAS_GUI:
             menu = pystray.Menu(
                 pystray.MenuItem("Показать окно", self._show_from_tray, default=True),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Запустить всё", self._start_all),
-                pystray.MenuItem("Остановить всё", self._stop_all),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Запустить Backend", lambda: self.pages["backend"].start()),
-                pystray.MenuItem("Запустить Frontend", lambda: self.pages["frontend"].start()),
-                pystray.MenuItem("Запустить Kiosk", lambda: self._start_kiosk()),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Показать/Скрыть браузер", lambda: self._toggle_browser_visibility()),
-                pystray.MenuItem("Закрыть браузер", lambda: self._close_browser()),
-                pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Выход", self._full_exit)
             )
             

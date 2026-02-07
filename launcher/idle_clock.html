@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Idle Screen</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f172a;
+            color: #e0e7ff;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .center-content {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .time {
+            font-size: 300px;
+            font-weight: bold;
+            color: #e0e7ff;
+            letter-spacing: -5px;
+        }
+
+        .date {
+            font-size: 48px;
+            font-weight: 300;
+            color: #94a3b8;
+            margin-top: 20px;
+            letter-spacing: 1px;
+        }
+
+        .logo {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            width: 300px;
+            opacity: 1;
+        }
+
+
+
+        /* Плавное появление */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        body {
+            animation: fadeIn 0.5s ease-in;
+        }
+    </style>
+</head>
+<body>
+    <div class="center-content">
+        <div class="time" id="time">21:47</div>
+        <div class="date" id="date">Пятница, 7 февраля</div>
+    </div>
+
+    <img src="ktm_colored.png" alt="Logo" class="logo">
+
+    <script>
+        // Обновление времени
+        function updateTime() {
+            const now = new Date();
+            
+            // Время
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            document.getElementById('time').textContent = `${hours}:${minutes}`;
+            
+            // Дата
+            const dayNames = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+            const monthNames = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+                              'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+            
+            const dayName = dayNames[now.getDay()];
+            const day = now.getDate();
+            const monthName = monthNames[now.getMonth()];
+            
+            document.getElementById('date').textContent = `${dayName}, ${day} ${monthName}`;
+        }
+
+        // Запускаем обновления
+        updateTime();
+        setInterval(updateTime, 1000);
+    </script>
+</body>
+</html>

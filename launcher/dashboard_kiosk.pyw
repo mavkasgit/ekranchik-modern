@@ -17,20 +17,7 @@ if sys.platform == 'win32':
 import webview
 import time
 import threading
-import logging
 from pathlib import Path
-
-# Настройка логирования
-log_file = Path(__file__).parent / "kiosk.log"
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, mode='w', encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # --- Fix for Tray Menu Positioning on Windows ---
 # Set DPI awareness to prevent menu from appearing in the center of the screen
@@ -39,14 +26,12 @@ if sys.platform == 'win32':
         from ctypes import windll
         # Per Monitor v2 (Windows 10 Creators Update+)
         windll.shcore.SetProcessDpiAwareness(2)
-        logger.info("Successfully set DPI awareness to Per Monitor v2.")
     except (AttributeError, OSError):
         try:
             # System Aware (older Windows)
             windll.user32.SetProcessDPIAware()
-            logger.info("Successfully set DPI awareness to System Aware.")
         except Exception as e:
-            logger.error(f"Failed to set DPI awareness: {e}")
+            pass
 # ------------------------------------------------
 
 try:
@@ -55,7 +40,6 @@ try:
     HAS_TRAY = True
 except ImportError as e:
     HAS_TRAY = False
-    logger.error(f"pystray import failed: {e}")
     sys.exit(1)
 
 # Путь к иконке
@@ -69,7 +53,6 @@ if sys.platform == 'win32':
         HAS_WIN32 = True
     except ImportError as e:
         HAS_WIN32 = False
-        logger.warning(f"win32api not available: {e}")
 else:
     HAS_WIN32 = False
 
@@ -106,18 +89,12 @@ def get_monitors():
             # Теперь monitors[0] всегда будет левым экраном, а monitors[1] - правым.
             monitors.sort(key=lambda m: m['left'])
             
-            # Логируем для проверки
-            logger.info(f"--- Detected {len(monitors)} monitors (Sorted Left-to-Right) ---")
-            for i, m in enumerate(monitors):
-                logger.info(f"Monitor {i}: {m['width']}x{m['height']} at X={m['left']} ({m['name']})")
-                
             return monitors
             
         except Exception as e:
-            logger.error(f"win32api detailed detection failed: {e}")
+            pass
     
     # Fallback (заглушка)
-    logger.warning("get_monitors: Returning a single fallback monitor.")
     return [{
         'left': 0, 'top': 0, 'right': 1920, 'bottom': 1080,
         'width': 1920, 'height': 1080,
@@ -134,16 +111,16 @@ class KioskDashboard:
         self.is_fullscreen = True
         self.current_monitor_index = monitor_index # Текущий индекс монитора
         self.geometry = geometry
+        self.is_idle_mode = False  # Флаг режима простоя
+        self.original_url = url  # Сохраняем оригинальный URL
         
     def on_loaded(self):
         """Callback when page is loaded."""
-        logger.info(f"Dashboard loaded at {self.url}")
         # Устанавливаем иконку окна после загрузки страницы
         self._set_window_icon()
         
     def on_closing(self):
         """Prevent closing via Alt+F4 or X button."""
-        logger.info("Close blocked - use tray menu to exit")
         return False
     
     def _set_window_icon(self):
@@ -179,7 +156,6 @@ class KioskDashboard:
                 )
                 
                 if not icon_big:
-                    logger.warning(f"LoadImageW (big) failed")
                     return
                 
                 # Ищем окно по заголовку
@@ -187,8 +163,6 @@ class KioskDashboard:
                 
                 if not hwnd:
                     # Пробуем найти по частичному совпадению
-                    logger.info("FindWindowW failed, trying EnumWindows...")
-                    
                     EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
                     found_hwnd = [None]
                     
@@ -199,7 +173,6 @@ class KioskDashboard:
                             ctypes.windll.user32.GetWindowTextW(hwnd_enum, buff, length + 1)
                             if "Ekranchik" in buff.value or "pywebview" in buff.value.lower():
                                 found_hwnd[0] = hwnd_enum
-                                logger.info(f"Found window: '{buff.value}' hwnd={hwnd_enum}")
                                 return False
                         return True
                     
@@ -217,14 +190,12 @@ class KioskDashboard:
                         SetClassLongPtrW(hwnd, GCL_HICON, icon_big)
                         SetClassLongPtrW(hwnd, GCL_HICONSM, icon_small or icon_big)
                     except Exception as e:
-                        logger.warning(f"SetClassLongPtrW failed: {e}")
-                    
-                    logger.info(f"Window icon set successfully (hwnd={hwnd})")
+                        pass
                 else:
-                    logger.warning("Could not find window handle")
+                    pass
                     
             except Exception as e:
-                logger.error(f"Failed to set window icon: {e}")
+                pass
         
         # Запускаем в отдельном потоке с задержкой
         threading.Thread(target=lambda: (time.sleep(0.5), do_set_icon()), daemon=True).start()
@@ -237,12 +208,10 @@ class KioskDashboard:
         if self.geometry:
             x, y = self.geometry['x'], self.geometry['y']
             width, height = self.geometry['width'], self.geometry['height']
-            logger.info(f"Opening with manual geometry: {width}x{height} at ({x},{y})")
         else:
             target_monitor = None
             # Если запрошенный монитор не существует или индекс некорректен, берем основной
             if self.current_monitor_index >= len(monitors) or self.current_monitor_index < 0:
-                logger.warning(f"Monitor index {self.current_monitor_index} is out of bounds. Falling back to primary.")
                 target_monitor = next((m for m in monitors if m['is_primary']), monitors[0])
                 # Обновляем индекс на фактический
                 self.current_monitor_index = monitors.index(target_monitor)
@@ -251,7 +220,6 @@ class KioskDashboard:
             
             x, y = target_monitor['left'], target_monitor['top']
             width, height = target_monitor['width'], target_monitor['height']
-            logger.info(f"Opening on: '{target_monitor['name']}' Monitor #{self.current_monitor_index} at ({x}, {y})")
 
         self.window = webview.create_window(
             title='Ekranchik Dashboard',
@@ -282,14 +250,11 @@ class KioskDashboard:
 
         monitors = get_monitors()
         if len(monitors) < 2:
-            logger.info("Only 1 monitor detected, cannot switch.")
             return
 
         # 1. Вычисляем следующий индекс
         next_index = (self.current_monitor_index + 1) % len(monitors)
         target = monitors[next_index]
-        
-        logger.info(f"Switching from Monitor {self.current_monitor_index} to {next_index}")
 
         # 2. ВАЖНО: Выходим из Fullscreen перед перемещением
         if self.is_fullscreen:
@@ -312,8 +277,28 @@ class KioskDashboard:
         if self.window:
             self.window.evaluate_js("location.reload()")
     
+    def toggle_idle_screen(self):
+        """Переключение режима простоя (часы)."""
+        if not self.window:
+            return
+        
+        if self.is_idle_mode:
+            # Возвращаемся к дашборду
+            self.is_idle_mode = False
+            self.window.load_url(self.original_url)
+        else:
+            # Переключаемся на экран простоя
+            self.is_idle_mode = True
+            
+            # Получаем путь к HTML файлу
+            idle_html = Path(__file__).parent / "idle_clock.html"
+            if idle_html.exists():
+                idle_url = idle_html.as_uri()
+                self.window.load_url(idle_url)
+            else:
+                self.is_idle_mode = False
+    
     def quit_app(self):
-        logger.info("Exiting app...")
         if self.tray_icon:
             self.tray_icon.stop()
         if self.window:
@@ -340,10 +325,8 @@ class KioskDashboard:
             
             from icons import get_kiosk_tray_icon
             image = get_kiosk_tray_icon()
-            logger.info("Kiosk icon loaded successfully")
             
         except Exception as e:
-            logger.error(f"Failed to load kiosk icon: {e}")
             # Fallback - создаём простую синюю иконку
             width = 64
             height = 64
@@ -356,6 +339,7 @@ class KioskDashboard:
         menu = pystray.Menu(
             pystray.MenuItem("Переключить монитор", lambda: self.switch_monitor()),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("🕐 Режим простоя (часы)", lambda: self.toggle_idle_screen()),
             pystray.MenuItem("Обновить страницу", lambda: self.reload_page()),
             pystray.MenuItem("Вкл/Выкл полный экран", lambda: self.toggle_fullscreen()),
             pystray.Menu.SEPARATOR,
@@ -561,7 +545,6 @@ def main():
         result = launcher.run()
         
         if result is None:
-            logger.info("User cancelled")
             sys.exit(0)
         
         url = result["url"]
@@ -573,14 +556,10 @@ def main():
             parts = list(map(int, args.geometry.split(',')))
             if len(parts) == 4:
                 geometry = {'x': parts[0], 'y': parts[1], 'width': parts[2], 'height': parts[3]}
-                logger.info(f"Received geometry argument: {geometry}")
         except ValueError:
-            logger.error(f"Could not parse geometry: {args.geometry}")
+            pass
 
-    logger.info(f"Starting kiosk: URL={url}, Monitor={monitor}")
-    
     if not check_server_running(url, timeout=3):
-        logger.error(f"Server at {url} is not running! Exiting.")
         # Показываем сообщение об ошибке
         try:
             import tkinter as tk
