@@ -52,6 +52,11 @@ testdata/*
 # Logs
 *.log
 
+# Config files (service/temporary)
+kiosk_config.json
+simulator_config.json
+tsconfig.tsbuildinfo
+
 # Node.js
 node_modules/
 npm-debug.log*
