@@ -69,7 +69,7 @@ KIOSK_CMD = [PYTHON_EXE, "dashboard_kiosk.pyw", "--no-gui"]
 
 # Настройки браузера в трее
 CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-BROWSER_URL = "http://ktm.local"
+BROWSER_URL = "http://localhost:5173"
 BROWSER_PROFILE_DIR = None  # Будет установлен в __init__
 
 # Windows-specific
@@ -973,9 +973,6 @@ if HAS_GUI:
             self.frontend_status = StatusBadge(status_frame, "Frontend", False)
             self.frontend_status.pack(side="left", padx=(0, 16))
             
-            self.kiosk_status = StatusBadge(status_frame, "Kiosk", False)
-            self.kiosk_status.pack(side="left", padx=(0, 16))
-            
             # Кнопки управления
             ctk.CTkButton(
                 status_frame, text="Запустить всё", width=110, height=32,
@@ -989,22 +986,6 @@ if HAS_GUI:
                 font=ctk.CTkFont(family=FONTS['small'][0], size=11),
                 fg_color=COLORS['border'], hover_color=COLORS['danger'],
                 corner_radius=6, command=self._stop_all
-            ).pack(side="left", padx=(0, 8))
-            
-            # Кнопка киоска
-            ctk.CTkButton(
-                status_frame, text="🖥️ Киоск", width=90, height=32,
-                font=ctk.CTkFont(family=FONTS['small'][0], size=11),
-                fg_color=COLORS['warning'], hover_color=COLORS['accent_hover'],
-                corner_radius=6, command=self._start_kiosk
-            ).pack(side="left", padx=(0, 8))
-            
-            # Кнопка открытия браузера в трее
-            ctk.CTkButton(
-                status_frame, text="🌐 Браузер", width=90, height=32,
-                font=ctk.CTkFont(family=FONTS['small'][0], size=11),
-                fg_color=COLORS['accent'], hover_color=COLORS['accent_hover'],
-                corner_radius=6, command=self._open_tray_browser
             ).pack(side="left", padx=(0, 8))
             
             # Кнопка выхода
@@ -1294,11 +1275,6 @@ if HAS_GUI:
                 self.frontend_status.set_status(True, f"Frontend: PID {self.frontend_manager.pid}")
             else:
                 self.frontend_status.set_status(False, "Frontend: Остановлен")
-            
-            if self.kiosk_manager.is_running:
-                self.kiosk_status.set_status(True, f"Kiosk: PID {self.kiosk_manager.pid}")
-            else:
-                self.kiosk_status.set_status(False, "Kiosk: Остановлен")
         
         def _setup_tray(self):
             """Настройка System Tray"""

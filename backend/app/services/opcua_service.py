@@ -18,11 +18,11 @@ logger = logging.getLogger("OPCUA")
 # Убираем спам от библиотеки asyncua (оставляем только ошибки)
 logging.getLogger("asyncua").setLevel(logging.WARNING)
 
-# Проверка наличия библиотеки
+# Проверка наличия библиотеки asyncua
+OPCUA_AVAILABLE = True
 try:
     from asyncua import Client, ua
     from asyncua.ua.uaerrors import BadTooManySessions, BadSessionIdInvalid
-    OPCUA_AVAILABLE = True
 except ImportError:
     OPCUA_AVAILABLE = False
     logger.warning("[OPC UA] asyncua not installed. Run: pip install asyncua")
@@ -48,17 +48,22 @@ class OPCUAService:
     """
     
     def __init__(self):
-        self._url = settings.OPCUA_ENDPOINT
         self._running = False
         self._connected = False
         self._state = OPCUAState.DISCONNECTED
         self._last_update = datetime.min
-        
-        # --- НАСТРОЙКИ ---
-        # 1.0 сек - частота обновления данных (1 раз в секунду)
-        self._poll_interval = 1.0
-        # Размер пачки для чтения (безопасно для Omron NX)
         self._batch_size = 100
+        self._client: Optional[Client] = None
+
+        if settings.SIMULATION_ENABLED:
+            self._url = settings.OPCUA_SIM_ENDPOINT
+            self._poll_interval = settings.OPCUA_SIM_POLL_INTERVAL
+            logger.info(f"[OPC UA] Активирован режим симуляции. Эндпоинт: {self._url}")
+        else:
+            self._url = settings.OPCUA_ENDPOINT
+            self._poll_interval = settings.OPCUA_POLL_INTERVAL
+            logger.info(f"[OPC UA] Активирован режим реального OPC UA сервера. Эндпоинт: {self._url}")
+
         
         # Кэш: { "ns=4;s=Name": value }
         self._cache: Dict[str, Any] = {}
@@ -167,6 +172,9 @@ class OPCUAService:
     
     async def start(self):
         """Запуск фоновой задачи опроса."""
+        if not settings.OPCUA_ENABLED:
+            logger.info("[OPC UA] Сервис OPC UA отключен в настройках.")
+            return
         if not OPCUA_AVAILABLE:
             logger.error("[OPC UA] Библиотека asyncua не установлена! pip install asyncua")
             return
@@ -387,15 +395,16 @@ class OPCUAService:
                 # Получаем объекты Node (локальная операция, быстро)
                 ua_nodes = [client.get_node(nid) for nid in chunk]
                 
-                # СЕТЕВОЙ ЗАПРОС: Читаем пачку значений с атрибутами
-                data_values = await client.read_attributes(ua_nodes, ua.AttributeIds.Value)
+                # СЕТЕВОЙ ЗАПРОС: Читаем пачку значений
+                # Используем read_values() вместо несуществующего read_attributes()
+                data_values = await client.read_values(ua_nodes)
                 
-                # Обновляем кэш, проверяя статус каждого значения
-                for node_id, dv in zip(chunk, data_values):
-                    if dv.StatusCode.is_good():
-                        self._cache[node_id] = dv.Value.Value
+                # Обновляем кэш, проверяя каждое значение
+                for node_id, value in zip(chunk, data_values):
+                    if value is not None:
+                        self._cache[node_id] = value
                     else:
-                        logger.warning(f"Bad status for node {node_id}: {dv.StatusCode}")
+                        logger.warning(f"Null value for node {node_id}")
                         # Можно добавить логику добавления в blacklist здесь, если нужно
                         # self._blacklist.add(node_id)
                 

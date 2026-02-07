@@ -30,17 +30,19 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
     
-    # Excel file path
-    EXCEL_FILE_PATH: str = ""
-    
-    # OPC UA Configuration (Omron PLC)
-    OPCUA_ENABLED: bool = True
+    # --- Simulation Switch ---
+    SIMULATION_ENABLED: bool = False # Set to True to use simulated OPC UA and test Excel file
+
+    # --- OPC UA Configuration ---
+    OPCUA_ENABLED: bool = True # Master switch to enable/disable OPC UA service
     OPCUA_ENDPOINT: str = "opc.tcp://172.17.11.131:4840/"
-    OPCUA_POLL_INTERVAL: int = 5  # Seconds between polls
-    
-    # Telegram Bot
-    TELEGRAM_TOKEN: str = ""
-    BOT_PASSWORD: str = "1122"
+    OPCUA_SIM_ENDPOINT: str = "opc.tcp://127.0.0.1:4840/freeopcua/server/" # Simulator endpoint
+    OPCUA_POLL_INTERVAL: int = 5  # Seconds between polls for real server
+    OPCUA_SIM_POLL_INTERVAL: int = 1  # Seconds between polls for simulation
+
+    # Excel file paths
+    EXCEL_REAL_FILE_PATH: str = "//ktm-disk/Оператор/Учет КПЗ 2026.xlsm"
+    EXCEL_TEST_FILE_PATH: str = "../testdata/Учет КПЗ 2026.xlsm"
     
     # Static files
     STATIC_DIR: str = "../static"  # Relative to backend folder
@@ -53,9 +55,10 @@ class Settings(BaseSettings):
     @property
     def excel_path(self) -> Path | None:
         """Get Excel file path as Path object"""
-        if self.EXCEL_FILE_PATH:
-            return Path(self.EXCEL_FILE_PATH)
-        return None
+        if self.SIMULATION_ENABLED:
+            return Path(self.EXCEL_TEST_FILE_PATH) if self.EXCEL_TEST_FILE_PATH else None
+        else:
+            return Path(self.EXCEL_REAL_FILE_PATH) if self.EXCEL_REAL_FILE_PATH else None
     
     @property
     def images_path(self) -> Path:

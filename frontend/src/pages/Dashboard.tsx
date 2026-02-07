@@ -78,10 +78,10 @@ function formatTime(time: string | undefined): string {
   return time
 }
 
-// Format date with year 2025 (DD.MM.YY -> DD.MM.2025)
+// Format date with year 2026 (DD.MM.YY -> DD.MM.2026)
 function formatDate(date: string | undefined): string {
   if (!date) return '—'
-  // Handle formats like "28.10.25" or "29.11.2025"
+  // Handle formats like "28.10.26" or "29.11.2026"
   const parts = date.split('.')
   if (parts.length === 3) {
     const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
