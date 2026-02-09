@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, Loader2
+  Image, Maximize2, Minimize2, X
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -22,7 +22,6 @@ import {
   DialogContent,
 } from '@/components/ui/dialog'
 import { Checkbox } from '@/components/ui/checkbox'
-import { useToast } from '@/hooks/use-toast'
 
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
@@ -32,19 +31,15 @@ const FILTERS_KEY = 'ekranchik_filters'
 
 interface Filters {
   loadingLimit: number
-  unloadingLimit: number
   realtimeLimit: number
   showLoading: boolean
-  showUnloading: boolean
   showRealtime: boolean
 }
 
 const defaultFilters: Filters = {
   loadingLimit: 10,
-  unloadingLimit: 10,
   realtimeLimit: 10,
   showLoading: true,
-  showUnloading: false,
   showRealtime: true,
 }
 
@@ -58,7 +53,6 @@ function loadFilters(): Filters {
         ...parsed,
         // Ensure limits are valid (min 1)
         loadingLimit: Math.max(1, parsed.loadingLimit || defaultFilters.loadingLimit),
-        unloadingLimit: Math.max(1, parsed.unloadingLimit || defaultFilters.unloadingLimit),
         realtimeLimit: Math.max(1, parsed.realtimeLimit || defaultFilters.realtimeLimit),
       }
     }
@@ -552,26 +546,6 @@ function StatusBar() {
   )
 }
 
-// Update row with progress bar
-function UpdateRow({ progress }: { progress: number }) {
-  return (
-    <TableRow className="bg-blue-500/10 border-blue-500/30">
-      <TableCell colSpan={10} className="py-2">
-        <div className="flex items-center justify-center gap-3">
-          <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-          <span className="text-sm font-medium text-blue-500">Обновление данных...</span>
-          <div className="w-[200px] h-2 bg-muted rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-blue-500 transition-all duration-300 ease-out"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <span className="text-xs text-muted-foreground w-10">{Math.round(progress)}%</span>
-        </div>
-      </TableCell>
-    </TableRow>
-  )
-}
 
 // Data table
 function DataTable({
@@ -579,7 +553,6 @@ function DataTable({
   onPhotoClick,
   highlightNew = false,
   newIds = new Set<string>(),
-  isUpdating = false,
   isFullscreen = false,
   showEntryExit = false,
 }: {
@@ -587,32 +560,9 @@ function DataTable({
   onPhotoClick: (url: string, name: string) => void
   highlightNew?: boolean
   newIds?: Set<string>
-  isUpdating?: boolean
   isFullscreen?: boolean
   showEntryExit?: boolean
 }) {
-  const [progress, setProgress] = useState(0)
-  
-  // Fake progress animation
-  useEffect(() => {
-    if (isUpdating) {
-      setProgress(0)
-      const interval = setInterval(() => {
-        setProgress(p => {
-          if (p >= 90) return p // Stop at 90%, wait for real completion
-          return p + Math.random() * 15
-        })
-      }, 200)
-      return () => clearInterval(interval)
-    } else {
-      // Complete to 100% when done
-      if (progress > 0 && progress < 100) {
-        setProgress(100)
-        setTimeout(() => setProgress(0), 500)
-      }
-    }
-  }, [isUpdating])
-
   return (
     <div className={`overflow-auto text-xs ${isFullscreen ? 'max-h-screen' : 'rounded-md border max-h-[500px]'}`}>
       <Table>
@@ -631,7 +581,6 @@ function DataTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isUpdating && <UpdateRow progress={progress} />}
           {data.map((hanger, idx) => {
             const rowId = showEntryExit 
               ? `${hanger.number}-${hanger.exit_date}-${hanger.exit_time}`
@@ -789,35 +738,6 @@ function FiltersPanel({
             />
           </div>
 
-          {/* Unloading old */}
-          <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-pink-500/50 bg-pink-500/10'}`}>
-            <Checkbox
-              id="show-unloading"
-              checked={filters.showUnloading}
-              onCheckedChange={(c) => onChange({ ...filters, showUnloading: !!c })}
-              disabled={otherFiltersDisabled}
-            />
-            <Label htmlFor="show-unloading" className={`cursor-pointer ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Выгрузка старая:</Label>
-            <Input
-              type="number"
-              value={filters.unloadingLimit}
-              onChange={e => {
-                const val = e.target.value
-                onChange({ ...filters, unloadingLimit: val === '' ? '' as any : Number(val) })
-              }}
-              onBlur={e => {
-                const val = e.target.value
-                if (val === '' || Number(val) < 1) {
-                  onChange({ ...filters, unloadingLimit: 1 })
-                }
-              }}
-              className="w-20 h-8"
-              min={1}
-              max={500}
-              disabled={otherFiltersDisabled}
-            />
-          </div>
-
           <Button
             variant={isLast100Mode ? "default" : "outline"}
             onClick={onToggleLast100}
@@ -840,8 +760,12 @@ export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(loadFilters)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
-  const [isFileUpdating, setIsFileUpdating] = useState(false)
+  const [hasNewRows, setHasNewRows] = useState(false)
+  const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false)
+  const [currentTime, setCurrentTime] = useState(new Date())
   const lastModifiedRef = useRef<string | null>(null)
+  const prevDataRef = useRef<HangerData[]>([])
+  const prevUnloadDataRef = useRef<any[]>([])
   
   // State for "Последние 100" toggle
   const [isLast100Mode, setIsLast100Mode] = useState(false);
@@ -850,8 +774,7 @@ export default function Dashboard() {
   // Determine if the API should filter for loading_only rows
   const loadingOnly = !isLast100Mode;
 
-  const { toast } = useToast()
-  const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, filters.unloadingLimit, loadingOnly)
+  const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, loadingOnly)
   const { data: fileStatus } = useFileStatus()
   const { data: matchedEvents, refetch: refetchMatched } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
 
@@ -881,25 +804,82 @@ export default function Dashboard() {
     if (fileStatus?.last_modified) {
       const newModified = fileStatus.last_modified
       if (lastModifiedRef.current && lastModifiedRef.current !== newModified) {
-        // File was modified - show updating state
-        setIsFileUpdating(true)
-        toast({
-          title: '📄 Файл обновлён',
-          description: 'Загрузка новых данных...',
-        })
-        
-        // Refetch data
-        refetch().then(() => {
-          setIsFileUpdating(false)
-          toast({
-            title: '✅ Данные обновлены',
-            description: `Загружено ${data?.total ?? 0} записей`,
-          })
+        // File was modified - refetch data
+        refetch().then((result) => {
+          const newData = result.data?.products ?? []
+          const prevData = prevDataRef.current
+          
+          // Deep compare function for rows
+          const rowsEqual = (r1: HangerData, r2: HangerData): boolean => {
+            return (
+              r1.number === r2.number &&
+              r1.date === r2.date &&
+              r1.time === r2.time &&
+              r1.profile === r2.profile &&
+              r1.color === r2.color &&
+              r1.client === r2.client &&
+              r1.kpz_number === r2.kpz_number &&
+              r1.material_type === r2.material_type &&
+              r1.lamels_qty === r2.lamels_qty
+            )
+          }
+          
+          // Check if there are actual changes in rows
+          const hasActualChanges = 
+            newData.length !== prevData.length ||
+            newData.some((newRow, idx) => {
+              const prevRow = prevData[idx]
+              return !prevRow || !rowsEqual(newRow, prevRow)
+            })
+          
+          if (hasActualChanges) {
+            // Show blue highlight only if there are actual changes
+            setHasNewRows(true)
+            prevDataRef.current = newData
+            // Auto-hide highlight after 3 seconds
+            setTimeout(() => setHasNewRows(false), 3000)
+          }
         })
       }
       lastModifiedRef.current = newModified
     }
-  }, [fileStatus?.last_modified])
+  }, [fileStatus?.last_modified, refetch])
+
+  // Track unload events changes
+  useEffect(() => {
+    if (matchedEvents && matchedEvents.length > 0) {
+      const prevUnloadData = prevUnloadDataRef.current
+      
+      // Deep compare function for unload events
+      const eventsEqual = (e1: any, e2: any): boolean => {
+        return (
+          e1.hanger === e2.hanger &&
+          e1.exit_date === e2.exit_date &&
+          e1.exit_time === e2.exit_time &&
+          e1.entry_date === e2.entry_date &&
+          e1.entry_time === e2.entry_time &&
+          e1.profile === e2.profile &&
+          e1.color === e2.color &&
+          e1.client === e2.client
+        )
+      }
+      
+      // Check if there are actual changes
+      const hasActualChanges = 
+        matchedEvents.length !== prevUnloadData.length ||
+        matchedEvents.some((newEvent, idx) => {
+          const prevEvent = prevUnloadData[idx]
+          return !prevEvent || !eventsEqual(newEvent, prevEvent)
+        })
+      
+      if (hasActualChanges) {
+        setHasNewUnloadEvents(true)
+        prevUnloadDataRef.current = matchedEvents
+        // Auto-hide highlight after 3 seconds
+        setTimeout(() => setHasNewUnloadEvents(false), 3000)
+      }
+    }
+  }, [matchedEvents])
 
   // Handle Escape key to exit kiosk mode
   useEffect(() => {
@@ -942,6 +922,14 @@ export default function Dashboard() {
       }
     }
   })
+
+  // Update time every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => { saveFilters(filters) }, [filters])
 
@@ -1007,26 +995,37 @@ export default function Dashboard() {
         />
       )}
 
-      <div className="space-y-4">
+      <div className="space-y-4 relative">
         {filters.showLoading && (
-          <Card className="border-l-4 border-l-blue-500">
+          <Card className="border-8 border-blue-500 relative">
+            {hasNewRows && (
+              <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
+                <span className="text-white text-3xl font-bold">Обновление</span>
+              </div>
+            )}
             <CardContent className="p-0">
               {isLoading ? <TableSkeleton /> : data?.products?.length ? (
-                <DataTable 
-                  data={data.products} 
-                  onPhotoClick={handlePhotoClick} 
-                  isUpdating={isFetching || isFileUpdating}
+                <DataTable
+                  data={data.products}
+                  onPhotoClick={handlePhotoClick}
                   isFullscreen={isFullscreen}
                 />
               ) : (
-                <div className="p-8 text-center text-muted-foreground">Нет записей</div>
+                <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
+                  :( {'='.repeat(12)} :( {'='.repeat(12)} :( {'='.repeat(12)} :( {'='.repeat(12)} :(
+                </div>
               )}
             </CardContent>
           </Card>
         )}
 
         {filters.showRealtime && (
-          <Card className="border-l-4 border-l-green-500">
+          <Card className="border-8 border-green-500 relative">
+            {hasNewUnloadEvents && (
+              <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
+                <span className="text-white text-3xl font-bold">Обновление</span>
+              </div>
+            )}
             <CardContent className="p-0">
               {matchedEvents && matchedEvents.length > 0 ? (
                 <DataTable 
@@ -1051,23 +1050,17 @@ export default function Dashboard() {
                   showEntryExit
                 />
               ) : (
-                <div className="p-8 text-center text-muted-foreground">Нет событий выгрузки</div>
+                <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
+                  :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :)
+                </div>
               )}
             </CardContent>
           </Card>
         )}
 
-        {filters.showUnloading && (
-          <Card className="border-l-4 border-l-pink-500">
-            <CardContent className="p-0">
-              {data?.unloading_products?.length ? (
-                <DataTable data={data.unloading_products} onPhotoClick={handlePhotoClick} isFullscreen={isFullscreen} />
-              ) : (
-                <div className="p-8 text-center text-muted-foreground">Нет записей</div>
-              )}
-            </CardContent>
-          </Card>
-        )}
+        <div className="absolute left-1/2 transform -translate-x-1/2 top-0 text-3xl font-bold text-white bg-black px-6 py-2 rounded-lg pointer-events-none z-50" style={{ fontFamily: 'Calibri, sans-serif' }}>
+          {currentTime.toLocaleTimeString('ru-RU')}
+        </div>
       </div>
 
       <PhotoModal

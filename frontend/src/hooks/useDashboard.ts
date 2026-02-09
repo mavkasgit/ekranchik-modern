@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import { dashboardApi } from '@/api/dashboard'
 import { FILE_STATUS_INTERVAL, DATA_REFRESH_INTERVAL } from '@/config/intervals'
 
-export function useDashboard(days = 7, limit = 100, unloadingLimit = 10, loadingOnly = true) {
+export function useDashboard(days = 7, limit = 100, loadingOnly = true) {
   return useQuery({
-    queryKey: ['dashboard', days, limit, unloadingLimit, loadingOnly],
-    queryFn: () => dashboardApi.getData(days, limit, unloadingLimit, loadingOnly),
+    queryKey: ['dashboard', days, limit, loadingOnly],
+    queryFn: () => dashboardApi.getData(days, limit, 10, loadingOnly),
     refetchInterval: DATA_REFRESH_INTERVAL,
   })
 }
@@ -28,7 +28,7 @@ export function useOPCUAStatus() {
 
 export function useOPCUAMatchedUnloadEvents(limit = 100) {
   return useQuery({
-    queryKey: ['dashboard', 'opcua-unload-matched', limit],
+    queryKey: ['dashboard', 'opcuaMatchedUnloadEvents', limit],
     queryFn: () => dashboardApi.getOPCUAMatchedUnloadEvents(limit),
     refetchInterval: DATA_REFRESH_INTERVAL,
   })

@@ -394,35 +394,6 @@ class ExcelService:
         
         return df.to_dict('records')
     
-    def get_unloading_products(
-        self,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """
-        Get unloading products - rows that have time filled in.
-        
-        "Выгрузка старая" - shows rows where time column is not empty,
-        meaning the product has been unloaded from the line.
-        
-        Args:
-            limit: Maximum number of records
-        
-        Returns:
-            List of product dictionaries with time filled
-        """
-        df = self.get_dataframe(full_dataset=True)
-        if df.empty:
-            return []
-        
-        # Filter: only rows with time (выгрузка = unloaded)
-        df_with_time = df[pd.notna(df['time'])]
-        
-        # Get last N rows (most recent unloads)
-        # Keep original order: oldest first, newest last
-        df_with_time = df_with_time.tail(limit)
-        
-        return self._process_dataframe(df_with_time)
-
     def get_recent_missing_profiles(
         self,
         limit: int = 50,
