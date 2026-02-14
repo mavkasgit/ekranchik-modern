@@ -28,6 +28,17 @@ class SimulatorConfig:
         self.max_hangers = 10  # Максимальное количество подвесов в системе
         self.manual_recipe = []  # Сохраненный рецепт для ручного режима
         self.manual_transition_time = 30  # Время перехода для ручного режима
+        self._next_id = 1
+        
+    def get_next_id(self):
+        """Получить следующий свободный ID и инкрементировать счетчик"""
+        current = self._next_id
+        self._next_id += 1
+        return current
+
+    def set_next_id(self, val):
+        """Установить начальный ID (например, из GUI)"""
+        self._next_id = max(self._next_id, val)
         
     def save(self, filepath: str = "simulator_config.json"):
         """Сохранить конфигурацию в файл"""
@@ -55,16 +66,78 @@ class SimulatorConfig:
                 self.manual_recipe = data.get('manual_recipe', [])
                 self.manual_transition_time = data.get('manual_transition_time', 30)
                 self.manual_recipe_times = data.get('manual_recipe_times', [])
+                
+                # BUGFIX: Если в последовательности есть 33 (которая не должна там быть по ТЗ пользователя), 
+                # сбрасываем на дефолтную рабочую последовательность
+                if 33 in self.bath_sequence:
+                    logger.warning("⚠️ Обнаружена некорректная ванна 33 в конфиге. Сброс последовательности на стандартную.")
+                    self.bath_sequence = [3, 5, 7, 10, 17, 18, 19, 20, 31, 34]
             return True
         except FileNotFoundError:
             return False
 
 
+class ToggleSwitch(tk.Canvas):
+    """Кастомный переключатель-слайдер (Toggle Switch)"""
+    def __init__(self, parent, variable, command=None, width=65, height=32, bg="#f0f0f0", **kwargs):
+        # Если bg не передан, пытаемся взять у родителя
+        if not bg and hasattr(parent, "cget"):
+            try:
+                bg = parent.cget("background")
+            except:
+                bg = "#f0f0f0"
+            
+        super().__init__(parent, width=width, height=height, highlightthickness=0, bg=bg, **kwargs)
+        self.variable = variable
+        self.command = command
+        self.width = width
+        self.height = height
+        
+        self.padding = 3
+        self.radius = (height - 2 * self.padding) / 2
+        
+        self.bind("<Button-1>", self.toggle)
+        self.update_switch()
+        
+        # Следим за изменением переменной извне
+        self.variable.trace_add("write", lambda *args: self.update_switch())
+
+    def toggle(self, event=None):
+        self.variable.set(not self.variable.get())
+        if self.command:
+            try:
+                self.command()
+            except:
+                pass
+        self.update_switch()
+
+    def update_switch(self):
+        self.delete("all")
+        is_on = self.variable.get()
+        
+        # Цвета
+        bg_track = "#4CAF50" if is_on else "#BDBDBD" # Зеленый (ВКЛ) или Серый (ВЫКЛ)
+        thumb_color = "white"
+        
+        # Рисуем подложку (дорожку)
+        r = self.height / 2
+        self.create_oval(0, 0, 2*r, self.height, fill=bg_track, outline="")
+        self.create_oval(self.width - 2*r, 0, self.width, self.height, fill=bg_track, outline="")
+        self.create_rectangle(r, 0, self.width - r, self.height, fill=bg_track, outline="")
+        
+        # Рисуем рычажок (круг)
+        thumb_x = self.width - r if is_on else r
+        self.create_oval(thumb_x - self.radius, self.height/2 - self.radius,
+                         thumb_x + self.radius, self.height/2 + self.radius,
+                         fill=thumb_color, outline="")
+
+
 class ManualHangerWindow:
     """Окно для запуска подвесов вручную в ручном режиме"""
-    def __init__(self, manual_queue, config=None):
+    def __init__(self, manual_queue, config=None, hangers=None):
         self.manual_queue = manual_queue
         self.config = config
+        self.hangers = hangers if hangers is not None else {}
         self.root = None
         self.hanger_id_var = None
         self.transition_var = None
@@ -74,487 +147,432 @@ class ManualHangerWindow:
         self.bath_saved_values = [0] * 7
         self.time_saved_values = [30] * 7
         self.transition_saved_value = 30
-        self.should_exit = False  # Флаг для выхода из скрипта
-        self.time_saved_values = [30] * 7
+        self.should_exit = False
+        self.monitor_items = {}  # {hanger_id: monitor_widgets_dict}
+        self.last_update = 0
+        self.monitor_canvas = None
+        self.monitor_scrollable = None
+        self._root_after_handle = None
+        self.auto_spawn_var = None
+        self.spawn_interval_var = None
         
     def show(self):
-        """Показать окно ручного режима"""
+        """Показать окно ручного режима с мониторингом"""
         self.root = tk.Tk()
-        self.root.title("OPC UA Simulator - Ручной режим запуска подвесов")
-        self.root.geometry("850x750")
-        self.root.resizable(False, False)
+        self.auto_spawn_var = tk.BooleanVar(value=False)
+        self.spawn_interval_var = tk.IntVar(value=self.config.hanger_spawn_interval)
         
-        # Центрируем окно на экране
-        self.root.update_idletasks()
-        width = 850
-        height = 750
-        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.root.winfo_screenheight() // 2) - (height // 2)
-        self.root.geometry(f'{width}x{height}+{x}+{y}')
+        # Слушатель для обновления интервала в конфиге в реальном времени
+        self.spawn_interval_var.trace_add("write", self._on_interval_change)
+        self.root.title("OPC UA Simulator - ПУЛЬТ УПРАВЛЕНИЯ")
         
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Центрирование окна
+        window_width = 1600
+        window_height = 900
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        center_x = int(screen_width/2 - window_width / 2)
+        center_y = int(screen_height/2 - window_height / 2)
         
-        # Заголовок
-        title = ttk.Label(main_frame, text="Запуск подвеса - Ручной режим", font=('Arial', 14, 'bold'))
-        title.grid(row=0, column=0, columnspan=4, pady=(0, 15))
+        self.root.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
+        self.root.resizable(True, True)
         
-        # Параметры подвеса
-        params_frame = ttk.LabelFrame(main_frame, text="Параметры подвеса", padding="10")
-        params_frame.grid(row=1, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
+        # Стилизация
+        self.root.option_add("*Font", "Arial 14")
+        style = ttk.Style()
+        style.configure(".", font=('Arial', 14))
+        style.configure("Monitor.TFrame", background="#f0f0f0")
+        style.configure("Hanger.TLabelframe", padding=10)
+        style.configure("TButton", padding=10)
+        style.configure("TEntry", font=('Arial', 14))
+        style.configure("TLabelframe.Label", font=('Arial', 14, 'bold'))
         
-        ttk.Label(params_frame, text="Номер подвеса:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        # Специальные стили для меток
+        style.configure("Title.TLabel", font=('Arial', 18, 'bold'))
+        style.configure("Bold.TLabel", font=('Arial', 14, 'bold'))
+        style.configure("Timer.TLabel", font=('Arial', 16, 'bold'))
+        
+        # Главный контейнер (две колонки)
+        main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # --- ЛЕВАЯ КОЛОНКА (ЗАПУСК) ---
+        left_frame = ttk.Frame(main_paned, padding="5")
+        main_paned.add(left_frame, weight=1)
+        
+        title = ttk.Label(left_frame, text="🚀 Запуск подвеса", style="Title.TLabel")
+        title.pack(pady=(0, 15))
+        
+        # Параметры (Hanger ID, Transition)
+        ps_frame = ttk.LabelFrame(left_frame, text="Параметры", padding=10)
+        ps_frame.pack(fill=tk.X, pady=5)
+        
+        row1 = ttk.Frame(ps_frame)
+        row1.pack(fill=tk.X, pady=2)
+        ttk.Label(row1, text="Номер:").pack(side=tk.LEFT)
         self.hanger_id_var = tk.IntVar(value=1)
-        hanger_id_entry = ttk.Entry(params_frame, textvariable=self.hanger_id_var, width=10)
-        hanger_id_entry.grid(row=0, column=1, sticky=tk.W, pady=5)
+        ttk.Entry(row1, textvariable=self.hanger_id_var, width=10).pack(side=tk.LEFT, padx=5)
         
-        ttk.Label(params_frame, text="Время перехода между ваннами (сек):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(row1, text="Переход (с):").pack(side=tk.LEFT, padx=(10, 0))
         self.transition_var = tk.IntVar(value=30)
-        transition_entry = ttk.Entry(params_frame, textvariable=self.transition_var, width=10)
-        transition_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
+        ttk.Entry(row1, textvariable=self.transition_var, width=10).pack(side=tk.LEFT, padx=5)
         
-        # Рецепт (7 ванн с временем)
-        recipe_frame = ttk.LabelFrame(main_frame, text="Рецепт (7 ванн)", padding="10")
-        recipe_frame.grid(row=2, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
+        row2 = ttk.Frame(ps_frame)
+        row2.pack(fill=tk.X, pady=5)
+        ttk.Label(row2, text="🤖 АВТО-ЗАПУСК:").pack(side=tk.LEFT)
+        ToggleSwitch(row2, variable=self.auto_spawn_var).pack(side=tk.LEFT, padx=10)
         
-        # Заголовки
-        ttk.Label(recipe_frame, text="Ванна", font=('Arial', 10, 'bold')).grid(row=0, column=0, padx=5, pady=5)
-        ttk.Label(recipe_frame, text="Время (сек)", font=('Arial', 10, 'bold')).grid(row=0, column=1, padx=5, pady=5)
-        ttk.Label(recipe_frame, text="Активно", font=('Arial', 9, 'bold')).grid(row=0, column=2, padx=5, pady=5)
+        ttk.Label(row2, text="Интервал (с):").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Entry(row2, textvariable=self.spawn_interval_var, width=8).pack(side=tk.LEFT, padx=5)
         
-        # Кнопка очистить весь рецепт (справа)
-        clear_all_btn = ttk.Button(recipe_frame, text="🗑️ Очистить", command=self._clear_all_recipe, width=10)
-        clear_all_btn.grid(row=0, column=3, padx=5, pady=5)
+        # Рецепт
+        recipe_frame = ttk.LabelFrame(left_frame, text="Рецепт (ванны + время)", padding=10)
+        recipe_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # 7 строк для ванн и времени
+        grid_f = ttk.Frame(recipe_frame)
+        grid_f.pack(fill=tk.X)
+        
+        ttk.Label(grid_f, text="Ванна", style="Bold.TLabel").grid(row=0, column=1, pady=5)
+        ttk.Label(grid_f, text="Время (с)", style="Bold.TLabel").grid(row=0, column=2, pady=5)
+        ttk.Button(grid_f, text="🗑️", width=5, command=self._clear_all_recipe).grid(row=0, column=4, padx=5)
+        
         for i in range(7):
-            ttk.Label(recipe_frame, text=f"Ванна {i+1}:").grid(row=i+1, column=0, sticky=tk.W, padx=5, pady=5)
+            ttk.Label(grid_f, text=f"{i+1}:").grid(row=i+1, column=0, pady=5)
             
-            bath_var = tk.IntVar(value=0)
-            bath_entry = ttk.Entry(recipe_frame, textvariable=bath_var, width=10)
-            bath_entry.grid(row=i+1, column=0, sticky=tk.E, padx=5, pady=5)
-            bath_entry.bind("<FocusIn>", lambda e: e.widget.select_range(0, tk.END))
-            self.bath_entries.append((bath_entry, bath_var))
+            b_var = tk.IntVar(value=0)
+            b_entry = ttk.Entry(grid_f, textvariable=b_var, width=8)
+            b_entry.grid(row=i+1, column=1, padx=2, pady=5)
+            self.bath_entries.append((b_entry, b_var))
             
-            time_var = tk.IntVar(value=30)
-            time_entry = ttk.Entry(recipe_frame, textvariable=time_var, width=10)
-            time_entry.grid(row=i+1, column=1, sticky=tk.W, padx=5, pady=5)
-            time_entry.bind("<FocusIn>", lambda e: e.widget.select_range(0, tk.END))
-            self.time_entries.append((time_entry, time_var))
+            t_var = tk.IntVar(value=30)
+            t_entry = ttk.Entry(grid_f, textvariable=t_var, width=8)
+            t_entry.grid(row=i+1, column=2, padx=5, pady=5)
+            self.time_entries.append((t_entry, t_var))
             
-            # Переключатель активности строки
-            active_var = tk.BooleanVar(value=True)
-            active_check = ttk.Checkbutton(
-                recipe_frame,
-                variable=active_var,
-                command=lambda idx=i, bath_e=bath_entry, time_e=time_entry, bath_v=bath_var, time_v=time_var, active_v=active_var: self._toggle_row_active(idx, bath_e, time_e, bath_v, time_v, active_v)
-            )
-            active_check.grid(row=i+1, column=2, padx=5, pady=5)
-            self.bath_checkboxes.append((active_check, active_var))
+            a_var = tk.BooleanVar(value=True)
+            a_check = ToggleSwitch(grid_f, variable=a_var, 
+                                 command=lambda idx=i: self._update_row_active(idx))
+            a_check.grid(row=i+1, column=3, padx=10)
+            self.bath_checkboxes.append((a_check, a_var))
             
-            # Кнопка очистить строку
-            clear_btn = ttk.Button(
-                recipe_frame, 
-                text="Очистить", 
-                width=8,
-                command=lambda idx=i, bath_e=bath_entry, time_e=time_entry, bath_v=bath_var, time_v=time_var, active_v=active_var: self._clear_row(idx, bath_e, time_e, bath_v, time_v, active_v)
-            )
-            clear_btn.grid(row=i+1, column=3, padx=5, pady=5)
+            ttk.Button(grid_f, text="×", width=5, 
+                       command=lambda idx=i: self._clear_row_idx(idx)).grid(row=i+1, column=4, padx=2, pady=5)
         
-        # Кнопки
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=3, column=0, columnspan=4, pady=10)
+        btn_f = ttk.Frame(left_frame)
+        btn_f.pack(pady=10)
+        ttk.Button(btn_f, text="ЗАПУСТИТЬ", command=self._on_launch, width=15, padding=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_f, text="СОХРАНИТЬ РЕЦЕПТ", command=self._save_recipe, width=20, padding=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_f, text="ВЫХОД", command=self._on_exit, width=10, padding=15).pack(side=tk.LEFT, padx=5)
         
-        def on_launch():
-            try:
-                hanger_id = self.hanger_id_var.get()
-                transition = self.transition_var.get()
-                
-                if hanger_id < 1:
-                    messagebox.showerror("Ошибка", "Номер подвеса должен быть положительным")
-                    return
-                
-                if transition < 0:
-                    messagebox.showerror("Ошибка", "Время перехода должно быть положительным числом")
-                    return
-                
-                # Собираем рецепт из введенных данных
-                bath_sequence = []
-                time_in_bath_list = []
-                
-                for i in range(7):
-                    # Проверяем активность строки
-                    active_var = self.bath_checkboxes[i][1]
-                    if not active_var.get():
-                        continue
-                    
-                    bath_entry, bath_var = self.bath_entries[i]
-                    time_entry, time_var = self.time_entries[i]
-                    
-                    bath_num = bath_var.get()
-                    bath_time = time_var.get()
-                    
-                    if bath_num and bath_num != 0:
-                        if bath_num < 1 or bath_num > 40:
-                            messagebox.showerror("Ошибка", f"Номер ванны должен быть от 1 до 40 (строка {i+1})")
-                            return
-                        
-                        if bath_time < 1:
-                            messagebox.showerror("Ошибка", f"Время должно быть положительным (строка {i+1})")
-                            return
-                        
-                        bath_sequence.append(bath_num)
-                        time_in_bath_list.append(bath_time)
-                
-                if not bath_sequence:
-                    messagebox.showerror("Ошибка", "Нужно указать хотя бы одну ванну")
-                    return
-                
-                # Добавляем в очередь
-                hanger_data = {
-                    'hanger_id': hanger_id,
-                    'bath_sequence': bath_sequence,
-                    'time_in_bath_list': time_in_bath_list,
-                    'transition_time': transition
-                }
-                
-                self.manual_queue.append(hanger_data)
-                logger.info(f"📋 Подвес {hanger_id} добавлен в очередь: ванны {bath_sequence}, времена {time_in_bath_list}сек")
-                messagebox.showinfo("Успех", f"Подвес {hanger_id} добавлен в очередь запуска")
-                
-                # Только увеличиваем номер подвеса, остальное остается как есть
-                self.hanger_id_var.set(self.hanger_id_var.get() + 1)
-                
-            except ValueError as e:
-                messagebox.showerror("Ошибка", f"Проверьте правильность введенных данных: {e}")
+        # --- ПРАВАЯ КОЛОНКА (МОНИТОРИНГ) ---
+        right_frame = ttk.Frame(main_paned, padding="5", style="Monitor.TFrame")
+        main_paned.add(right_frame, weight=2)
         
-        def on_exit():
-            self._save_recipe()
-            self.should_exit = True
-            self.root.destroy()
+        ttk.Label(right_frame, text="📊 Мониторинг подвесов", style="Title.TLabel", background="#f0f0f0").pack(pady=(0, 15))
         
-        ttk.Button(button_frame, text="Запустить подвес", command=on_launch, width=20).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Выход", command=on_exit, width=15).pack(side=tk.LEFT, padx=5)
+        # Скроллируемая область для карточек подвесов
+        canvas_frame = ttk.Frame(right_frame)
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Загружаем сохраненный рецепт при открытии
+        self.monitor_canvas = tk.Canvas(canvas_frame, background="#f0f0f0", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.monitor_canvas.yview)
+        self.monitor_scrollable = ttk.Frame(self.monitor_canvas, style="Monitor.TFrame")
+        
+        self.monitor_scrollable.bind("<Configure>", lambda e: self.monitor_canvas.configure(scrollregion=self.monitor_canvas.bbox("all")))
+        self.monitor_canvas.create_window((0, 0), window=self.monitor_scrollable, anchor="nw")
+        self.monitor_canvas.configure(yscrollcommand=scrollbar.set)
+        
+        scrollbar.pack(side="right", fill="y")
+        self.monitor_canvas.pack(side="left", fill="both", expand=True)
+        
+        # Загружаем рецепт
         self._load_recipe()
         
-        self.root.mainloop()
-    
-    def _toggle_row_active(self, idx, bath_entry, time_entry, bath_var, time_var, active_var):
-        """Переключить активность строки (включить/выключить)"""
-        if active_var.get():
-            # Включаем строку - восстанавливаем сохраненные значения или ставим дефолтные
-            if self.bath_saved_vars[idx][1].get():
-                bath_var.set(self.bath_saved_values[idx])
-                time_var.set(self.time_saved_values[idx])
-            else:
-                bath_var.set(0)
-                time_var.set(30)
-            bath_entry.config(state='normal', foreground='black')
-            time_entry.config(state='normal', foreground='black')
-            logger.info(f"▶ Строка {idx+1} включена")
-        else:
-            # Выключаем строку - очищаем и блокируем
-            bath_var.set(0)
-            time_var.set(30)
-            bath_entry.config(state='disabled', foreground='gray')
-            time_entry.config(state='disabled', foreground='gray')
-            logger.info(f"▶ Строка {idx+1} отключена")
-    
-    def _toggle_row_save(self, idx, bath_entry, time_entry, bath_var, time_var, check_var):
-        """Переключить сохранение значений для всей строки (ванна + время)"""
-        if check_var.get():
-            # Сохраняем текущие значения
-            self.bath_saved_values[idx] = bath_var.get()
-            self.time_saved_values[idx] = time_var.get()
-            bath_entry.config(state='disabled', foreground='gray')
-            time_entry.config(state='disabled', foreground='gray')
-            logger.info(f"✓ Строка {idx+1} сохранена: ванна {self.bath_saved_values[idx]}, время {self.time_saved_values[idx]}сек")
-        else:
-            # Разблокируем редактирование
-            bath_entry.config(state='normal', foreground='black')
-            time_entry.config(state='normal', foreground='black')
-            logger.info(f"✗ Строка {idx+1} разблокирована")
-    
-    def _toggle_transition_save(self, entry, var, check_var):
-        """Переключить сохранение времени перехода"""
-        if check_var.get():
-            # Сохраняем текущее значение
-            self.transition_saved_value = var.get()
-            entry.config(state='disabled', foreground='gray')
-            logger.info(f"✓ Время перехода сохранено: {self.transition_saved_value}сек")
-        else:
-            # Разблокируем редактирование
-            entry.config(state='normal', foreground='black')
-            logger.info(f"✗ Время перехода разблокировано")
-    
-    def _toggle_bath_save(self, idx, var, entry, check_var):
-        """Переключить сохранение значения ванны"""
-        if check_var.get():
-            # Сохраняем текущее значение
-            self.bath_saved_values[idx] = var.get()
-            entry.config(state='disabled', foreground='gray')
-            logger.info(f"✓ Ванна {idx+1} сохранена: {self.bath_saved_values[idx]}")
-        else:
-            # Разблокируем редактирование
-            entry.config(state='normal', foreground='black')
-            logger.info(f"✗ Ванна {idx+1} разблокирована")
-    
-    def _toggle_time_save(self, idx, var, entry, check_var):
-        """Переключить сохранение значения времени"""
-        if check_var.get():
-            # Сохраняем текущее значение
-            self.time_saved_values[idx] = var.get()
-            entry.config(state='disabled', foreground='gray')
-            logger.info(f"✓ Время {idx+1} сохранено: {self.time_saved_values[idx]}сек")
-        else:
-            # Разблокируем редактирование
-            entry.config(state='normal', foreground='black')
-            logger.info(f"✗ Время {idx+1} разблокировано")
-    
-    def _clear_row(self, idx, bath_entry, time_entry, bath_var, time_var, active_var):
-        """Очистить значения в строке"""
-        bath_var.set(0)
-        time_var.set(30)
-        active_var.set(True)
-        bath_entry.config(state='normal', foreground='black')
-        time_entry.config(state='normal', foreground='black')
-        logger.info(f"🗑️ Строка {idx+1} очищена")
-    
-    def _clear_all_recipe(self):
-        """Очистить весь рецепт"""
-        for i in range(7):
-            bath_entry, bath_var = self.bath_entries[i]
-            time_entry, time_var = self.time_entries[i]
-            active_var = self.bath_checkboxes[i][1]
-            
-            bath_var.set(0)
-            time_var.set(30)
-            active_var.set(True)
-            bath_entry.config(state='normal', foreground='black')
-            time_entry.config(state='normal', foreground='black')
+        # Запуск цикла обновления
+        self._root_after_handle = self.root.after(1000, self._update_loop)
         
-        logger.info(f"🗑️ Весь рецепт очищен")
-    
+        self.root.mainloop()
+
+    def _update_loop(self):
+        """Регулярное обновление мониторинга"""
+        if self.should_exit: return
+        
+        try:
+            self._do_update_monitoring()
+        except Exception as e:
+            logger.error(f"Error in UI update loop: {e}")
+            
+        self._root_after_handle = self.root.after(1000, self._update_loop)
+
+    def _do_update_monitoring(self):
+        """Обновить список карточек подвесов"""
+        if not self.root: return
+        
+        active_ids = list(self.hangers.keys())
+        
+        # Удаляем карточки завершенных подвесов
+        for h_id in list(self.monitor_items.keys()):
+            if h_id not in active_ids:
+                self.monitor_items[h_id]['frame'].destroy()
+                del self.monitor_items[h_id]
+        
+        # Добавляем/обновляем карточки активных
+        for h_id in active_ids:
+            hanger = self.hangers[h_id]
+            
+            if h_id not in self.monitor_items:
+                self._create_hanger_card(h_id)
+            
+            self._update_hanger_card(h_id, hanger)
+
+
+
+    def _update_hanger_duration(self, h_id, var):
+        """Обновить длительность текущего состояния подвеса"""
+        if h_id in self.hangers:
+            try:
+                val = int(var.get())
+                self.hangers[h_id].set_duration(val)
+            except ValueError:
+                messagebox.showerror("Ошибка", "Введите целое число!")
+
+    def _on_interval_change(self, *args):
+        """Обработка изменения интервала авто-запуска"""
+        try:
+            val = self.spawn_interval_var.get()
+            if val > 0:
+                self.config.hanger_spawn_interval = val
+                logger.info(f"⚙️ Auto-spawn interval updated to {val}s")
+        except:
+            pass
+
+
+
+    def _create_hanger_card(self, h_id):
+        """Создать карточку для нового подвеса"""
+        card = ttk.LabelFrame(self.monitor_scrollable, text=f"Подвес №{h_id}", style="Hanger.TLabelframe")
+        card.pack(fill=tk.X, padx=5, pady=5)
+        
+        info_f = ttk.Frame(card)
+        info_f.pack(fill=tk.X, side=tk.LEFT, expand=True)
+        
+        state_lbl = ttk.Label(info_f, text="Состояние: ...")
+        state_lbl.pack(anchor=tk.W, pady=2)
+        
+        time_lbl = ttk.Label(info_f, text="Осталось: -- сек", style="Timer.TLabel")
+        time_lbl.pack(anchor=tk.W, pady=2)
+        
+        # Кнопки управления
+        ctrl_f = ttk.Frame(card)
+        ctrl_f.pack(side=tk.RIGHT)
+        
+        # Редактирование времени (Прямой ввод)
+        time_ctrl = ttk.Frame(ctrl_f)
+        time_ctrl.pack(pady=2)
+        
+        dur_var = tk.StringVar()
+        dur_entry = ttk.Entry(time_ctrl, textvariable=dur_var, width=5)
+        dur_entry.pack(side=tk.LEFT, padx=2)
+        
+        ttk.Button(time_ctrl, text="OK", width=3, 
+                   command=lambda v=dur_var: self._update_hanger_duration(h_id, v)).pack(side=tk.LEFT)
+        
+        # Действия
+        act_ctrl = ttk.Frame(ctrl_f)
+        act_ctrl.pack(pady=2)
+        ttk.Button(act_ctrl, text="📝 МАРШРУТ", width=12, command=lambda: self._toggle_route(h_id)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(act_ctrl, text="⏩ SKIP", width=8, command=lambda: self._skip_hanger(h_id)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(act_ctrl, text="🗑️", width=3, command=lambda: self._delete_hanger(h_id)).pack(side=tk.LEFT, padx=2)
+        
+        # Скрытый фрейм для детального маршрута
+        route_frame = ttk.Frame(card)
+        # Пока не пакуем
+        
+        self.monitor_items[h_id] = {
+            'frame': card,
+            'state_lbl': state_lbl,
+            'time_lbl': time_lbl,
+            'dur_var': dur_var,
+            'last_state': None,
+            'route_frame': route_frame,
+            'expanded': False
+        }
+
+    def _toggle_route(self, h_id):
+        """Развернуть/свернуть детализацию маршрута"""
+        item = self.monitor_items.get(h_id)
+        if not item: return
+        
+        if item['expanded']:
+            item['route_frame'].pack_forget()
+            item['expanded'] = False
+        else:
+            item['route_frame'].pack(fill=tk.X, pady=5)
+            item['expanded'] = True
+            # Сразу обновляем список при открытии
+            if h_id in self.hangers:
+                self._refresh_route_list(h_id, self.hangers[h_id])
+
+    def _refresh_route_list(self, h_id, hanger):
+        """Отрисовать список ванн маршрута"""
+        item = self.monitor_items[h_id]
+        frame = item['route_frame']
+        
+        for widget in frame.winfo_children():
+            widget.destroy()
+            
+        ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        
+        for i, bath_num in enumerate(hanger.bath_sequence):
+            row = ttk.Frame(frame)
+            row.pack(fill=tk.X, padx=10)
+            
+            # Определяем время (ручной или авто)
+            if hasattr(hanger, 'time_in_bath_list'):
+                dur = hanger.time_in_bath_list[i] if i < len(hanger.time_in_bath_list) else 0
+            else:
+                dur = hanger.time_in_bath
+                
+            is_current = (hanger.state == 'in_bath' and hanger.current_bath_index == i)
+            
+            fg = "green" if is_current else "black"
+            font_w = "bold" if is_current else "normal"
+            bg = "#e8f5e9" if is_current else None
+            
+            lbl_text = f"Ванна {bath_num}: {dur} сек"
+            if is_current: lbl_text += "  👈 ТЕКУЩАЯ"
+            
+            lbl = tk.Label(row, text=lbl_text, fg=fg, font=('Arial', 12, font_w), anchor='w')
+            if bg: lbl.config(bg=bg)
+            lbl.pack(fill=tk.X, side=tk.LEFT, expand=True)
+
+    def _update_hanger_card(self, h_id, hanger):
+        """Обновить данные в карточке"""
+        item = self.monitor_items[h_id]
+        
+        status = "ВАННА " + str(hanger.current_bath) if hanger.state == 'in_bath' else "ПЕРЕХОД..."
+        item['state_lbl'].config(text=f"Статус: {status}")
+        
+        # Обновляем поле ввода при смене состояния
+        current_state_key = f"{hanger.state}_{hanger.current_bath_index}"
+        if item['last_state'] != current_state_key:
+            total_needed = hanger.get_bath_time() if hanger.state == 'in_bath' else hanger.transition_time
+            item['dur_var'].set(str(total_needed))
+            item['last_state'] = current_state_key
+            # Если развернуто, обновляем список ванн при смене состояния
+            if item['expanded']:
+                self._refresh_route_list(h_id, hanger)
+
+        total_needed = hanger.get_bath_time() if hanger.state == 'in_bath' else hanger.transition_time
+        left = max(0, total_needed - hanger.elapsed_time)
+        
+        color = "red" if left < 10 else "black"
+        item['time_lbl'].config(text=f"Осталось: {left} сек", foreground=color)
+
+    def _adjust_hanger_time(self, h_id, seconds):
+        if h_id in self.hangers:
+            self.hangers[h_id].adjust_time(seconds)
+
+    def _skip_hanger(self, h_id):
+        if h_id in self.hangers:
+            self.hangers[h_id].force_next_state()
+
+    def _delete_hanger(self, h_id):
+        if h_id in self.hangers:
+            if messagebox.askyesno("Удаление", f"Удалить подвес №{h_id} из системы?"):
+                # Мы не можем удалить напрямую из словаря в GUI потоке безопасно без Lock, 
+                # но в данном симуляторе мы доверимся тому что цикл в основном потоке его подхватит 
+                # или просто пометим его как завершенный.
+                # Самый простой способ - форсировать индекс до конца.
+                self.hangers[h_id].current_bath_index = len(self.hangers[h_id].bath_sequence) + 1
+                logger.warning(f"🗑️ Hanger {h_id} marked for deletion via GUI")
+
+    def _on_launch(self):
+        try:
+            trans = self.transition_var.get()
+            baths = []
+            times = []
+            for i in range(7):
+                if self.bath_checkboxes[i][1].get():
+                    b_num = self.bath_entries[i][1].get()
+                    t_val = self.time_entries[i][1].get()
+                    if b_num > 0:
+                        baths.append(b_num)
+                        times.append(t_val)
+            
+            if not baths:
+                messagebox.showerror("Ошибка", "Рецепт пуст!")
+                return
+            
+            # Используем централизованный ID из конфига
+            h_id = self.config.get_next_id()
+            self.hanger_id_var.set(h_id + 1) # Предлагаем следующий во фронте
+                
+            hanger_data = {
+                'hanger_id': h_id,
+                'bath_sequence': baths,
+                'time_in_bath_list': times,
+                'transition_time': trans
+            }
+            self.manual_queue.append(hanger_data)
+        except Exception as e:
+            messagebox.showerror("Ошибка", str(e))
+
+    def _on_exit(self):
+        self._save_recipe()
+        self.should_exit = True
+        self.root.destroy()
+
+    def _update_row_active(self, idx):
+        """Обновить состояние полей строки"""
+        active = self.bath_checkboxes[idx][1].get()
+        state = 'normal' if active else 'disabled'
+        self.bath_entries[idx][0].config(state=state)
+        self.time_entries[idx][0].config(state=state)
+
+    def _clear_row_idx(self, idx):
+        self.bath_entries[idx][1].set(0)
+        self.time_entries[idx][1].set(30)
+        self.bath_checkboxes[idx][1].set(True)
+        self._update_row_active(idx)
+
+    def _clear_all_recipe(self):
+        for i in range(7):
+            self._clear_row_idx(i)
+
     def _save_recipe(self):
         """Сохранить текущий рецепт в конфиг"""
         if not self.config:
             return
         
         recipe = []
-        
         for i in range(7):
-            bath_entry, bath_var = self.bath_entries[i]
-            time_entry, time_var = self.time_entries[i]
-            active_var = self.bath_checkboxes[i][1]
-            
             recipe.append({
-                'bath': bath_var.get(),
-                'time': time_var.get(),
-                'active': active_var.get()
+                'bath': self.bath_entries[i][1].get(),
+                'time': self.time_entries[i][1].get(),
+                'active': self.bath_checkboxes[i][1].get()
             })
         
         self.config.manual_recipe = recipe
         self.config.manual_transition_time = self.transition_var.get()
         self.config.save()
         logger.info("💾 Рецепт сохранен")
-    
+
     def _load_recipe(self):
         """Загрузить сохраненный рецепт из конфига"""
-        if not self.config:
-            logger.warning("⚠️ Config not available for loading recipe")
+        if not self.config or not self.config.manual_recipe:
             return
         
-        if not self.config.manual_recipe:
-            logger.info("📂 No saved recipe found")
-            return
-        
-        logger.info(f"📂 Loading recipe with {len(self.config.manual_recipe)} items")
-        
-        # Загружаем время перехода
         if hasattr(self.config, 'manual_transition_time'):
             self.transition_var.set(self.config.manual_transition_time)
-            logger.info(f"📂 Loaded transition time: {self.config.manual_transition_time}")
         
-        for i in range(7):
-            if i < len(self.config.manual_recipe):
-                recipe_item = self.config.manual_recipe[i]
-                bath_entry, bath_var = self.bath_entries[i]
-                time_entry, time_var = self.time_entries[i]
-                active_var = self.bath_checkboxes[i][1]
-                
-                bath_val = recipe_item.get('bath', 0)
-                time_val = recipe_item.get('time', 30)
-                active_val = recipe_item.get('active', True)
-                
-                bath_var.set(bath_val)
-                time_var.set(time_val)
-                active_var.set(active_val)
-                
-                logger.info(f"📂 Row {i+1}: bath={bath_val}, time={time_val}, active={active_val}")
-                
-                # Обновляем состояние полей
-                if active_var.get():
-                    bath_entry.config(state='normal', foreground='black')
-                    time_entry.config(state='normal', foreground='black')
-                else:
-                    bath_entry.config(state='disabled', foreground='gray')
-                    time_entry.config(state='disabled', foreground='gray')
-        
+        for i in range(min(7, len(self.config.manual_recipe))):
+            item = self.config.manual_recipe[i]
+            self.bath_entries[i][1].set(item.get('bath', 0))
+            self.time_entries[i][1].set(item.get('time', 30))
+            self.bath_checkboxes[i][1].set(item.get('active', True))
+            self._update_row_active(i)
         logger.info("✅ Рецепт загружен")
-
-
-class ConfigDialog:
-    """Диалог настройки симулятора"""
-    def __init__(self):
-        self.config = SimulatorConfig()
-        self.config.load()  # Попытка загрузить сохраненную конфигурацию
-        self.result = None
-        self.manual_mode = False  # Флаг ручного режима
-        
-    def show(self):
-        """Показать диалог настройки"""
-        root = tk.Tk()
-        root.title("OPC UA Simulator - Настройка")
-        root.geometry("700x600")
-        root.resizable(False, False)
-        
-        # Центрируем окно на экране
-        root.update_idletasks()
-        width = 700
-        height = 600
-        x = (root.winfo_screenwidth() // 2) - (width // 2)
-        y = (root.winfo_screenheight() // 2) - (height // 2)
-        root.geometry(f'{width}x{height}+{x}+{y}')
-        
-        # Основной фрейм
-        main_frame = ttk.Frame(root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Заголовок
-        title = ttk.Label(main_frame, text="Настройка симулятора OPC UA", font=('Arial', 14, 'bold'))
-        title.grid(row=0, column=0, columnspan=2, pady=(0, 20))
-        
-        # Переключатель режима
-        mode_var = tk.StringVar(value="auto")
-        mode_frame = ttk.Frame(main_frame)
-        mode_frame.grid(row=1, column=0, columnspan=2, pady=10)
-        ttk.Radiobutton(mode_frame, text="Автоматический", variable=mode_var, value="auto").pack(side=tk.LEFT, padx=10)
-        ttk.Radiobutton(mode_frame, text="Ручной", variable=mode_var, value="manual").pack(side=tk.LEFT, padx=10)
-        
-        # Автоматический режим
-        auto_frame = ttk.LabelFrame(main_frame, text="Автоматический режим", padding="10")
-        auto_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
-        
-        ttk.Label(auto_frame, text="Интервал запуска подвесов (сек):").grid(row=0, column=0, sticky=tk.W, pady=5)
-        spawn_var = tk.IntVar(value=self.config.hanger_spawn_interval)
-        spawn_entry = ttk.Entry(auto_frame, textvariable=spawn_var, width=10)
-        spawn_entry.grid(row=0, column=1, sticky=tk.W, pady=5)
-        spawn_entry.bind("<FocusIn>", lambda e: e.widget.select_range(0, tk.END))
-        
-        ttk.Label(auto_frame, text="Максимум подвесов в системе:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        max_hangers_var = tk.IntVar(value=self.config.max_hangers)
-        max_hangers_entry = ttk.Entry(auto_frame, textvariable=max_hangers_var, width=10)
-        max_hangers_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
-        max_hangers_entry.bind("<FocusIn>", lambda e: e.widget.select_range(0, tk.END))
-        
-        # Общие параметры
-        common_frame = ttk.LabelFrame(main_frame, text="Параметры ванн", padding="10")
-        common_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
-        
-        ttk.Label(common_frame, text="Время в каждой ванне (сек):").grid(row=0, column=0, sticky=tk.W, pady=5)
-        bath_time_var = tk.IntVar(value=self.config.time_in_bath)
-        bath_time_entry = ttk.Entry(common_frame, textvariable=bath_time_var, width=10)
-        bath_time_entry.grid(row=0, column=1, sticky=tk.W, pady=5)
-        bath_time_entry.bind("<FocusIn>", lambda e: e.widget.select_range(0, tk.END))
-        
-        ttk.Label(common_frame, text="Время перехода между ваннами (сек):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        transition_var = tk.IntVar(value=self.config.bath_transition_time)
-        transition_entry = ttk.Entry(common_frame, textvariable=transition_var, width=10)
-        transition_entry.grid(row=1, column=1, sticky=tk.W, pady=5)
-        transition_entry.bind("<FocusIn>", lambda e: e.widget.select_range(0, tk.END))
-        
-        ttk.Label(common_frame, text="Последовательность ванн (через запятую):").grid(row=2, column=0, sticky=tk.W, pady=5)
-        sequence_var = tk.StringVar(value=','.join(map(str, self.config.bath_sequence)))
-        sequence_entry = ttk.Entry(common_frame, textvariable=sequence_var, width=50)
-        sequence_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5)
-        sequence_entry.bind("<FocusIn>", lambda e: e.widget.select_range(0, tk.END))
-        
-        # Информация
-        info_frame = ttk.LabelFrame(main_frame, text="Информация", padding="10")
-        info_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
-        
-        info_text = tk.Text(info_frame, height=4, width=70, wrap=tk.WORD, font=('Arial', 9))
-        info_text.insert('1.0', 
-            "Автоматический режим: Симулятор автоматически запускает подвесы по расписанию.\n"
-            "Ручной режим: Вы сможете запускать подвесы вручную через интерфейс с разными рецептами."
-        )
-        info_text.config(state='disabled')
-        info_text.grid(row=0, column=0)
-        
-        # Кнопки
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=20)
-        
-        def on_start():
-            try:
-                # Валидация
-                spawn = spawn_var.get()
-                bath_time = bath_time_var.get()
-                transition = transition_var.get()
-                max_hangers = max_hangers_var.get()
-                sequence_str = sequence_var.get().strip()
-                
-                if spawn < 1 or bath_time < 1 or transition < 0 or max_hangers < 1:
-                    messagebox.showerror("Ошибка", "Все значения должны быть положительными числами")
-                    return
-                
-                # Парсинг последовательности ванн
-                sequence = [int(x.strip()) for x in sequence_str.split(',')]
-                if not sequence:
-                    messagebox.showerror("Ошибка", "Последовательность ванн не может быть пустой")
-                    return
-                
-                if any(b < 1 or b > 40 for b in sequence):
-                    messagebox.showerror("Ошибка", "Номера ванн должны быть от 1 до 40")
-                    return
-                
-                # Сохранение конфигурации
-                self.config.hanger_spawn_interval = spawn
-                self.config.time_in_bath = bath_time
-                self.config.bath_transition_time = transition
-                self.config.max_hangers = max_hangers
-                self.config.bath_sequence = sequence
-                self.config.save()
-                
-                self.manual_mode = (mode_var.get() == "manual")
-                self.result = self.config
-                root.destroy()
-                
-            except ValueError:
-                messagebox.showerror("Ошибка", "Проверьте правильность введенных данных")
-        
-        def on_cancel():
-            root.destroy()
-        
-        # Большие кнопки
-        btn_start_auto = ttk.Button(button_frame, text="🚀\nЗАПУСТИТЬ\nАВТОМАТИЧЕСКИЙ", command=on_start)
-        btn_start_auto.pack(side=tk.LEFT, padx=10)
-        
-        btn_start_manual = ttk.Button(button_frame, text="🛠️\nЗАПУСТИТЬ\nРУЧНОЙ", command=lambda: (mode_var.set("manual"), on_start()))
-        btn_start_manual.pack(side=tk.LEFT, padx=10)
-        
-        btn_cancel = ttk.Button(button_frame, text="❌\nОТМЕНА", command=on_cancel)
-        btn_cancel.pack(side=tk.LEFT, padx=10)
-        
-        # Увеличиваем размер кнопок через padding
-        for btn in [btn_start_auto, btn_start_manual, btn_cancel]:
-            btn.config(padding=25)
-        
-        root.mainloop()
-        return self.result
-
 
 class HangerState:
     """Состояние подвеса в системе"""
@@ -589,6 +607,34 @@ class HangerState:
         """Получить время в текущей ванне"""
         return self.time_in_bath
     
+    def adjust_time(self, seconds: int):
+        """Изменить время начала состояния, чтобы добавить или убавить оставшееся время"""
+        self.state_start_time = self.state_start_time - timedelta(seconds=seconds)
+        logger.info(f"⏳ Hanger {self.hanger_id}: Adjusted time by {seconds}s")
+
+    def set_duration(self, seconds: int):
+        """Установить новую длительность текущего состояния"""
+        if self.state == 'in_bath':
+            self.time_in_bath = seconds
+        else:
+            self.transition_time = seconds
+        logger.info(f"⏱️ Hanger {self.hanger_id}: Set new duration {seconds}s for {self.state}")
+
+    def force_next_state(self):
+        """Форсировать переход к следующему состоянию"""
+        if self.is_finished:
+            return
+            
+        if self.state == 'in_bath':
+            self.state = 'transitioning'
+            self.state_start_time = datetime.now()
+            logger.info(f"⏭ Hanger {self.hanger_id}: Forced transition from bath {self.current_bath}")
+        elif self.state == 'transitioning':
+            self.current_bath_index += 1
+            self.state = 'in_bath'
+            self.state_start_time = datetime.now()
+            logger.info(f"⏭ Hanger {self.hanger_id}: Forced arrival at next bath")
+
     def update(self) -> bool:
         """Обновить состояние подвеса. Возвращает True если нужно перейти к следующей ванне"""
         if self.is_finished:
@@ -626,6 +672,15 @@ class HangerStateManual(HangerState):
             return self.time_in_bath_list[self.current_bath_index]
         return 0
     
+    def set_duration(self, seconds: int):
+        """Установить новую длительность для текущей ванны или перехода (ручной режим)"""
+        if self.state == 'in_bath':
+            if self.current_bath_index < len(self.time_in_bath_list):
+                self.time_in_bath_list[self.current_bath_index] = seconds
+        else:
+            self.transition_time = seconds
+        logger.info(f"⏱️ Hanger {self.hanger_id} (Manual): Set new duration {seconds}s for {self.state}")
+    
     def update(self) -> bool:
         """Обновить состояние подвеса с учетом разных времен"""
         if self.is_finished:
@@ -652,7 +707,7 @@ class HangerStateManual(HangerState):
         return False
 
 
-async def run_opcua_server_simulation(config: SimulatorConfig, manual_mode: bool = False):
+async def run_opcua_server_simulation(config: SimulatorConfig):
     """
     Runs an OPC UA server simulation matching the real Omron PLC structure.
     Creates nodes in namespace 4 to match the real server.
@@ -667,7 +722,7 @@ async def run_opcua_server_simulation(config: SimulatorConfig, manual_mode: bool
     server.set_endpoint("opc.tcp://0.0.0.0:4840/freeopcua/server/")
     
     logger.info(f"Starting OPC UA Server Simulation at {server.endpoint}")
-    logger.info(f"Mode: {'MANUAL' if manual_mode else 'AUTOMATIC'}")
+    logger.info("Mode: UNIFIED (GUI + Optional Auto-spawn)")
     logger.info(f"Configuration:")
     logger.info(f"  - Hanger spawn interval: {config.hanger_spawn_interval}s")
     logger.info(f"  - Time in bath: {config.time_in_bath}s")
@@ -745,54 +800,73 @@ async def run_opcua_server_simulation(config: SimulatorConfig, manual_mode: bool
     await server.start()
     logger.info("OPC UA Server started and ready!")
     
-    # Очищаем кеш line_monitor перед началом симуляции
-    try:
-        line_monitor.clear_data()
-        logger.info("Line monitor cache cleared")
-    except Exception as e:
-        logger.warning(f"Could not clear line monitor cache: {e}")
-    
     # Simulation state
     hangers: Dict[int, HangerState] = {}  # {hanger_id: HangerState}
-    next_hanger_id = 1
-    last_spawn_time = datetime.now()
+    last_spawn_time = datetime.now() - timedelta(minutes=10) # Сразу готовы к спавну
+    last_auto_mode = False
     manual_queue: List[Dict] = []  # Queue for manually-launched hangers
     
-    # Если ручной режим - запускаем GUI окно
-    manual_window = None
-    if manual_mode:
-        manual_window = ManualHangerWindow(manual_queue, config)
-        # Запускаем GUI в отдельном потоке
-        import threading
-        gui_thread = threading.Thread(target=manual_window.show, daemon=True)
-        gui_thread.start()
-        logger.info("🎮 Manual mode GUI started")
+    # Всегда запускаем GUI окно (Пульт Управления)
+    manual_window = ManualHangerWindow(manual_queue, config, hangers)
+    
+    # Запускаем GUI в отдельном потоке
+    import threading
+    gui_thread = threading.Thread(target=manual_window.show, daemon=True)
+    gui_thread.start()
+    
+    logger.info("🎨 Unified Control Panel GUI started")
     
     try:
         while True:
-            # Проверяем флаг выхода из ручного режима
-            if manual_mode and manual_window and manual_window.should_exit:
+            # Проверяем флаг выхода
+            if manual_window and manual_window.should_exit:
                 logger.info("🛑 Exiting from manual mode")
                 break
             
             current_time = datetime.now()
             
-            # 1. Auto-spawn new hanger if needed (only in auto mode)
-            if not manual_mode and len(hangers) < config.max_hangers:
+            # 1. Смена режима: проверяем галочку в GUI
+            auto_mode_active = False
+            if manual_window.auto_spawn_var:
+                auto_mode_active = manual_window.auto_spawn_var.get()
+            
+            # Если только что включили автозапуск - сбрасываем таймер для мгновенного первого спавна
+            if auto_mode_active and not last_auto_mode:
+                last_spawn_time = datetime.now() - timedelta(seconds=config.hanger_spawn_interval + 1)
+            last_auto_mode = auto_mode_active
+            
+            # 1a. Auto-spawn new hanger if needed
+            if auto_mode_active and len(hangers) < config.max_hangers:
                 if (current_time - last_spawn_time).total_seconds() >= config.hanger_spawn_interval:
-                    hanger = HangerState(
-                        next_hanger_id,
-                        config.bath_sequence,
-                        config.time_in_bath,
-                        config.bath_transition_time
-                    )
-                    hangers[next_hanger_id] = hanger
-                    logger.info(f"🚀 Spawned hanger {next_hanger_id}, starting at bath {hanger.current_bath}")
-                    next_hanger_id += 1
+                    # Используем централизованный ID из конфига
+                    h_id = config.get_next_id()
+                    # Синхронизируем GUI
+                    manual_window.hanger_id_var.set(h_id + 1)
+                    
+                    # Получаем рецепт из текущих настроек (поля GUI, сохраненные в конфиг)
+                    baths = []
+                    times = []
+                    for item in config.manual_recipe:
+                        if item.get('active') and item.get('bath', 0) > 0:
+                            baths.append(item['bath'])
+                            times.append(item['time'])
+                    
+                    if not baths:
+                        # Резервный вариант, если рецепт не задан
+                        baths = config.bath_sequence
+                        times = [config.time_in_bath] * len(baths)
+                        trans = config.bath_transition_time
+                        hanger = HangerState(h_id, baths, config.time_in_bath, trans)
+                    else:
+                        trans = config.manual_transition_time
+                        hanger = HangerStateManual(h_id, baths, times, trans)
+
+                    hangers[h_id] = hanger
+                    logger.info(f"🚀 (Auto) Spawned hanger {h_id}, using GUI recipe: {baths}")
                     last_spawn_time = current_time
             
             # 1b. Manual mode: check for manual launches from queue
-            if manual_mode and manual_queue:
+            if manual_queue:
                 hanger_data = manual_queue.pop(0)
                 hanger_id = hanger_data['hanger_id']
                 bath_sequence = hanger_data['bath_sequence']
@@ -821,13 +895,6 @@ async def run_opcua_server_simulation(config: SimulatorConfig, manual_mode: bool
             # 3. Remove finished hangers
             for hanger_id in finished_hangers:
                 del hangers[hanger_id]
-                # Также удаляем из line_monitor кеша
-                try:
-                    if hanger_id in line_monitor._hangers:
-                        del line_monitor._hangers[hanger_id]
-                        logger.info(f"Removed hanger {hanger_id} from line_monitor cache")
-                except Exception as e:
-                    logger.warning(f"Could not remove hanger from cache: {e}")
             
             # 4. Clear all baths first
             for bath_num in range(1, 41):
@@ -873,33 +940,18 @@ async def run_opcua_server_simulation(config: SimulatorConfig, manual_mode: bool
         logger.info("Stopping OPC UA Server...")
         await server.stop()
         logger.info("OPC UA Server stopped.")
-        
-        # Очищаем кеш OPC UA сервиса
-        try:
-            await opcua_service.disconnect()
-            logger.info("OPC UA cache cleared")
-        except Exception as e:
-            logger.warning(f"Could not clear OPC UA cache: {e}")
 
 
 if __name__ == "__main__":
-    # Show configuration dialog
-    dialog = ConfigDialog()
-    config = dialog.show()
+    # Load configuration
+    config = SimulatorConfig()
+    config.load()
     
-    if config:
-        manual_mode = dialog.manual_mode
-        
-        # Run simulator with configuration
-        try:
-            if manual_mode:
-                logger.info("🎮 Starting simulator in MANUAL mode")
-                logger.info("GUI window will open for manual hanger launches")
-                asyncio.run(run_opcua_server_simulation(config, manual_mode=True))
-            else:
-                logger.info("🤖 Starting simulator in AUTOMATIC mode")
-                asyncio.run(run_opcua_server_simulation(config, manual_mode=False))
-        except KeyboardInterrupt:
-            logger.info("Simulator stopped by user (Ctrl+C)")
-    else:
-        logger.info("Simulator cancelled by user")
+    # Run simulator with configuration
+    try:
+        logger.info("🚀 Starting unified simulator with GUI")
+        asyncio.run(run_opcua_server_simulation(config))
+    except KeyboardInterrupt:
+        logger.info("Simulator stopped by user (Ctrl+C)")
+    except Exception as e:
+        logger.exception(f"Fatal error: {e}")

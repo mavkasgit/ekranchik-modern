@@ -25,7 +25,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
-import { BathForecastTable } from '@/components/BathForecastTable'
+import { BathForecast } from '@/components/BathForecastTable'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
 
 const FILTERS_KEY = 'ekranchik_filters'
@@ -92,7 +92,7 @@ function formatDate(date: string | undefined): string {
 // Color mapping - top 15 most used colors
 function getColorHex(colorName: string): string {
   const name = colorName.toLowerCase().trim()
-  
+
   const colorMap: Record<string, string> = {
     // Top colors by usage
     'серебро': '#C0C0C0',      // 16147 uses
@@ -105,15 +105,15 @@ function getColorHex(colorName: string): string {
     'растрав': '#D3D3D3',      // 127 uses
     'rosegold': '#B76E79',     // 126 uses
   }
-  
+
   // Try exact match
   if (colorMap[name]) return colorMap[name]
-  
+
   // Try partial match
   for (const [key, value] of Object.entries(colorMap)) {
     if (name.includes(key) || key.includes(name)) return value
   }
-  
+
   // Default gray for unknown
   return '#9CA3AF'
 }
@@ -147,13 +147,13 @@ function PhotoModal({
   useEffect(() => {
     setImageSize(null)
     if (!photoUrl) return
-    
+
     const img = new window.Image()
     img.onload = () => {
       setImageSize({ width: img.naturalWidth, height: img.naturalHeight })
     }
     img.src = photoUrl
-    
+
     return () => { img.onload = null }
   }, [photoUrl])
 
@@ -161,7 +161,7 @@ function PhotoModal({
   useEffect(() => {
     setProfileData(null)
     if (!open || !profileName) return
-    
+
     fetch(`/api/catalog/${encodeURIComponent(profileName)}`)
       .then(res => res.ok ? res.json() : null)
       .then(data => setProfileData(data))
@@ -186,7 +186,7 @@ function PhotoModal({
         }
       }
     }
-    
+
     if (open) {
       window.addEventListener('keydown', handleEsc)
       return () => window.removeEventListener('keydown', handleEsc)
@@ -236,21 +236,21 @@ function PhotoModal({
     const maxDialogHeight = typeof window !== 'undefined' ? window.innerHeight - 100 : 800
     const maxDialogWidth = typeof window !== 'undefined' ? window.innerWidth - 100 : 1200
     const minHeight = 400
-    
+
     if (!imageSize) {
       return { width: Math.min(900, maxDialogWidth), height: minHeight }
     }
-    
+
     let imgDisplayWidth = imageSize.width
     let imgDisplayHeight = imageSize.height
-    
+
     // Scale down if image is too tall
     if (imgDisplayHeight > maxDialogHeight) {
       const scale = maxDialogHeight / imgDisplayHeight
       imgDisplayWidth = imgDisplayWidth * scale
       imgDisplayHeight = maxDialogHeight
     }
-    
+
     // Scale down if dialog would be too wide
     const dialogWidth = imgDisplayWidth + rightPanelWidth
     if (dialogWidth > maxDialogWidth) {
@@ -258,7 +258,7 @@ function PhotoModal({
       imgDisplayWidth = imgDisplayWidth * scale
       imgDisplayHeight = imgDisplayHeight * scale
     }
-    
+
     return {
       width: Math.max(600, imgDisplayWidth + rightPanelWidth),
       height: Math.max(minHeight, imgDisplayHeight)
@@ -272,110 +272,110 @@ function PhotoModal({
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent 
-        className="p-0 gap-0 top-[5%] translate-y-0"
-        style={{ width: `${dialogSize.width}px`, height: `${dialogSize.height}px`, maxWidth: 'calc(100vw - 100px)' }}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        <div className="flex h-full">
-          {/* Photo area - left side */}
-          <div className="flex-1 bg-muted flex items-center justify-center overflow-auto relative">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute top-2 right-2 z-10"
-              onClick={() => setIsFullscreen(true)}
-              title="Развернуть на весь экран"
-            >
-              <Maximize2 className="h-5 w-5" />
-            </Button>
-            <div 
-              className="relative w-full h-full flex items-center justify-center select-none cursor-pointer"
-              onClick={() => setIsFullscreen(true)}
-            >
-              <img 
-                src={photoUrl} 
-                alt={profileName} 
-                className="max-w-full max-h-full object-contain pointer-events-none"
-              />
-            </div>
-          </div>
-
-          {/* Right panel - info (like Catalog view mode) */}
-          <div className="border-l bg-background p-4 flex flex-col" style={{ width: '280px' }}>
-            <div className="flex-1 space-y-4 overflow-y-auto">
-              <h2 className="text-xl font-semibold">{profileName}</h2>
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Кол-во на подвесе:</span>
-                  <span className="font-medium">{profileData?.quantity_per_hanger ?? '—'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Длина:</span>
-                  <span className="font-medium">{profileData?.length ? `${profileData.length} мм` : '—'}</span>
-                </div>
+        <DialogContent
+          className="p-0 gap-0 top-[5%] translate-y-0"
+          style={{ width: `${dialogSize.width}px`, height: `${dialogSize.height}px`, maxWidth: 'calc(100vw - 100px)' }}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          <div className="flex h-full">
+            {/* Photo area - left side */}
+            <div className="flex-1 bg-muted flex items-center justify-center overflow-auto relative">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute top-2 right-2 z-10"
+                onClick={() => setIsFullscreen(true)}
+                title="Развернуть на весь экран"
+              >
+                <Maximize2 className="h-5 w-5" />
+              </Button>
+              <div
+                className="relative w-full h-full flex items-center justify-center select-none cursor-pointer"
+                onClick={() => setIsFullscreen(true)}
+              >
+                <img
+                  src={photoUrl}
+                  alt={profileName}
+                  className="max-w-full max-h-full object-contain pointer-events-none"
+                />
               </div>
-              {profileData?.notes && (
-                <div className="pt-2 border-t">
-                  <span className="text-sm text-muted-foreground">Примечания:</span>
-                  <p className="mt-1 text-sm">{profileData.notes}</p>
+            </div>
+
+            {/* Right panel - info (like Catalog view mode) */}
+            <div className="border-l bg-background p-4 flex flex-col" style={{ width: '280px' }}>
+              <div className="flex-1 space-y-4 overflow-y-auto">
+                <h2 className="text-xl font-semibold">{profileName}</h2>
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Кол-во на подвесе:</span>
+                    <span className="font-medium">{profileData?.quantity_per_hanger ?? '—'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Длина:</span>
+                    <span className="font-medium">{profileData?.length ? `${profileData.length} мм` : '—'}</span>
+                  </div>
                 </div>
-              )}
+                {profileData?.notes && (
+                  <div className="pt-2 border-t">
+                    <span className="text-sm text-muted-foreground">Примечания:</span>
+                    <p className="mt-1 text-sm">{profileData.notes}</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-    
-    {/* Fullscreen overlay - desktop only */}
-    {isFullscreen && photoUrl && typeof window !== 'undefined' && window.innerWidth >= 768 && (
-      <div 
-        id="fullscreen-photo-container"
-        className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
-        onClick={() => setIsFullscreen(false)}
-      >
-        {/* Large close area for mobile - top-left corner */}
-        {typeof window !== 'undefined' && window.innerWidth < 768 && (
-          <div
-            className="absolute top-0 left-0 w-16 h-16 z-20 cursor-pointer"
+        </DialogContent>
+      </Dialog>
+
+      {/* Fullscreen overlay - desktop only */}
+      {isFullscreen && photoUrl && typeof window !== 'undefined' && window.innerWidth >= 768 && (
+        <div
+          id="fullscreen-photo-container"
+          className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
+          onClick={() => setIsFullscreen(false)}
+        >
+          {/* Large close area for mobile - top-left corner */}
+          {typeof window !== 'undefined' && window.innerWidth < 768 && (
+            <div
+              className="absolute top-0 left-0 w-16 h-16 z-20 cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation()
+                setIsFullscreen(false)
+              }}
+            />
+          )}
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-4 right-4 text-white hover:bg-white/20 z-10"
             onClick={(e) => {
               e.stopPropagation()
               setIsFullscreen(false)
             }}
+          >
+            <Minimize2 className="h-6 w-6" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-4 right-16 text-white hover:bg-white/20 z-10"
+            onClick={(e) => {
+              e.stopPropagation()
+              onClose()
+              setIsFullscreen(false)
+            }}
+          >
+            <X className="h-6 w-6" />
+          </Button>
+          <img
+            src={photoUrl}
+            alt={profileName}
+            className="max-w-full max-h-full object-contain cursor-pointer"
+            onClick={(e) => e.stopPropagation()}
           />
-        )}
-        
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-4 right-4 text-white hover:bg-white/20 z-10"
-          onClick={(e) => {
-            e.stopPropagation()
-            setIsFullscreen(false)
-          }}
-        >
-          <Minimize2 className="h-6 w-6" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-4 right-16 text-white hover:bg-white/20 z-10"
-          onClick={(e) => {
-            e.stopPropagation()
-            onClose()
-            setIsFullscreen(false)
-          }}
-        >
-          <X className="h-6 w-6" />
-        </Button>
-        <img
-          src={photoUrl}
-          alt={profileName}
-          className="max-w-full max-h-full object-contain cursor-pointer"
-          onClick={(e) => e.stopPropagation()}
-        />
-      </div>
-    )}
+        </div>
+      )}
     </>
   )
 }
@@ -436,8 +436,8 @@ function PhotoCell({
       {hanger.is_defect && (
         <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
       )}
-      <div className="w-20 h-20 bg-muted rounded flex items-center justify-center">
-        <Image className="w-8 h-8 text-muted-foreground" />
+      <div className="w-10 h-10 bg-muted rounded flex items-center justify-center">
+        <Image className="w-5 h-5 text-muted-foreground" />
       </div>
     </div>
   )
@@ -492,10 +492,10 @@ function StatusBar() {
   const { isConnected, lastMessage } = useRealtimeData()
 
   const fileIsOpen = fileStatus?.is_open
-  const statusColor = fileStatus?.error 
-    ? 'bg-yellow-500' 
-    : fileIsOpen 
-      ? 'bg-green-500' 
+  const statusColor = fileStatus?.error
+    ? 'bg-yellow-500'
+    : fileIsOpen
+      ? 'bg-green-500'
       : 'bg-destructive'
 
   return (
@@ -558,26 +558,31 @@ function StatusBar() {
 function DataTable({
   data,
   onPhotoClick,
-  highlightNew = false,
-  newIds = new Set<string>(),
   isFullscreen = false,
   showEntryExit = false,
+  headerChildren,
 }: {
   data: HangerData[]
   onPhotoClick: (url: string, name: string) => void
-  highlightNew?: boolean
-  newIds?: Set<string>
   isFullscreen?: boolean
   showEntryExit?: boolean
+  headerChildren?: React.ReactNode
 }) {
   return (
     <div className={`overflow-auto text-xs ${isFullscreen ? 'max-h-screen' : 'rounded-md border max-h-[500px]'}`}>
       <Table>
         <TableHeader className="sticky top-0 bg-muted z-10">
+          {headerChildren && (
+            <TableRow className="bg-background border-b hover:bg-background">
+              <TableCell colSpan={10} className="p-0">
+                {headerChildren}
+              </TableCell>
+            </TableRow>
+          )}
           <TableRow>
             <TableHead className="w-20 text-center py-1">Дата</TableHead>
             <TableHead className="w-16 text-center py-1">Время</TableHead>
-            <TableHead className="w-16 text-center py-1">№ Подв.</TableHead>
+            <TableHead className="w-16 text-center py-1">№</TableHead>
             <TableHead className="w-16 text-center py-1">Тип</TableHead>
             <TableHead className="w-20 text-center py-1">№ КПЗ</TableHead>
             <TableHead className="text-center py-1">Клиент</TableHead>
@@ -589,15 +594,10 @@ function DataTable({
         </TableHeader>
         <TableBody>
           {data.map((hanger, idx) => {
-            const rowId = showEntryExit 
-              ? `${hanger.number}-${hanger.exit_date}-${hanger.exit_time}`
-              : `${hanger.number}-${hanger.date}-${hanger.time}`
-            const isNew = highlightNew && newIds.has(rowId)
-
             return (
               <TableRow
                 key={`${hanger.number}-${idx}`}
-                className={isNew ? 'bg-yellow-500/20 animate-pulse' : idx % 2 === 0 ? 'bg-slate-200' : ''}
+                className={idx % 2 === 0 ? 'bg-slate-200' : ''}
               >
                 {showEntryExit ? (
                   <>
@@ -638,8 +638,8 @@ function DataTable({
                 <TableCell className="text-center py-1">
                   <div className="inline-flex flex-col items-center max-w-[80px]">
                     <span className="text-sm leading-tight text-center break-words">{hanger.color}</span>
-                    <div 
-                      className="w-full h-1.5 rounded-full mt-0.5" 
+                    <div
+                      className="w-full h-1.5 rounded-full mt-0.5"
                       style={{ backgroundColor: getColorHex(hanger.color), minWidth: '50px' }}
                     />
                   </div>
@@ -762,15 +762,7 @@ function FiltersPanel({
             <Label htmlFor="show-forecast" className="cursor-pointer">Прогноз выхода</Label>
           </div>
 
-          {/* Time */}
-          <div className="flex items-center gap-2 border rounded-lg px-3 py-2 border-orange-500/50 bg-orange-500/10">
-            <Checkbox
-              id="show-time"
-              checked={filters.showTime}
-              onCheckedChange={(c) => onChange({ ...filters, showTime: !!c })}
-            />
-            <Label htmlFor="show-time" className="cursor-pointer">Время</Label>
-          </div>
+
 
           <div className="flex gap-2 ml-auto">
             <Button onClick={onApply} disabled={otherFiltersDisabled}>Применить</Button>
@@ -789,11 +781,10 @@ export default function Dashboard() {
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
   const [hasNewRows, setHasNewRows] = useState(false)
   const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false)
-  const [currentTime, setCurrentTime] = useState(new Date())
   const lastModifiedRef = useRef<string | null>(null)
   const prevDataRef = useRef<HangerData[]>([])
   const prevUnloadDataRef = useRef<any[]>([])
-  
+
   // State for "Последние 100" toggle
   const [isLast100Mode, setIsLast100Mode] = useState(false);
   const [preLast100Filters, setPreLast100Filters] = useState<Filters | null>(null);
@@ -835,7 +826,7 @@ export default function Dashboard() {
         refetch().then((result) => {
           const newData = result.data?.products ?? []
           const prevData = prevDataRef.current
-          
+
           // Deep compare function for rows
           const rowsEqual = (r1: HangerData, r2: HangerData): boolean => {
             return (
@@ -850,15 +841,15 @@ export default function Dashboard() {
               r1.lamels_qty === r2.lamels_qty
             )
           }
-          
+
           // Check if there are actual changes in rows
-          const hasActualChanges = 
+          const hasActualChanges =
             newData.length !== prevData.length ||
             newData.some((newRow, idx) => {
               const prevRow = prevData[idx]
               return !prevRow || !rowsEqual(newRow, prevRow)
             })
-          
+
           if (hasActualChanges) {
             // Show blue highlight only if there are actual changes
             setHasNewRows(true)
@@ -876,7 +867,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (matchedEvents && matchedEvents.length > 0) {
       const prevUnloadData = prevUnloadDataRef.current
-      
+
       // Deep compare function for unload events
       const eventsEqual = (e1: any, e2: any): boolean => {
         return (
@@ -890,15 +881,15 @@ export default function Dashboard() {
           e1.client === e2.client
         )
       }
-      
+
       // Check if there are actual changes
-      const hasActualChanges = 
+      const hasActualChanges =
         matchedEvents.length !== prevUnloadData.length ||
         matchedEvents.some((newEvent, idx) => {
           const prevEvent = prevUnloadData[idx]
           return !prevEvent || !eventsEqual(newEvent, prevEvent)
         })
-      
+
       if (hasActualChanges) {
         setHasNewUnloadEvents(true)
         prevUnloadDataRef.current = matchedEvents
@@ -924,7 +915,7 @@ export default function Dashboard() {
   useEffect(() => {
     // Проверяем если это открыто на весь экран (вероятно из киоска)
     const isKioskMode = window.innerHeight === screen.height && window.innerWidth === screen.width
-    
+
     if (isKioskMode && !isFullscreen) {
       // Автоматически переходим в fullscreen
       setTimeout(() => {
@@ -950,13 +941,7 @@ export default function Dashboard() {
     }
   })
 
-  // Update time every second
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date())
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [])
+
 
   useEffect(() => { saveFilters(filters) }, [filters])
 
@@ -1022,7 +1007,7 @@ export default function Dashboard() {
         />
       )}
 
-      <div className="space-y-4 relative">
+      <div className="space-y-1 relative">
         {filters.showLoading && (
           <Card className="border-8 border-blue-500 relative">
             {hasNewRows && (
@@ -1046,9 +1031,7 @@ export default function Dashboard() {
           </Card>
         )}
 
-        {filters.showForecast && (
-          <BathForecastTable />
-        )}
+
 
         {filters.showRealtime && (
           <>
@@ -1059,6 +1042,10 @@ export default function Dashboard() {
                 {console.log('[Dashboard] Rendering table with', matchedEvents.length, 'events')}
               </>
             )}
+
+            {/* Forecast Row - Outside the green border */}
+            {filters.showForecast && <BathForecast />}
+
             <Card className="border-8 border-green-500 relative">
               {hasNewUnloadEvents && (
                 <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
@@ -1067,7 +1054,7 @@ export default function Dashboard() {
               )}
               <CardContent className="p-0">
                 {matchedEvents && matchedEvents.length > 0 ? (
-                  <DataTable 
+                  <DataTable
                     data={matchedEvents.map(e => ({
                       number: String(e.hanger),
                       date: e.exit_date,
@@ -1086,26 +1073,22 @@ export default function Dashboard() {
                       current_bath: e.current_bath,
                       bath_entry_time: e.bath_entry_time,
                       bath_processing_time: e.bath_processing_time,
-                    }))} 
-                    onPhotoClick={handlePhotoClick} 
+                    }))}
+                    onPhotoClick={handlePhotoClick}
                     isFullscreen={isFullscreen}
-                  showEntryExit
-                />
-              ) : (
-                <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
-                  :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :)
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                    showEntryExit
+                  />
+                ) : (
+                  <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
+                    :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :)
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </>
         )}
 
-        {filters.showTime && (
-          <div className="absolute left-1/2 transform -translate-x-1/2 top-0 text-3xl font-bold text-white bg-black px-6 py-2 rounded-lg pointer-events-none z-50" style={{ fontFamily: 'Calibri, sans-serif' }}>
-            {currentTime.toLocaleTimeString('ru-RU')}
-          </div>
-        )}
+
       </div>
 
       <PhotoModal
