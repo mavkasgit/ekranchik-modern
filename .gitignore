@@ -34,12 +34,12 @@ htmlcov/
 *.local
 
 # Database
-*.db
-*.sqlite3
-static/*.db
+# *.db
+# *.sqlite3
+# static/*.db
 
-# Data folders (keep .gitkeep)
-static/images/*
+# Data folders
+# static/images/*
 !static/images/.gitkeep
 excel/*
 !excel/.gitkeep

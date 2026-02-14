@@ -256,12 +256,21 @@ class ExcelService:
         # Process records with filtering
         records = self._process_dataframe(df, loading_only=loading_only)
         
-        # Apply limit AFTER filtering - take last N (newest)
-        if len(records) > limit:
-            records = records[-limit:]
-        
-        # Return in reverse order (newest first)
-        return records[::-1]
+        # Apply limit and sorting based on user preference
+        if loading_only:
+            # Special logic for Loading: 
+            # 1. Take OLDEST X rows (from the top of the spreadsheet)
+            # 2. Show them in REVERSE order (newest of those at top)
+            # This allows rows to disappear from the TOP when the limit is reduced
+            if len(records) > limit:
+                records = records[:limit]
+            return records[::-1]
+        else:
+            # Standard logic for other modes (e.g. Last 100):
+            # Take NEWEST X rows and show newest at top
+            if len(records) > limit:
+                records = records[-limit:]
+            return records[::-1]
     
     def _process_dataframe(self, df: pd.DataFrame, loading_only: bool = False) -> List[Dict[str, Any]]:
         """

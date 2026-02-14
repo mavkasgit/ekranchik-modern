@@ -40,8 +40,8 @@ interface Filters {
 }
 
 const defaultFilters: Filters = {
-  loadingLimit: 10,
-  realtimeLimit: 10,
+  loadingLimit: 8,
+  realtimeLimit: 8,
   showLoading: true,
   showRealtime: true,
   showForecast: true,
@@ -381,11 +381,13 @@ function PhotoModal({
 }
 
 // Helper to build photo URL (paths in DB already include /static/)
-function getPhotoUrl(path: string | null | undefined, cacheBuster?: string): string | null {
+function getPhotoUrl(path: string | null | undefined, cacheBuster?: string | number): string | null {
   if (!path) return null
   // Paths in DB can be like "/static/images/..." or "images/..."
   const base = path.startsWith('/') ? path : `/static/${path}`
-  return cacheBuster ? `${base}?v=${cacheBuster}` : base
+  // Use both updated_at and current timestamp to bust browser cache
+  const bust = cacheBuster ? `${cacheBuster}_${Date.now()}` : Date.now()
+  return `${base}?v=${bust}`
 }
 
 // Photo cell - wrapping layout, max 700px width, photos wrap to new rows
@@ -411,6 +413,15 @@ function PhotoCell({
     )
   }
 
+  // Helper to render profile name next to photo
+  const ProfileName = () => (
+    <div className="flex flex-col justify-center min-w-0 ml-2 text-left">
+      <p className="text-xs text-muted-foreground truncate max-w-[100px]">
+        {hanger.canonical_name || hanger.profile}
+      </p>
+    </div>
+  )
+
   const thumbUrl = getPhotoUrl(hanger.profile_photo_thumb)
   if (thumbUrl) {
     return (
@@ -418,15 +429,18 @@ function PhotoCell({
         {hanger.is_defect && (
           <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
         )}
-        <img
-          src={thumbUrl}
-          alt={hanger.profile}
-          className="w-20 h-20 object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
-          onClick={() => onPhotoClick(
-            getPhotoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || '',
-            hanger.profile
-          )}
-        />
+        <div className="flex items-center">
+          <img
+            src={thumbUrl}
+            alt={hanger.profile}
+            className="w-auto h-auto max-h-[48px] max-w-[120px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
+            onClick={() => onPhotoClick(
+              getPhotoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || '',
+              hanger.profile
+            )}
+          />
+          <ProfileName />
+        </div>
       </div>
     )
   }
@@ -436,8 +450,11 @@ function PhotoCell({
       {hanger.is_defect && (
         <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
       )}
-      <div className="w-10 h-10 bg-muted rounded flex items-center justify-center">
-        <Image className="w-5 h-5 text-muted-foreground" />
+      <div className="flex items-center">
+        <div className="w-10 h-10 bg-muted rounded flex items-center justify-center flex-shrink-0">
+          <Image className="w-5 h-5 text-muted-foreground" />
+        </div>
+        <ProfileName />
       </div>
     </div>
   )
@@ -460,7 +477,7 @@ function ProfilePhoto({
         <img
           src={thumbUrl}
           alt={profile.name}
-          className="w-auto max-h-[80px] max-w-[140px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary flex-shrink-0"
+          className="w-auto h-auto max-h-[48px] max-w-[120px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary flex-shrink-0"
           onClick={() => onPhotoClick(fullUrl || '', profile.canonical_name || profile.name)}
         />
       ) : (
@@ -671,6 +688,8 @@ function FiltersPanel({
   onReset,
   onToggleLast100,
   isLast100Mode,
+  onToggleMockMode,
+  isMockMode,
 }: {
   filters: Filters
   onChange: (filters: Filters) => void
@@ -678,95 +697,109 @@ function FiltersPanel({
   onReset: () => void
   onToggleLast100: () => void
   isLast100Mode: boolean
+  onToggleMockMode: () => void
+  isMockMode: boolean
 }) {
-  const otherFiltersDisabled = isLast100Mode;
+  const otherFiltersDisabled = isLast100Mode || isMockMode;
 
   return (
     <Card>
       <CardContent className="py-4">
-        <div className="flex flex-wrap gap-4 items-center">
-          {/* Loading */}
-          <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-blue-500/50 bg-blue-500/10'}`}>
-            <Checkbox
-              id="show-loading"
-              checked={filters.showLoading}
-              onCheckedChange={(c) => onChange({ ...filters, showLoading: !!c })}
-              disabled={otherFiltersDisabled}
-            />
-            <Label htmlFor="show-loading" className={`cursor-pointer ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Загрузка:</Label>
-            <Input
-              type="number"
-              value={filters.loadingLimit}
-              onChange={e => {
-                const val = e.target.value
-                // Allow empty string during editing
-                onChange({ ...filters, loadingLimit: val === '' ? '' as any : Number(val) })
-              }}
-              onBlur={e => {
-                // Validate on blur - ensure minimum value of 1
-                const val = e.target.value
-                if (val === '' || Number(val) < 1) {
-                  onChange({ ...filters, loadingLimit: 1 })
-                }
-              }}
-              className="w-20 h-8"
-              min={1}
-              max={500}
-              disabled={otherFiltersDisabled}
-            />
+        <div className="space-y-4">
+          {/* Top row - Filters */}
+          <div className="flex items-center gap-4">
+            {/* Loading */}
+            <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-blue-500/50 bg-blue-500/10'}`}>
+              <Checkbox
+                id="show-loading"
+                checked={filters.showLoading}
+                onCheckedChange={(c) => onChange({ ...filters, showLoading: !!c })}
+                disabled={otherFiltersDisabled}
+              />
+              <Label htmlFor="show-loading" className={`cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Загрузка:</Label>
+              <Input
+                type="number"
+                value={filters.loadingLimit}
+                onChange={e => {
+                  const val = e.target.value
+                  onChange({ ...filters, loadingLimit: val === '' ? '' as any : Number(val) })
+                }}
+                onBlur={e => {
+                  const val = e.target.value
+                  if (val === '' || Number(val) < 1) {
+                    onChange({ ...filters, loadingLimit: 1 })
+                  }
+                }}
+                className="w-16 h-8 text-center"
+                min={1}
+                max={500}
+                disabled={otherFiltersDisabled}
+              />
+            </div>
+
+            {/* Realtime */}
+            <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-green-500/50 bg-green-500/10'}`}>
+              <Checkbox
+                id="show-realtime"
+                checked={filters.showRealtime}
+                onCheckedChange={(c) => onChange({ ...filters, showRealtime: !!c })}
+                disabled={otherFiltersDisabled}
+              />
+              <Label htmlFor="show-realtime" className={`cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Выгрузка:</Label>
+              <Input
+                type="number"
+                value={filters.realtimeLimit}
+                onChange={e => {
+                  const val = e.target.value
+                  onChange({ ...filters, realtimeLimit: val === '' ? '' as any : Number(val) })
+                }}
+                onBlur={e => {
+                  const val = e.target.value
+                  if (val === '' || Number(val) < 1) {
+                    onChange({ ...filters, realtimeLimit: 1 })
+                  }
+                }}
+                className="w-16 h-8 text-center"
+                min={1}
+                max={500}
+                disabled={otherFiltersDisabled}
+              />
+            </div>
+
+            {/* Forecast */}
+            <div className="flex items-center gap-2 border rounded-lg px-3 py-2 border-purple-500/50 bg-purple-500/10">
+              <Checkbox
+                id="show-forecast"
+                checked={filters.showForecast}
+                onCheckedChange={(c) => onChange({ ...filters, showForecast: !!c })}
+              />
+              <Label htmlFor="show-forecast" className="cursor-pointer whitespace-nowrap">Прогноз выхода</Label>
+            </div>
           </div>
 
-          {/* Realtime */}
-          <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-green-500/50 bg-green-500/10'}`}>
-            <Checkbox
-              id="show-realtime"
-              checked={filters.showRealtime}
-              onCheckedChange={(c) => onChange({ ...filters, showRealtime: !!c })}
-              disabled={otherFiltersDisabled}
-            />
-            <Label htmlFor="show-realtime" className={`cursor-pointer ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Выгрузка:</Label>
-            <Input
-              type="number"
-              value={filters.realtimeLimit}
-              onChange={e => {
-                const val = e.target.value
-                onChange({ ...filters, realtimeLimit: val === '' ? '' as any : Number(val) })
-              }}
-              onBlur={e => {
-                const val = e.target.value
-                if (val === '' || Number(val) < 1) {
-                  onChange({ ...filters, realtimeLimit: 1 })
-                }
-              }}
-              className="w-20 h-8"
-              min={1}
-              max={500}
-              disabled={otherFiltersDisabled}
-            />
-          </div>
+          {/* Bottom row - Buttons */}
+          <div className="flex flex-wrap gap-4 items-center justify-between">
+            <div className="flex gap-4">
+              <Button
+                variant={isLast100Mode ? "default" : "outline"}
+                onClick={onToggleLast100}
+              >
+                Последние 100
+              </Button>
 
-          <Button
-            variant={isLast100Mode ? "default" : "outline"}
-            onClick={onToggleLast100}
-          >
-            Последние 100
-          </Button>
+              <Button
+                variant={isMockMode ? "default" : "outline"}
+                onClick={onToggleMockMode}
+                className={isMockMode ? "bg-purple-600 hover:bg-purple-700" : ""}
+              >
+                Все профили (тест)
+              </Button>
+            </div>
 
-          {/* Forecast */}
-          <div className="flex items-center gap-2 border rounded-lg px-3 py-2 border-purple-500/50 bg-purple-500/10">
-            <Checkbox
-              id="show-forecast"
-              checked={filters.showForecast}
-              onCheckedChange={(c) => onChange({ ...filters, showForecast: !!c })}
-            />
-            <Label htmlFor="show-forecast" className="cursor-pointer">Прогноз выхода</Label>
-          </div>
-
-
-
-          <div className="flex gap-2 ml-auto">
-            <Button onClick={onApply} disabled={otherFiltersDisabled}>Применить</Button>
-            <Button variant="outline" onClick={onReset} disabled={otherFiltersDisabled}>Сбросить</Button>
+            <div className="flex gap-2">
+              <Button onClick={onApply} disabled={otherFiltersDisabled}>Применить</Button>
+              <Button variant="outline" onClick={onReset} disabled={otherFiltersDisabled}>Сбросить</Button>
+            </div>
           </div>
         </div>
       </CardContent>
@@ -789,6 +822,10 @@ export default function Dashboard() {
   const [isLast100Mode, setIsLast100Mode] = useState(false);
   const [preLast100Filters, setPreLast100Filters] = useState<Filters | null>(null);
 
+  // State for "Catalog Mock" mode
+  const [isMockMode, setIsMockMode] = useState(false);
+  const [mockData, setMockData] = useState<HangerData[]>([]);
+
   // Determine if the API should filter for loading_only rows
   const loadingOnly = !isLast100Mode;
 
@@ -797,6 +834,8 @@ export default function Dashboard() {
   const { data: matchedEvents, refetch: refetchMatched } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
 
   const handleToggleLast100 = () => {
+    if (isMockMode) setIsMockMode(false); // Disable mock mode if switching to Last 100
+
     if (isLast100Mode) {
       // Turn OFF: Restore previous filters
       if (preLast100Filters) {
@@ -813,6 +852,47 @@ export default function Dashboard() {
         loadingLimit: 100,
       });
       setIsLast100Mode(true);
+    }
+  };
+
+  const handleToggleMockMode = async () => {
+    if (isMockMode) {
+      setIsMockMode(false);
+      return;
+    }
+
+    // Turn off "Last 100" if active
+    if (isLast100Mode) {
+      setIsLast100Mode(false);
+      if (preLast100Filters) setFilters(preLast100Filters);
+    }
+
+    try {
+      const res = await fetch('/api/catalog/all?limit=1000');
+      if (!res.ok) throw new Error('Failed to fetch catalog');
+      const profiles: any[] = await res.json();
+
+      const mapped: HangerData[] = profiles.map((p) => ({
+        number: `${p.id}`,
+        date: new Date().toLocaleDateString('ru-RU'),
+        time: '12:00',
+        client: 'Тест Каталога',
+        profile: p.name,
+        canonical_name: p.name,
+        profiles_info: [], // Single profile view
+        profile_photo_thumb: p.photo_thumb,
+        profile_photo_full: p.photo_full,
+        color: 'Не указан',
+        lamels_qty: p.quantity_per_hanger ?? 0,
+        kpz_number: '—',
+        material_type: 'Тест',
+      }));
+
+      setMockData(mapped);
+      setIsMockMode(true);
+    } catch (e) {
+      console.error("Error loading mock data:", e);
+      alert("Ошибка загрузки каталога");
     }
   };
 
@@ -1004,21 +1084,23 @@ export default function Dashboard() {
           onReset={() => setFilters(defaultFilters)}
           onToggleLast100={handleToggleLast100}
           isLast100Mode={isLast100Mode}
+          onToggleMockMode={handleToggleMockMode}
+          isMockMode={isMockMode}
         />
       )}
 
       <div className="space-y-1 relative">
         {filters.showLoading && (
-          <Card className="border-8 border-blue-500 relative">
-            {hasNewRows && (
+          <Card className={`border-8 ${isMockMode ? 'border-purple-500' : 'border-blue-500'} relative`}>
+            {hasNewRows && !isMockMode && (
               <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
                 <span className="text-white text-3xl font-bold">Обновление</span>
               </div>
             )}
             <CardContent className="p-0">
-              {isLoading ? <TableSkeleton /> : data?.products?.length ? (
+              {isLoading && !isMockMode ? <TableSkeleton /> : (isMockMode ? mockData : data?.products)?.length ? (
                 <DataTable
-                  data={data.products}
+                  data={isMockMode ? mockData : (data?.products ?? [])}
                   onPhotoClick={handlePhotoClick}
                   isFullscreen={isFullscreen}
                 />
