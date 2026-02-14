@@ -53,4 +53,8 @@ export interface MatchedUnloadEvent {
   lamels_qty: number | string
   kpz_number: string
   material_type: string
+  // Forecast info - current bath and processing time
+  current_bath?: number | null
+  bath_entry_time?: string | null
+  bath_processing_time?: number | null
 }

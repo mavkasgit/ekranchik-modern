@@ -28,6 +28,10 @@ export interface HangerData {
   entry_time?: string   // Time when loaded (from Excel)
   exit_date?: string    // Date when unloaded
   exit_time?: string    // Time when unloaded
+  // Forecast info - current bath and processing time
+  current_bath?: number | null  // Bath number 30-33 where hanger currently is
+  bath_entry_time?: string | null  // Time when hanger entered current bath (HH:MM:SS)
+  bath_processing_time?: number | null  // Expected processing time in seconds for current bath
 }
 
 export interface DashboardResponse {

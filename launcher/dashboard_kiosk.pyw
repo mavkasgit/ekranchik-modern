@@ -113,6 +113,7 @@ class KioskDashboard:
         self.geometry = geometry
         self.is_idle_mode = False  # Флаг режима простоя
         self.original_url = url  # Сохраняем оригинальный URL
+        self.auto_launch_enabled = False  # Флаг автозапуска
         
     def on_loaded(self):
         """Callback when page is loaded."""
@@ -305,6 +306,16 @@ class KioskDashboard:
             self.window.events.closing -= self.on_closing
             self.window.destroy()
     
+    def toggle_auto_launch(self):
+        """Переключение режима автозапуска при втором мониторе."""
+        self.auto_launch_enabled = not self.auto_launch_enabled
+        config = load_kiosk_config()
+        config["auto_launch_on_second_monitor"] = self.auto_launch_enabled
+        save_kiosk_config(config)
+        
+        # Обновляем меню трея
+        self._update_tray_menu()
+    
     def create_tray_icon(self):
         """Создание иконки в трее."""
         # Импортируем функцию создания иконки
@@ -335,18 +346,23 @@ class KioskDashboard:
             dc.rectangle([15, 15, 49, 49], fill='white')
             dc.text((22, 22), "K", fill='#2196F3') # font_size=20 # PIL по умолчанию не умеет в размер
         
-        # Меню трея (с новыми пунктами и корректировкой текста)
-        menu = pystray.Menu(
+        self._update_tray_menu()
+        self.tray_icon = pystray.Icon("ekranchik_kiosk", image, "Kiosk Control", self.menu)
+    
+    def _update_tray_menu(self):
+        """Обновление меню трея с актуальным статусом автозапуска."""
+        auto_launch_text = "✓ Автозапуск при 2м мониторе" if self.auto_launch_enabled else "○ Автозапуск при 2м мониторе"
+        
+        self.menu = pystray.Menu(
             pystray.MenuItem("Переключить монитор", lambda: self.switch_monitor()),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(auto_launch_text, lambda: self.toggle_auto_launch()),
             pystray.MenuItem("🕐 Режим простоя (часы)", lambda: self.toggle_idle_screen()),
             pystray.MenuItem("Обновить страницу", lambda: self.reload_page()),
             pystray.MenuItem("Вкл/Выкл полный экран", lambda: self.toggle_fullscreen()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Выход", lambda: self.quit_app())
         )
-        
-        self.tray_icon = pystray.Icon("ekranchik_kiosk", image, "Kiosk Control", menu)
     
     def run_tray(self):
         if self.tray_icon:
@@ -375,7 +391,7 @@ def load_kiosk_config():
                 return json.load(f)
         except:
             pass
-    return {"url": "http://localhost:5173", "monitor": 1}
+    return {"url": "http://localhost:5173", "monitor": 1, "auto_launch_on_second_monitor": False}
 
 def save_kiosk_config(config):
     """Сохранить конфиг киоска."""
@@ -478,6 +494,21 @@ class KioskLauncher:
             )
             rb.pack(fill=tk.X, pady=3)
         
+        # === Опции секция ===
+        options_frame = tk.LabelFrame(self.root, text="Опции", font=("Segoe UI", 11))
+        options_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        self.auto_launch_var = tk.BooleanVar(value=self.config.get("auto_launch_on_second_monitor", False))
+        auto_launch_cb = tk.Checkbutton(
+            options_frame,
+            text="Автоматически запускать при наличии второго монитора",
+            variable=self.auto_launch_var,
+            font=("Segoe UI", 10),
+            anchor="w",
+            padx=10
+        )
+        auto_launch_cb.pack(fill=tk.X, pady=8)
+        
         # === Кнопки ===
         btn_frame = tk.Frame(self.root)
         btn_frame.pack(pady=15)
@@ -507,13 +538,15 @@ class KioskLauncher:
     def _on_start(self):
         url = self.url_var.get().strip()
         monitor = self.monitor_var.get()
+        auto_launch = self.auto_launch_var.get()
         
         # Сохраняем настройки
         self.config["url"] = url
         self.config["monitor"] = monitor
+        self.config["auto_launch_on_second_monitor"] = auto_launch
         save_kiosk_config(self.config)
         
-        self.result = {"url": url, "monitor": monitor}
+        self.result = {"url": url, "monitor": monitor, "auto_launch": auto_launch}
         self.root.destroy()
     
     def _on_cancel(self):
@@ -534,9 +567,18 @@ def main():
     parser.add_argument('--no-gui', action='store_true', help='Skip GUI launcher, use args/config directly')
     args = parser.parse_args()
     
+    config = load_kiosk_config()
+    
+    # Проверяем автозапуск при втором мониторе
+    monitors = get_monitors()
+    auto_launch_enabled = config.get("auto_launch_on_second_monitor", False)
+    
+    # Если автозапуск включен и есть второй монитор, пропускаем GUI
+    if auto_launch_enabled and len(monitors) >= 2 and not args.no_gui:
+        args.no_gui = True
+    
     # Если переданы аргументы или --no-gui, пропускаем GUI
     if args.no_gui or (args.url and args.monitor is not None):
-        config = load_kiosk_config()
         url = args.url or config.get("url", "http://localhost:5173")
         monitor = args.monitor if args.monitor is not None else config.get("monitor", 1)
     else:
@@ -549,6 +591,7 @@ def main():
         
         url = result["url"]
         monitor = result["monitor"]
+        auto_launch_enabled = result.get("auto_launch", False)
     
     geometry = None
     if args.geometry:
@@ -573,6 +616,7 @@ def main():
         sys.exit(1)
     
     app = KioskDashboard(url=url, monitor_index=monitor, geometry=geometry)
+    app.auto_launch_enabled = auto_launch_enabled
     app.run()
 
 if __name__ == "__main__":

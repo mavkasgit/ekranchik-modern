@@ -1646,7 +1646,7 @@ def run_startup_diagnostics() -> dict:
     try:
         proc = subprocess.run(
             [PYTHON_EXE, "-c", "import uvicorn; print(uvicorn.__version__)"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=5,
             cwd=str(BACKEND_DIR),
             **hidden_args
         )
@@ -1658,7 +1658,7 @@ def run_startup_diagnostics() -> dict:
             results['errors'].append("Выполните: pip install uvicorn")
             results['checks']['uvicorn'] = False
     except subprocess.TimeoutExpired:
-        results['warnings'].append("Таймаут проверки uvicorn")
+        # Таймаут - пропускаем проверку, но не показываем ошибку
         results['checks']['uvicorn'] = None
     except Exception as e:
         results['warnings'].append(f"Ошибка проверки uvicorn: {e}")

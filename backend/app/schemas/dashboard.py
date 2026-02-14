@@ -42,6 +42,10 @@ class MatchedUnloadEvent(BaseModel):
     lamels_qty: Union[int, str] = 0
     kpz_number: str = "—"
     material_type: str = "—"
+    # Forecast info - current bath and processing time
+    current_bath: Optional[int] = None  # Bath number 30-33 where hanger currently is
+    bath_entry_time: Optional[str] = None  # Time when hanger entered current bath (HH:MM:SS)
+    bath_processing_time: Optional[int] = None  # Expected processing time in seconds for current bath
 
 
 class DashboardResponse(BaseModel):

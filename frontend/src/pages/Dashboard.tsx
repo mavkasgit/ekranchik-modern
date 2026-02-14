@@ -25,6 +25,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { BathForecastTable } from '@/components/BathForecastTable'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
 
 const FILTERS_KEY = 'ekranchik_filters'
@@ -34,6 +35,8 @@ interface Filters {
   realtimeLimit: number
   showLoading: boolean
   showRealtime: boolean
+  showForecast: boolean
+  showTime: boolean
 }
 
 const defaultFilters: Filters = {
@@ -41,6 +44,8 @@ const defaultFilters: Filters = {
   realtimeLimit: 10,
   showLoading: true,
   showRealtime: true,
+  showForecast: true,
+  showTime: true,
 }
 
 function loadFilters(): Filters {
@@ -547,6 +552,8 @@ function StatusBar() {
 }
 
 
+
+
 // Data table
 function DataTable({
   data,
@@ -744,6 +751,26 @@ function FiltersPanel({
           >
             Последние 100
           </Button>
+
+          {/* Forecast */}
+          <div className="flex items-center gap-2 border rounded-lg px-3 py-2 border-purple-500/50 bg-purple-500/10">
+            <Checkbox
+              id="show-forecast"
+              checked={filters.showForecast}
+              onCheckedChange={(c) => onChange({ ...filters, showForecast: !!c })}
+            />
+            <Label htmlFor="show-forecast" className="cursor-pointer">Прогноз выхода</Label>
+          </div>
+
+          {/* Time */}
+          <div className="flex items-center gap-2 border rounded-lg px-3 py-2 border-orange-500/50 bg-orange-500/10">
+            <Checkbox
+              id="show-time"
+              checked={filters.showTime}
+              onCheckedChange={(c) => onChange({ ...filters, showTime: !!c })}
+            />
+            <Label htmlFor="show-time" className="cursor-pointer">Время</Label>
+          </div>
 
           <div className="flex gap-2 ml-auto">
             <Button onClick={onApply} disabled={otherFiltersDisabled}>Применить</Button>
@@ -1019,34 +1046,49 @@ export default function Dashboard() {
           </Card>
         )}
 
+        {filters.showForecast && (
+          <BathForecastTable />
+        )}
+
         {filters.showRealtime && (
-          <Card className="border-8 border-green-500 relative">
-            {hasNewUnloadEvents && (
-              <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
-                <span className="text-white text-3xl font-bold">Обновление</span>
-              </div>
+          <>
+            {console.log('[Dashboard] matchedEvents:', matchedEvents)}
+            {matchedEvents && matchedEvents.length > 0 && (
+              <>
+                {console.log('[Dashboard] First event:', matchedEvents[0])}
+                {console.log('[Dashboard] Rendering table with', matchedEvents.length, 'events')}
+              </>
             )}
-            <CardContent className="p-0">
-              {matchedEvents && matchedEvents.length > 0 ? (
-                <DataTable 
-                  data={matchedEvents.map(e => ({
-                    number: String(e.hanger),
-                    date: e.exit_date,
-                    time: e.exit_time,
-                    client: e.client,
-                    profile: e.profile,
-                    profiles_info: e.profiles_info,
-                    color: e.color,
-                    lamels_qty: e.lamels_qty,
-                    kpz_number: e.kpz_number,
-                    material_type: e.material_type,
-                    entry_date: e.entry_date,
-                    entry_time: e.entry_time,
-                    exit_date: e.exit_date,
-                    exit_time: e.exit_time,
-                  }))} 
-                  onPhotoClick={handlePhotoClick} 
-                  isFullscreen={isFullscreen}
+            <Card className="border-8 border-green-500 relative">
+              {hasNewUnloadEvents && (
+                <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
+                  <span className="text-white text-3xl font-bold">Обновление</span>
+                </div>
+              )}
+              <CardContent className="p-0">
+                {matchedEvents && matchedEvents.length > 0 ? (
+                  <DataTable 
+                    data={matchedEvents.map(e => ({
+                      number: String(e.hanger),
+                      date: e.exit_date,
+                      time: e.exit_time,
+                      client: e.client,
+                      profile: e.profile,
+                      profiles_info: e.profiles_info,
+                      color: e.color,
+                      lamels_qty: e.lamels_qty,
+                      kpz_number: e.kpz_number,
+                      material_type: e.material_type,
+                      entry_date: e.entry_date,
+                      entry_time: e.entry_time,
+                      exit_date: e.exit_date,
+                      exit_time: e.exit_time,
+                      current_bath: e.current_bath,
+                      bath_entry_time: e.bath_entry_time,
+                      bath_processing_time: e.bath_processing_time,
+                    }))} 
+                    onPhotoClick={handlePhotoClick} 
+                    isFullscreen={isFullscreen}
                   showEntryExit
                 />
               ) : (
@@ -1056,11 +1098,14 @@ export default function Dashboard() {
               )}
             </CardContent>
           </Card>
+          </>
         )}
 
-        <div className="absolute left-1/2 transform -translate-x-1/2 top-0 text-3xl font-bold text-white bg-black px-6 py-2 rounded-lg pointer-events-none z-50" style={{ fontFamily: 'Calibri, sans-serif' }}>
-          {currentTime.toLocaleTimeString('ru-RU')}
-        </div>
+        {filters.showTime && (
+          <div className="absolute left-1/2 transform -translate-x-1/2 top-0 text-3xl font-bold text-white bg-black px-6 py-2 rounded-lg pointer-events-none z-50" style={{ fontFamily: 'Calibri, sans-serif' }}>
+            {currentTime.toLocaleTimeString('ru-RU')}
+          </div>
+        )}
       </div>
 
       <PhotoModal

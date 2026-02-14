@@ -416,9 +416,49 @@ async def get_opcua_matched_unload_events(
                 lamels_qty=product.get('lamels_qty', 0) if product else 0,
                 kpz_number=str(product.get('kpz_number', '—')) if product else '—',
                 material_type=str(product.get('material_type', '—')) if product else '—',
+                # Forecast info - will be populated below
+                current_bath=None,
+                bath_entry_time=None,
+                bath_processing_time=None,
             ))
         
         matched.reverse()
+        
+        # === Populate forecast info (current bath and processing time) ===
+        try:
+            from app.services.line_monitor import line_monitor
+            
+            logger.info(f"[OPC UA Unload] Populating forecast for {len(matched)} events")
+            
+            for event in matched:
+                hanger_id = event.hanger
+                hanger_state = line_monitor.get_hanger_state(hanger_id)
+                
+                logger.debug(f"[OPC UA Unload] Hanger {hanger_id}: state={hanger_state}, bath={hanger_state.current_bath if hanger_state else None}")
+                
+                if hanger_state and hanger_state.current_bath:
+                    current_bath_num = int(hanger_state.current_bath)
+                    
+                    # Only show forecast for baths 30-33
+                    if 30 <= current_bath_num <= 33:
+                        event.current_bath = current_bath_num
+                        
+                        # Get entry time in current bath
+                        if hanger_state.entry_time:
+                            event.bath_entry_time = hanger_state.entry_time.strftime("%H:%M:%S")
+                        
+                        # Get processing time from OPC UA (dTime field)
+                        try:
+                            from app.services.opcua_service import opcua_service
+                            dtime = opcua_service.get_value(f"ns=4;s=Bath[{current_bath_num}].dTime")
+                            if dtime and isinstance(dtime, (int, float)):
+                                event.bath_processing_time = int(dtime)
+                            logger.debug(f"[OPC UA Unload] Hanger {hanger_id} in bath {current_bath_num}: dTime={dtime}, entry_time={event.bath_entry_time}")
+                        except Exception as e:
+                            logger.warning(f"Could not get dTime for bath {current_bath_num}: {e}")
+        except Exception as e:
+            logger.warning(f"[OPC UA Unload] Could not populate forecast info: {e}", exc_info=True)
+        
         return matched
     except Exception as e:
         logger.error(f"[OPC UA Unload] Error matching events: {e}", exc_info=True)
