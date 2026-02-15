@@ -70,10 +70,6 @@ export function BathForecast() {
     return () => clearInterval(timer)
   }, [])
 
-  if (bathData.size === 0) {
-    return null
-  }
-
   // Sort by remaining time (shortest first), excluding bath 34 (handled separately)
   const sortedBaths = Array.from(bathData.values())
     .filter(b => b.bathNum !== 34)
@@ -129,9 +125,13 @@ export function BathForecast() {
           <span className="font-bold text-lg text-foreground whitespace-nowrap">
             {useShortLabels ? 'Прогноз:' : 'Прогноз выхода:'}
           </span>
-          {sortedBaths.map((item) => (
-            <BathForecastItem key={item.bathNum} item={item} useShortLabels={useShortLabels} />
-          ))}
+          {sortedBaths.length > 0 ? (
+            sortedBaths.map((item) => (
+              <BathForecastItem key={item.bathNum} item={item} useShortLabels={useShortLabels} />
+            ))
+          ) : (
+            <span className="text-muted-foreground italic">-</span>
+          )}
         </div>
       </div>
 

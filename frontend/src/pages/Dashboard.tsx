@@ -709,14 +709,15 @@ function FiltersPanel({
           {/* Top row - Filters */}
           <div className="flex items-center gap-4">
             {/* Loading */}
-            <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-blue-500/50 bg-blue-500/10'}`}>
+            <div className={`flex items-center gap-2 border rounded-md px-2 py-1.5 ${otherFiltersDisabled ? 'opacity-50' : 'border-blue-500/50 bg-blue-500/10'}`}>
               <Checkbox
                 id="show-loading"
+                className="h-3.5 w-3.5"
                 checked={filters.showLoading}
                 onCheckedChange={(c) => onChange({ ...filters, showLoading: !!c })}
                 disabled={otherFiltersDisabled}
               />
-              <Label htmlFor="show-loading" className={`cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Загрузка:</Label>
+              <Label htmlFor="show-loading" className={`text-sm cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Загрузка:</Label>
               <Input
                 type="number"
                 value={filters.loadingLimit}
@@ -730,7 +731,7 @@ function FiltersPanel({
                     onChange({ ...filters, loadingLimit: 1 })
                   }
                 }}
-                className="w-16 h-8 text-center"
+                className="w-12 h-7 text-center text-xs px-1"
                 min={1}
                 max={500}
                 disabled={otherFiltersDisabled}
@@ -738,14 +739,15 @@ function FiltersPanel({
             </div>
 
             {/* Realtime */}
-            <div className={`flex items-center gap-3 border rounded-lg px-3 py-2 ${otherFiltersDisabled ? 'opacity-50' : 'border-green-500/50 bg-green-500/10'}`}>
+            <div className={`flex items-center gap-2 border rounded-md px-2 py-1.5 ${otherFiltersDisabled ? 'opacity-50' : 'border-green-500/50 bg-green-500/10'}`}>
               <Checkbox
                 id="show-realtime"
+                className="h-3.5 w-3.5"
                 checked={filters.showRealtime}
                 onCheckedChange={(c) => onChange({ ...filters, showRealtime: !!c })}
                 disabled={otherFiltersDisabled}
               />
-              <Label htmlFor="show-realtime" className={`cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Выгрузка:</Label>
+              <Label htmlFor="show-realtime" className={`text-sm cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Выгрузка:</Label>
               <Input
                 type="number"
                 value={filters.realtimeLimit}
@@ -759,7 +761,7 @@ function FiltersPanel({
                     onChange({ ...filters, realtimeLimit: 1 })
                   }
                 }}
-                className="w-16 h-8 text-center"
+                className="w-12 h-7 text-center text-xs px-1"
                 min={1}
                 max={500}
                 disabled={otherFiltersDisabled}
@@ -767,13 +769,14 @@ function FiltersPanel({
             </div>
 
             {/* Forecast */}
-            <div className="flex items-center gap-2 border rounded-lg px-3 py-2 border-purple-500/50 bg-purple-500/10">
+            <div className="flex items-center gap-2 border rounded-md px-2 py-1.5 border-purple-500/50 bg-purple-500/10">
               <Checkbox
                 id="show-forecast"
+                className="h-3.5 w-3.5"
                 checked={filters.showForecast}
                 onCheckedChange={(c) => onChange({ ...filters, showForecast: !!c })}
               />
-              <Label htmlFor="show-forecast" className="cursor-pointer whitespace-nowrap">Прогноз выхода</Label>
+              <Label htmlFor="show-forecast" className="text-sm cursor-pointer whitespace-nowrap">Прогноз выхода</Label>
             </div>
           </div>
 

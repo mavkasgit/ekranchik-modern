@@ -1,6 +1,5 @@
 ﻿"""
-Ekranchik Modern - System Launcher v2
-Модернизированный дизайн по 10 советам
+Ekranchik Modern - System Launcher
 """
 
 import sys
