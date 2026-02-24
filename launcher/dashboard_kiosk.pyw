@@ -114,6 +114,8 @@ class KioskDashboard:
         self.is_idle_mode = False  # Флаг режима простоя
         self.original_url = url  # Сохраняем оригинальный URL
         self.auto_launch_enabled = False  # Флаг автозапуска
+        self.fullscreen_monitor_thread = None  # Поток для мониторинга fullscreen
+        self.stop_monitoring = False  # Флаг остановки мониторинга
         
     def on_loaded(self):
         """Callback when page is loaded."""
@@ -300,6 +302,7 @@ class KioskDashboard:
                 self.is_idle_mode = False
     
     def quit_app(self):
+        self.stop_monitoring = True  # Останавливаем мониторинг
         if self.tray_icon:
             self.tray_icon.stop()
         if self.window:
@@ -313,8 +316,65 @@ class KioskDashboard:
         config["auto_launch_on_second_monitor"] = self.auto_launch_enabled
         save_kiosk_config(config)
         
+        # Запускаем или останавливаем мониторинг fullscreen
+        if self.auto_launch_enabled:
+            self._start_fullscreen_monitoring()
+        else:
+            self.stop_monitoring = True
+        
         # Обновляем меню трея
         self._update_tray_menu()
+    
+    def _start_fullscreen_monitoring(self):
+        """Запуск мониторинга fullscreen режима каждые 5 минут."""
+        if self.fullscreen_monitor_thread and self.fullscreen_monitor_thread.is_alive():
+            return  # Уже запущен
+        
+        self.stop_monitoring = False
+        
+        def monitor_fullscreen():
+            """Проверяет fullscreen каждые 5 минут и восстанавливает если нужно."""
+            while not self.stop_monitoring:
+                # Ждем 5 минут (300 секунд)
+                for _ in range(300):
+                    if self.stop_monitoring:
+                        return
+                    time.sleep(1)
+                
+                # Проверяем fullscreen только если окно существует
+                if not self.window or self.stop_monitoring:
+                    continue
+                
+                try:
+                    # Проверяем через Windows API
+                    if sys.platform == 'win32':
+                        import ctypes
+                        
+                        # Находим окно
+                        hwnd = ctypes.windll.user32.FindWindowW(None, "Ekranchik Dashboard")
+                        if not hwnd:
+                            continue
+                        
+                        # Получаем стиль окна
+                        GWL_STYLE = -16
+                        WS_CAPTION = 0x00C00000
+                        WS_THICKFRAME = 0x00040000
+                        
+                        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
+                        
+                        # Если есть рамка или заголовок - значит не fullscreen
+                        has_frame = (style & (WS_CAPTION | WS_THICKFRAME)) != 0
+                        
+                        if has_frame and self.is_fullscreen:
+                            # Fullscreen отжался - восстанавливаем
+                            self.window.toggle_fullscreen()
+                            time.sleep(0.2)
+                            self.window.toggle_fullscreen()
+                except Exception as e:
+                    pass
+        
+        self.fullscreen_monitor_thread = threading.Thread(target=monitor_fullscreen, daemon=True)
+        self.fullscreen_monitor_thread.start()
     
     def create_tray_icon(self):
         """Создание иконки в трее."""
@@ -370,6 +430,10 @@ class KioskDashboard:
     
     def run(self):
         self.create_window()
+        
+        # Запускаем мониторинг fullscreen если автозапуск включен
+        if self.auto_launch_enabled:
+            self._start_fullscreen_monitoring()
         
         if HAS_TRAY:
             self.create_tray_icon()
