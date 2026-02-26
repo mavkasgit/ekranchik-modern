@@ -6,6 +6,7 @@ import Dashboard from '@/pages/Dashboard'
 import Catalog from '@/pages/Catalog'
 import Analysis from '@/pages/Analysis'
 import { OPCUAPage } from '@/pages/OPCUAPage'
+import { OfflineProvider } from '@/contexts/OfflineContext'
 
 // Fullscreen context
 const FullscreenContext = createContext({
@@ -66,23 +67,25 @@ function App() {
   }, [])
 
   return (
-    <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
-      <BrowserRouter>
-        <div className="min-h-screen bg-background">
-          <Navigation />
-          <main>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/catalog" element={<Catalog />} />
-              <Route path="/analysis" element={<Analysis />} />
-              <Route path="/opcua" element={<OPCUAPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </main>
-        </div>
-        <Toaster />
-      </BrowserRouter>
-    </FullscreenContext.Provider>
+    <OfflineProvider>
+      <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
+        <BrowserRouter>
+          <div className="min-h-screen bg-background">
+            <Navigation />
+            <main>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/catalog" element={<Catalog />} />
+                <Route path="/analysis" element={<Analysis />} />
+                <Route path="/opcua" element={<OPCUAPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </main>
+          </div>
+          <Toaster />
+        </BrowserRouter>
+      </FullscreenContext.Provider>
+    </OfflineProvider>
   )
 }
 

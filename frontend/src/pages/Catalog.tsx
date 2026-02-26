@@ -54,6 +54,8 @@ import {
   useDeleteThumbnail,
 } from '@/hooks/useCatalog'
 import type { Profile, ProfileCreate } from '@/types/profile'
+import { OfflineStatus } from '@/components/OfflineStatus'
+import { useOffline } from '@/contexts/OfflineContext'
 
 type ViewMode = 'grid' | 'table'
 type SortField = 'name' | 'updated_at' | 'has_photo'
@@ -79,12 +81,14 @@ function ProfileCard({
   onEdit,
   onDelete,
   isMobile,
+  isOnline,
 }: { 
   profile: Profile
   onSelect: (profile: Profile) => void
   onEdit: (profile: Profile) => void
   onDelete: (profile: Profile) => void
   isMobile: boolean
+  isOnline: boolean
 }) {
   const photoUrl = getPhotoUrl(profile.photo_thumb, profile.updated_at)
 
@@ -153,10 +157,24 @@ function ProfileCard({
       </CardContent>
       {/* Edit/Delete buttons - desktop only */}
       <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); onEdit(profile) }}>
+        <Button 
+          size="icon" 
+          variant="ghost" 
+          className="h-8 w-8" 
+          onClick={(e) => { e.stopPropagation(); onEdit(profile) }}
+          disabled={!isOnline}
+          title={!isOnline ? "Недоступно в офлайн режиме" : "Редактировать"}
+        >
           <Pencil className="h-4 w-4" />
         </Button>
-        <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(profile) }}>
+        <Button 
+          size="icon" 
+          variant="ghost" 
+          className="h-8 w-8 text-destructive" 
+          onClick={(e) => { e.stopPropagation(); onDelete(profile) }}
+          disabled={!isOnline}
+          title={!isOnline ? "Недоступно в офлайн режиме" : "Удалить"}
+        >
           <Trash2 className="h-4 w-4" />
         </Button>
       </div>
@@ -1318,6 +1336,9 @@ function SearchSkeleton() {
 
 
 export default function Catalog() {
+  // Offline context
+  const { isOnline } = useOffline()
+  
   // State
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -1455,6 +1476,9 @@ export default function Catalog() {
 
   return (
     <div className="container mx-auto p-4 md:p-6 max-w-6xl pb-20 md:pb-6">
+      {/* Offline Status Indicator */}
+      <OfflineStatus className="mb-4" />
+      
       {/* Header */}
       <div className="mb-4 md:mb-6">
         <div className="flex items-center justify-between mb-4">
@@ -1476,7 +1500,11 @@ export default function Catalog() {
                   className={viewMode === 'table' ? 'bg-accent' : ''}>
                   <List className="h-4 w-4" />
                 </Button>
-                <Button onClick={handleCreateNew}>
+                <Button 
+                  onClick={handleCreateNew}
+                  disabled={!isOnline}
+                  title={!isOnline ? "Недоступно в офлайн режиме" : "Создать новый профиль"}
+                >
                   <Plus className="h-4 w-4 mr-2" />
                   Создать
                 </Button>
@@ -1558,6 +1586,7 @@ export default function Catalog() {
               onEdit={handleEditProfile}
               onDelete={handleDeleteProfile}
               isMobile={isMobile}
+              isOnline={isOnline}
             />
           ))}
         </div>
@@ -1603,12 +1632,24 @@ export default function Catalog() {
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
-                      <Button size="icon" variant="ghost" className="h-8 w-8" 
-                        onClick={(e) => { e.stopPropagation(); handleEditProfile(profile) }}>
+                      <Button 
+                        size="icon" 
+                        variant="ghost" 
+                        className="h-8 w-8" 
+                        onClick={(e) => { e.stopPropagation(); handleEditProfile(profile) }}
+                        disabled={!isOnline}
+                        title={!isOnline ? "Недоступно в офлайн режиме" : "Редактировать"}
+                      >
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteProfile(profile) }}>
+                      <Button 
+                        size="icon" 
+                        variant="ghost" 
+                        className="h-8 w-8 text-destructive"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteProfile(profile) }}
+                        disabled={!isOnline}
+                        title={!isOnline ? "Недоступно в офлайн режиме" : "Удалить"}
+                      >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -1626,6 +1667,8 @@ export default function Catalog() {
           onClick={handleCreateNew}
           size="icon"
           className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-lg z-50"
+          disabled={!isOnline}
+          title={!isOnline ? "Недоступно в офлайн режиме" : "Создать новый профиль"}
         >
           <Plus className="h-6 w-6" />
         </Button>

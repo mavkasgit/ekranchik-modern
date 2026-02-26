@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import './index.css'
+import { register } from './serviceWorkerRegistration'
 
 // Force light mode - remove dark class if present
 if (typeof document !== 'undefined') {
@@ -26,3 +27,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </QueryClientProvider>
   </React.StrictMode>,
 )
+
+// Register Service Worker after rendering
+register({
+  onSuccess: (registration) => {
+    console.log('Service Worker успешно зарегистрирован:', registration.scope)
+  },
+  onUpdate: () => {
+    console.log('Доступно обновление Service Worker')
+  },
+  onError: (error) => {
+    console.error('Ошибка регистрации Service Worker:', error)
+  }
+})
