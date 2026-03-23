@@ -899,6 +899,9 @@ if HAS_GUI:
             self.frontend_manager = ProcessManager("Frontend", FRONTEND_CMD, FRONTEND_DIR)
             self.kiosk_manager = ProcessManager("Kiosk", KIOSK_CMD, LAUNCHER_DIR)
             
+            # Режим симуляции (читаем из .env)
+            self.simulation_mode = self._read_simulation_mode()
+            
             # Выбранный монитор для киоска (по умолчанию второй)
             self._kiosk_monitor = 1
             
@@ -932,6 +935,181 @@ if HAS_GUI:
             if HAS_TRAY:
                 self._setup_tray()
         
+        def _read_simulation_mode(self) -> bool:
+            """Читает режим симуляции из .env файла"""
+            env_file = BACKEND_DIR / ".env"
+            if not env_file.exists():
+                return False
+            
+            try:
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith('SIMULATION_ENABLED='):
+                            value = line.split('=', 1)[1].strip().lower()
+                            return value == 'true'
+            except Exception as e:
+                print(f"Ошибка чтения .env: {e}")
+            
+            return False
+        
+        def _write_simulation_mode(self, enabled: bool):
+            """Записывает режим симуляции в .env файл"""
+            env_file = BACKEND_DIR / ".env"
+            if not env_file.exists():
+                return
+            
+            try:
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                # Находим и заменяем строку SIMULATION_ENABLED
+                found = False
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('SIMULATION_ENABLED='):
+                        lines[i] = f"SIMULATION_ENABLED={'true' if enabled else 'false'}\n"
+                        found = True
+                        break
+                
+                if not found:
+                    # Если строки нет, добавляем в конец
+                    lines.append(f"\nSIMULATION_ENABLED={'true' if enabled else 'false'}\n")
+                
+                with open(env_file, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+                
+                self.simulation_mode = enabled
+                
+                # Логируем изменение
+                mode_text = "ТЕСТОВЫЙ" if enabled else "РАБОЧИЙ"
+                self.pages[self.current_page].log.append(f"[SYSTEM] Режим изменен на {mode_text}")
+                self.pages[self.current_page].log.append(f"[SYSTEM] Перезапустите Backend для применения изменений")
+                
+            except Exception as e:
+                self.pages[self.current_page].log.append(f"[ERROR] Не удалось изменить режим: {e}")
+        
+        def _toggle_simulation_mode(self):
+            """Переключает режим симуляции"""
+            new_mode = not self.simulation_mode
+            self._write_simulation_mode(new_mode)
+            
+            # Обновляем кнопку
+            mode_text = "🧪 ТЕСТ" if new_mode else "⚙️ РАБОЧИЙ"
+            mode_color = COLORS['warning'] if new_mode else COLORS['success']
+            self.mode_button.configure(text=mode_text, fg_color=mode_color)
+        
+        def _confirm_mode_switch(self):
+            """Показывает диалог подтверждения переключения режима"""
+            current_mode_text = "ТЕСТОВЫЙ" if self.simulation_mode else "РАБОЧИЙ"
+            new_mode_text = "РАБОЧИЙ" if self.simulation_mode else "ТЕСТОВЫЙ"
+            
+            # Создаем простое диалоговое окно
+            dialog = ctk.CTkToplevel(self.root)
+            dialog.title("Подтверждение")
+            dialog.geometry("500x280")
+            dialog.resizable(False, False)
+            dialog.configure(fg_color=COLORS['bg_dark'])
+            
+            # Центрируем окно
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Иконка
+            icon_path = Path(__file__).parent / "launcher.ico"
+            if icon_path.exists():
+                try:
+                    dialog.iconbitmap(str(icon_path))
+                except:
+                    pass
+            
+            # Заголовок
+            title_label = ctk.CTkLabel(
+                dialog, 
+                text="⚠️ Изменение режима работы",
+                font=ctk.CTkFont(family="Segoe UI", size=18, weight='bold'),
+                text_color="#ffb74d"
+            )
+            title_label.pack(pady=(30, 20))
+            
+            # Текущий режим
+            current_label = ctk.CTkLabel(
+                dialog,
+                text=f"Текущий режим: {current_mode_text}",
+                font=ctk.CTkFont(family="Segoe UI", size=14),
+                text_color="#e0e0e0"
+            )
+            current_label.pack(pady=(0, 10))
+            
+            # Новый режим
+            new_label = ctk.CTkLabel(
+                dialog,
+                text=f"Переключить на: {new_mode_text}?",
+                font=ctk.CTkFont(family="Segoe UI", size=14, weight='bold'),
+                text_color="#ffffff"
+            )
+            new_label.pack(pady=(0, 10))
+            
+            # Предупреждение
+            if not self.simulation_mode:
+                warning_text = "⚠️ ТЕСТОВЫЙ режим использует локальные данные"
+                warning_color = "#ffb74d"
+            else:
+                warning_text = "✓ РАБОЧИЙ режим использует реальные данные"
+                warning_color = "#4caf50"
+            
+            warning_label = ctk.CTkLabel(
+                dialog,
+                text=warning_text,
+                font=ctk.CTkFont(family="Segoe UI", size=13),
+                text_color=warning_color
+            )
+            warning_label.pack(pady=(0, 30))
+            
+            # Кнопки - большие и заметные
+            btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+            btn_frame.pack(pady=(0, 30))
+            
+            def on_confirm():
+                self._toggle_simulation_mode()
+                dialog.destroy()
+            
+            def on_cancel():
+                dialog.destroy()
+            
+            # Кнопка подтверждения - зеленая, большая
+            confirm_btn = ctk.CTkButton(
+                btn_frame, 
+                text="✓ ПОДТВЕРДИТЬ", 
+                width=180, 
+                height=50,
+                font=ctk.CTkFont(family="Segoe UI", size=14, weight='bold'),
+                fg_color="#4caf50",
+                hover_color="#66bb6a",
+                corner_radius=8,
+                command=on_confirm
+            )
+            confirm_btn.pack(side="left", padx=10)
+            
+            # Кнопка отмены - красная, большая
+            cancel_btn = ctk.CTkButton(
+                btn_frame, 
+                text="✕ ОТМЕНА", 
+                width=180, 
+                height=50,
+                font=ctk.CTkFont(family="Segoe UI", size=14, weight='bold'),
+                fg_color="#ef5350",
+                hover_color="#f44336",
+                corner_radius=8,
+                command=on_cancel
+            )
+            cancel_btn.pack(side="left", padx=10)
+            
+            # Центрируем относительно главного окна
+            dialog.update_idletasks()
+            x = self.root.winfo_x() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+            y = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+            dialog.geometry(f"+{x}+{y}")
+        
         def _create_ui(self):
             # Главный контейнер
             main = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -961,6 +1139,18 @@ if HAS_GUI:
                 corner_radius=6, command=lambda: self._switch_page("frontend")
             )
             self.sidebar_buttons["frontend"].pack(side="left", padx=(0, 8))
+            
+            # Кнопка переключения режима (между Backend и Frontend)
+            mode_text = "🧪 ТЕСТ" if self.simulation_mode else "⚙️ РАБОЧИЙ"
+            mode_color = COLORS['warning'] if self.simulation_mode else COLORS['success']
+            
+            self.mode_button = ctk.CTkButton(
+                nav_frame, text=mode_text, width=120, height=36,
+                font=ctk.CTkFont(family=FONTS['body'][0], size=12, weight='bold'),
+                fg_color=mode_color, hover_color=COLORS['accent_hover'],
+                corner_radius=6, command=self._confirm_mode_switch
+            )
+            self.mode_button.pack(side="left", padx=(16, 0))
             
             # Статусы справа
             status_frame = ctk.CTkFrame(topbar, fg_color="transparent")

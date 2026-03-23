@@ -27,6 +27,7 @@ import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvent
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { BathForecast } from '@/components/BathForecastTable'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
+import { useFullscreen } from '@/App'
 
 const FILTERS_KEY = 'ekranchik_filters'
 
@@ -813,13 +814,18 @@ function FiltersPanel({
 // Main
 export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(loadFilters)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const { isFullscreen, setIsFullscreen } = useFullscreen()
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
   const [hasNewRows, setHasNewRows] = useState(false)
   const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false)
   const lastModifiedRef = useRef<string | null>(null)
   const prevDataRef = useRef<HangerData[]>([])
   const prevUnloadDataRef = useRef<any[]>([])
+  
+  // Таймер автовозврата в fullscreen
+  const [autoReturnCountdown, setAutoReturnCountdown] = useState<number | null>(null)
+  const autoReturnTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // State for "Последние 100" toggle
   const [isLast100Mode, setIsLast100Mode] = useState(false);
@@ -982,32 +988,17 @@ export default function Dashboard() {
     }
   }, [matchedEvents])
 
-  // Handle Escape key to exit kiosk mode
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        // Close the browser window (works in kiosk mode)
-        window.close()
-      }
-    }
-    window.addEventListener('keydown', handleEscape)
-    return () => window.removeEventListener('keydown', handleEscape)
-  }, [])
+  // ESC обработчик удален - не закрываем окно по ESC, чтобы работники не могли случайно закрыть киоск
 
-  // Auto-fullscreen if opened from kiosk mode (check URL parameter or window size)
+  // Автоматический псевдо-фуллскрин для киоска при загрузке
   useEffect(() => {
-    // Проверяем если это открыто на весь экран (вероятно из киоска)
-    const isKioskMode = window.innerHeight === screen.height && window.innerWidth === screen.width
+    // Проверяем, запущен ли дашборд в окне pywebview (наш киоск)
+    // или размеры окна совпадают с экраном
+    const isKioskMode = (window as any).pywebview || (window.innerHeight === screen.height && window.innerWidth === screen.width)
 
     if (isKioskMode && !isFullscreen) {
-      // Автоматически переходим в fullscreen
-      setTimeout(() => {
-        if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(() => {
-            // Если fullscreen не сработал, это нормально
-          })
-        }
-      }, 500)
+      // Автоматически включаем псевдо-фуллскрин
+      setIsFullscreen(true)
     }
   }, [])
 
@@ -1028,21 +1019,71 @@ export default function Dashboard() {
 
   useEffect(() => { saveFilters(filters) }, [filters])
 
-  const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen()
-      setIsFullscreen(true)
-    } else {
-      document.exitFullscreen()
-      setIsFullscreen(false)
-    }
-  }, [])
-
+  // Автовозврат в fullscreen через 30 секунд
   useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement)
-    document.addEventListener('fullscreenchange', handler)
-    return () => document.removeEventListener('fullscreenchange', handler)
-  }, [])
+    // Очищаем предыдущие таймеры
+    if (autoReturnTimerRef.current) {
+      clearTimeout(autoReturnTimerRef.current)
+      autoReturnTimerRef.current = null
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current)
+      countdownIntervalRef.current = null
+    }
+    
+    // Если вышли из fullscreen, запускаем таймер
+    if (!isFullscreen) {
+      setAutoReturnCountdown(30)
+      
+      // Обратный отсчет каждую секунду
+      countdownIntervalRef.current = setInterval(() => {
+        setAutoReturnCountdown(prev => {
+          if (prev === null || prev <= 1) return null
+          return prev - 1
+        })
+      }, 1000)
+      
+      // Автовозврат через 30 секунд
+      autoReturnTimerRef.current = setTimeout(() => {
+        setIsFullscreen(true)
+        setAutoReturnCountdown(null)
+      }, 30000)
+    } else {
+      setAutoReturnCountdown(null)
+    }
+    
+    // Cleanup
+    return () => {
+      if (autoReturnTimerRef.current) {
+        clearTimeout(autoReturnTimerRef.current)
+      }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current)
+      }
+    }
+  }, [isFullscreen, setIsFullscreen])
+
+  // Псевдо-фуллскрин: просто переключаем состояние React без браузерного fullscreen API
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen(!isFullscreen)
+  }, [isFullscreen, setIsFullscreen])
+  
+  // Обработчик применения фильтров - сбрасывает таймер автовозврата
+  const handleApplyFilters = useCallback(() => {
+    // Сбрасываем таймер
+    if (autoReturnTimerRef.current) {
+      clearTimeout(autoReturnTimerRef.current)
+      autoReturnTimerRef.current = null
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current)
+      countdownIntervalRef.current = null
+    }
+    setAutoReturnCountdown(null)
+    
+    // Применяем фильтры
+    refetch()
+  }, [refetch])
 
   const handlePhotoClick = useCallback((url: string, name: string) => {
     setPhotoModal({ url, name })
@@ -1076,6 +1117,23 @@ export default function Dashboard() {
           </Button>
         </div>
       )}
+      
+      {/* Уведомление об автовозврате в fullscreen */}
+      {!isFullscreen && autoReturnCountdown !== null && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
+          <Card className="bg-orange-500 border-orange-600 shadow-lg">
+            <CardContent className="py-3 px-6">
+              <div className="flex items-center gap-3 text-white">
+                <div className="text-2xl font-bold">{autoReturnCountdown}</div>
+                <div className="text-sm">
+                  <div className="font-semibold">Автовозврат в полноэкранный режим</div>
+                  <div className="text-xs opacity-90">Нажмите "Применить" чтобы остаться</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {!isFullscreen && <StatusBar />}
 
@@ -1083,7 +1141,7 @@ export default function Dashboard() {
         <FiltersPanel
           filters={filters}
           onChange={setFilters}
-          onApply={refetch}
+          onApply={handleApplyFilters}
           onReset={() => setFilters(defaultFilters)}
           onToggleLast100={handleToggleLast100}
           isLast100Mode={isLast100Mode}

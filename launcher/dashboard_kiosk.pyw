@@ -232,6 +232,7 @@ class KioskDashboard:
             fullscreen=True,
             frameless=True,
             on_top=True,
+            easy_drag=False,  # Отключаем перетаскивание окна мышкой
             background_color='#1e293b'
         )
         

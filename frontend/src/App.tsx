@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
 import { LayoutDashboard, BookOpen, BarChart3, Gauge } from 'lucide-react'
-import { useState, useEffect, createContext, useContext } from 'react'
+import { useState, createContext, useContext } from 'react'
 import { Toaster } from '@/components/ui/toaster'
 import Dashboard from '@/pages/Dashboard'
 import Catalog from '@/pages/Catalog'
@@ -56,14 +56,6 @@ function Navigation() {
 
 function App() {
   const [isFullscreen, setIsFullscreen] = useState(false)
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement)
-    }
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
-  }, [])
 
   return (
     <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
