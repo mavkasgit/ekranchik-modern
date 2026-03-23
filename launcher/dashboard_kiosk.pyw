@@ -7,10 +7,8 @@ Kiosk Mode Dashboard Application with Tray
 import sys
 
 # === КРИТИЧНО: Устанавливаем AppUserModelID ДО импорта любых GUI библиотек ===
-# Это позволяет Windows показывать нашу иконку в панели задач вместо иконки Python
 if sys.platform == 'win32':
     import ctypes
-    # Уникальный ID приложения
     APP_ID = 'Ekranchik.Dashboard.Kiosk.1.0'
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
 
@@ -20,25 +18,21 @@ import threading
 from pathlib import Path
 
 # --- Fix for Tray Menu Positioning on Windows ---
-# Set DPI awareness to prevent menu from appearing in the center of the screen
 if sys.platform == 'win32':
     try:
         from ctypes import windll
-        # Per Monitor v2 (Windows 10 Creators Update+)
         windll.shcore.SetProcessDpiAwareness(2)
     except (AttributeError, OSError):
         try:
-            # System Aware (older Windows)
             windll.user32.SetProcessDPIAware()
-        except Exception as e:
+        except Exception:
             pass
-# ------------------------------------------------
 
 try:
     import pystray
     from PIL import Image, ImageDraw
     HAS_TRAY = True
-except ImportError as e:
+except ImportError:
     HAS_TRAY = False
     sys.exit(1)
 
@@ -51,18 +45,14 @@ if sys.platform == 'win32':
         import win32api
         import win32con
         HAS_WIN32 = True
-    except ImportError as e:
+    except ImportError:
         HAS_WIN32 = False
 else:
     HAS_WIN32 = False
 
 
 def get_monitors():
-    """
-    Получает список мониторов.
-    СОРТИРУЕТ их слева направо (по координате X).
-    Это гарантирует, что monitors[0] - это самый левый, а monitors[1] - правее.
-    """
+    """Получает список мониторов, отсортированные слева направо."""
     monitors = []
     
     if HAS_WIN32:
@@ -70,7 +60,7 @@ def get_monitors():
             monitor_handles = win32api.EnumDisplayMonitors()
             for handle in monitor_handles:
                 monitor_info = win32api.GetMonitorInfo(handle[0])
-                rc = monitor_info['Monitor']  # (left, top, right, bottom)
+                rc = monitor_info['Monitor']
                 is_primary = (monitor_info['Flags'] & win32con.MONITORINFOF_PRIMARY) == 1
                 
                 monitors.append({
@@ -84,17 +74,13 @@ def get_monitors():
                     'name': 'Primary' if is_primary else 'Secondary'
                 })
             
-            # СОРТИРОВКА: Самое важное изменение!
-            # Сортируем список по координате 'left'. 
-            # Теперь monitors[0] всегда будет левым экраном, а monitors[1] - правым.
             monitors.sort(key=lambda m: m['left'])
-            
             return monitors
             
         except Exception as e:
-            pass
+            print(f"[ERROR] Ошибка получения мониторов: {e}")
     
-    # Fallback (заглушка)
+    # Fallback
     return [{
         'left': 0, 'top': 0, 'right': 1920, 'bottom': 1080,
         'width': 1920, 'height': 1080,
@@ -109,17 +95,14 @@ class KioskDashboard:
         self.window = None
         self.tray_icon = None
         self.is_fullscreen = True
-        self.current_monitor_index = monitor_index # Текущий индекс монитора
+        self.current_monitor_index = monitor_index
         self.geometry = geometry
-        self.is_idle_mode = False  # Флаг режима простоя
-        self.original_url = url  # Сохраняем оригинальный URL
-        self.auto_launch_enabled = False  # Флаг автозапуска
-        self.fullscreen_monitor_thread = None  # Поток для мониторинга fullscreen
-        self.stop_monitoring = False  # Флаг остановки мониторинга
+        self.is_idle_mode = False
+        self.original_url = url
+        self.auto_launch_enabled = False
         
     def on_loaded(self):
         """Callback when page is loaded."""
-        # Устанавливаем иконку окна после загрузки страницы
         self._set_window_icon()
         
     def on_closing(self):
@@ -135,88 +118,40 @@ class KioskDashboard:
             try:
                 import ctypes
                 
-                # Константы Windows
-                IMAGE_ICON = 1
-                LR_LOADFROMFILE = 0x00000010
-                LR_DEFAULTSIZE = 0x00000040
-                WM_SETICON = 0x0080
-                ICON_SMALL = 0
-                ICON_BIG = 1
-                GCL_HICON = -14
-                GCL_HICONSM = -34
-                
-                # Загружаем иконку из файла (большую и маленькую)
-                icon_big = ctypes.windll.user32.LoadImageW(
-                    None, str(ICON_FILE), IMAGE_ICON,
-                    48, 48,  # Большая иконка для Alt+Tab
-                    LR_LOADFROMFILE
+                # Загружаем иконку из файла
+                icon = ctypes.windll.user32.LoadImageW(
+                    None, str(ICON_FILE), 1,  # 1 = IMAGE_ICON
+                    48, 48,
+                    0x00000010  # LR_LOADFROMFILE
                 )
                 
-                icon_small = ctypes.windll.user32.LoadImageW(
-                    None, str(ICON_FILE), IMAGE_ICON,
-                    16, 16,  # Маленькая иконка для заголовка
-                    LR_LOADFROMFILE
-                )
-                
-                if not icon_big:
+                if not icon:
                     return
                 
                 # Ищем окно по заголовку
                 hwnd = ctypes.windll.user32.FindWindowW(None, "Ekranchik Dashboard")
                 
-                if not hwnd:
-                    # Пробуем найти по частичному совпадению
-                    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-                    found_hwnd = [None]
-                    
-                    def enum_callback(hwnd_enum, lparam):
-                        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd_enum)
-                        if length > 0:
-                            buff = ctypes.create_unicode_buffer(length + 1)
-                            ctypes.windll.user32.GetWindowTextW(hwnd_enum, buff, length + 1)
-                            if "Ekranchik" in buff.value or "pywebview" in buff.value.lower():
-                                found_hwnd[0] = hwnd_enum
-                                return False
-                        return True
-                    
-                    ctypes.windll.user32.EnumWindows(EnumWindowsProc(enum_callback), 0)
-                    hwnd = found_hwnd[0]
-                
                 if hwnd:
-                    # Устанавливаем иконку через WM_SETICON
-                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, icon_small or icon_big)
-                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, icon_big)
-                    
-                    # Также устанавливаем через SetClassLongPtrW для панели задач
-                    try:
-                        SetClassLongPtrW = ctypes.windll.user32.SetClassLongPtrW
-                        SetClassLongPtrW(hwnd, GCL_HICON, icon_big)
-                        SetClassLongPtrW(hwnd, GCL_HICONSM, icon_small or icon_big)
-                    except Exception as e:
-                        pass
-                else:
-                    pass
+                    # Устанавливаем иконку
+                    ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 0, icon)  # WM_SETICON
+                    ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 1, icon)
                     
             except Exception as e:
-                pass
+                print(f"[WARNING] Не удалось установить иконку: {e}")
         
         # Запускаем в отдельном потоке с задержкой
-        threading.Thread(target=lambda: (time.sleep(0.5), do_set_icon()), daemon=True).start()
+        threading.Thread(target=lambda: (time.sleep(1), do_set_icon()), daemon=True).start()
     
     def create_window(self):
-        """Создание окна (изначально на выбранном мониторе)."""
+        """Создание окна на выбранном мониторе."""
         monitors = get_monitors()
         
-        # Если передана жесткая геометрия (аргументы командной строки)
         if self.geometry:
             x, y = self.geometry['x'], self.geometry['y']
             width, height = self.geometry['width'], self.geometry['height']
         else:
-            target_monitor = None
-            # Если запрошенный монитор не существует или индекс некорректен, берем основной
             if self.current_monitor_index >= len(monitors) or self.current_monitor_index < 0:
                 target_monitor = next((m for m in monitors if m['is_primary']), monitors[0])
-                # Обновляем индекс на фактический
                 self.current_monitor_index = monitors.index(target_monitor)
             else:
                 target_monitor = monitors[self.current_monitor_index]
@@ -224,9 +159,13 @@ class KioskDashboard:
             x, y = target_monitor['left'], target_monitor['top']
             width, height = target_monitor['width'], target_monitor['height']
 
+        # Показываем страницу ожидания пока сервер не запустится
+        waiting_html = Path(__file__).parent / "waiting_server.html"
+        initial_url = waiting_html.as_uri() if waiting_html.exists() else "about:blank"
+
         self.window = webview.create_window(
             title='Ekranchik Dashboard',
-            url=self.url,
+            url=initial_url,
             x=x,
             y=y,
             width=width,
@@ -234,12 +173,39 @@ class KioskDashboard:
             fullscreen=True,
             frameless=True,
             on_top=True,
-            easy_drag=False,  # Отключаем перетаскивание окна мышкой
+            easy_drag=False,
             background_color='#1e293b'
         )
         
         self.window.events.loaded += self.on_loaded
         self.window.events.closing += self.on_closing
+        
+        # Запускаем поток для проверки сервера и загрузки дашборда
+        threading.Thread(target=self._wait_and_load_dashboard, daemon=True).start()
+    
+    def _wait_and_load_dashboard(self):
+        """Ждет пока сервер запустится и загружает дашборд."""
+        import urllib.request
+        import urllib.error
+        
+        max_wait = 300  # 5 минут максимум
+        start_time = time.time()
+        
+        print(f"[INFO] Ожидание сервера {self.url}...")
+        
+        while time.time() - start_time < max_wait:
+            try:
+                urllib.request.urlopen(self.url, timeout=2)
+                # Сервер доступен, загружаем дашборд
+                print(f"[INFO] Сервер доступен! Загружаю дашборд...")
+                if self.window:
+                    self.window.load_url(self.url)
+                return
+            except (urllib.error.URLError, ConnectionRefusedError, Exception) as e:
+                time.sleep(2)  # Проверяем каждые 2 секунды
+        
+        # Если сервер не запустился за 5 минут, показываем ошибку
+        print("[ERROR] Сервер не запустился за 5 минут")
     
     def toggle_fullscreen(self):
         """Переключение полноэкранного режима."""
@@ -256,25 +222,19 @@ class KioskDashboard:
         if len(monitors) < 2:
             return
 
-        # 1. Вычисляем следующий индекс
         next_index = (self.current_monitor_index + 1) % len(monitors)
         target = monitors[next_index]
 
-        # 2. ВАЖНО: Выходим из Fullscreen перед перемещением
         if self.is_fullscreen:
             self.window.toggle_fullscreen()
-            time.sleep(0.2) # Даем винде время подумать
+            time.sleep(0.3)
 
-        # 3. Перемещаем и меняем размер
         self.window.move(target['left'], target['top'])
         self.window.resize(target['width'], target['height'])
-        
-        # 4. Обновляем внутренний индекс
         self.current_monitor_index = next_index
 
-        # 5. Возвращаем Fullscreen обратно
         if self.is_fullscreen:
-            time.sleep(0.2)
+            time.sleep(0.3)
             self.window.toggle_fullscreen()
 
     def reload_page(self):
@@ -287,23 +247,21 @@ class KioskDashboard:
             return
         
         if self.is_idle_mode:
-            # Возвращаемся к дашборду
             self.is_idle_mode = False
             self.window.load_url(self.original_url)
         else:
-            # Переключаемся на экран простоя
             self.is_idle_mode = True
-            
-            # Получаем путь к HTML файлу
             idle_html = Path(__file__).parent / "idle_clock.html"
             if idle_html.exists():
-                idle_url = idle_html.as_uri()
-                self.window.load_url(idle_url)
+                self.window.load_url(idle_html.as_uri())
             else:
                 self.is_idle_mode = False
+        
+        # Обновляем меню трея и иконку
+        self._update_tray_menu()
+        self._update_tray_icon()
     
     def quit_app(self):
-        self.stop_monitoring = True  # Останавливаем мониторинг
         if self.tray_icon:
             self.tray_icon.stop()
         if self.window:
@@ -316,80 +274,14 @@ class KioskDashboard:
         config = load_kiosk_config()
         config["auto_launch_on_second_monitor"] = self.auto_launch_enabled
         save_kiosk_config(config)
-        
-        # Запускаем или останавливаем мониторинг fullscreen
-        if self.auto_launch_enabled:
-            self._start_fullscreen_monitoring()
-        else:
-            self.stop_monitoring = True
-        
-        # Обновляем меню трея
         self._update_tray_menu()
-    
-    def _start_fullscreen_monitoring(self):
-        """Запуск мониторинга fullscreen режима каждые 5 минут."""
-        if self.fullscreen_monitor_thread and self.fullscreen_monitor_thread.is_alive():
-            return  # Уже запущен
-        
-        self.stop_monitoring = False
-        
-        def monitor_fullscreen():
-            """Проверяет fullscreen каждые 5 минут и восстанавливает если нужно."""
-            while not self.stop_monitoring:
-                # Ждем 5 минут (300 секунд)
-                for _ in range(300):
-                    if self.stop_monitoring:
-                        return
-                    time.sleep(1)
-                
-                # Проверяем fullscreen только если окно существует
-                if not self.window or self.stop_monitoring:
-                    continue
-                
-                try:
-                    # Проверяем через Windows API
-                    if sys.platform == 'win32':
-                        import ctypes
-                        
-                        # Находим окно
-                        hwnd = ctypes.windll.user32.FindWindowW(None, "Ekranchik Dashboard")
-                        if not hwnd:
-                            continue
-                        
-                        # Получаем стиль окна
-                        GWL_STYLE = -16
-                        WS_CAPTION = 0x00C00000
-                        WS_THICKFRAME = 0x00040000
-                        
-                        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
-                        
-                        # Если есть рамка или заголовок - значит не fullscreen
-                        has_frame = (style & (WS_CAPTION | WS_THICKFRAME)) != 0
-                        
-                        if has_frame and self.is_fullscreen:
-                            # Fullscreen отжался - восстанавливаем
-                            self.window.toggle_fullscreen()
-                            time.sleep(0.2)
-                            self.window.toggle_fullscreen()
-                except Exception as e:
-                    pass
-        
-        self.fullscreen_monitor_thread = threading.Thread(target=monitor_fullscreen, daemon=True)
-        self.fullscreen_monitor_thread.start()
     
     def create_tray_icon(self):
         """Создание иконки в трее."""
-        # Импортируем функцию создания иконки
         try:
-            import sys
-            from pathlib import Path
-            
-            # Добавляем путь к icons.py
             if getattr(sys, 'frozen', False):
-                # Запуск из exe - icons.py в _MEIPASS
                 icons_path = Path(sys._MEIPASS)
             else:
-                # Обычный запуск
                 icons_path = Path(__file__).parent
             
             if str(icons_path) not in sys.path:
@@ -399,19 +291,17 @@ class KioskDashboard:
             image = get_kiosk_tray_icon()
             
         except Exception as e:
-            # Fallback - создаём простую синюю иконку
-            width = 64
-            height = 64
-            image = Image.new('RGB', (width, height), color='#2196F3')
+            print(f"[WARNING] Не удалось загрузить иконку трея: {e}")
+            # Fallback - простая синяя иконка
+            image = Image.new('RGB', (64, 64), color='#2196F3')
             dc = ImageDraw.Draw(image)
             dc.rectangle([15, 15, 49, 49], fill='white')
-            dc.text((22, 22), "K", fill='#2196F3') # font_size=20 # PIL по умолчанию не умеет в размер
         
         self._update_tray_menu()
         self.tray_icon = pystray.Icon("ekranchik_kiosk", image, "Kiosk Control", self.menu)
     
     def _update_tray_menu(self):
-        """Обновление меню трея с актуальным статусом автозапуска."""
+        """Обновление меню трея."""
         auto_launch_text = "✓ Автозапуск при 2м мониторе" if self.auto_launch_enabled else "○ Автозапуск при 2м мониторе"
         
         self.menu = pystray.Menu(
@@ -425,16 +315,47 @@ class KioskDashboard:
             pystray.MenuItem("Выход", lambda: self.quit_app())
         )
     
+    def _update_tray_icon(self):
+        """Обновление иконки трея в зависимости от режима."""
+        try:
+            if self.is_idle_mode:
+                # Яркая красная иконка для режима простоя
+                image = Image.new('RGB', (64, 64), color='#FF1744')
+                dc = ImageDraw.Draw(image)
+                
+                # Белый круг часов
+                dc.ellipse([8, 8, 56, 56], outline='white', width=4)
+                
+                # Стрелки часов (более толстые)
+                dc.line([32, 32, 32, 16], fill='white', width=3)  # часовая
+                dc.line([32, 32, 44, 32], fill='white', width=3)  # минутная
+                
+                # Центральная точка
+                dc.ellipse([28, 28, 36, 36], fill='white')
+            else:
+                # Обычная синяя иконка
+                if getattr(sys, 'frozen', False):
+                    icons_path = Path(sys._MEIPASS)
+                else:
+                    icons_path = Path(__file__).parent
+                
+                if str(icons_path) not in sys.path:
+                    sys.path.insert(0, str(icons_path))
+                
+                from icons import get_kiosk_tray_icon
+                image = get_kiosk_tray_icon()
+            
+            if self.tray_icon:
+                self.tray_icon.icon = image
+        except Exception as e:
+            print(f"[WARNING] Не удалось обновить иконку трея: {e}")
+    
     def run_tray(self):
         if self.tray_icon:
             self.tray_icon.run()
     
     def run(self):
         self.create_window()
-        
-        # Запускаем мониторинг fullscreen если автозапуск включен
-        if self.auto_launch_enabled:
-            self._start_fullscreen_monitoring()
         
         if HAS_TRAY:
             self.create_tray_icon()
@@ -443,7 +364,8 @@ class KioskDashboard:
         
         webview.start(debug=False)
 
-# --- Main ---
+
+# --- Config Management ---
 import json
 
 CONFIG_FILE = Path(__file__).parent / "kiosk_config.json"
@@ -454,14 +376,17 @@ def load_kiosk_config():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
-            pass
+        except Exception as e:
+            print(f"[WARNING] Ошибка чтения конфига: {e}")
     return {"url": "http://localhost:5173", "monitor": 1, "auto_launch_on_second_monitor": False}
 
 def save_kiosk_config(config):
     """Сохранить конфиг киоска."""
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4, ensure_ascii=False)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print(f"[ERROR] Ошибка сохранения конфига: {e}")
 
 def check_server_running(url: str, timeout: int = 5) -> bool:
     import urllib.request
@@ -491,14 +416,12 @@ class KioskLauncher:
         self.root.title("Ekranchik Kiosk - Настройки")
         self.root.resizable(False, False)
         
-        # Устанавливаем иконку
         if ICON_FILE.exists():
             try:
                 self.root.iconbitmap(str(ICON_FILE))
-            except:
+            except Exception:
                 pass
         
-        # Центрируем окно
         window_width = 500
         window_height = 320 + len(self.monitors) * 45
         screen_width = self.root.winfo_screenwidth()
@@ -520,7 +443,6 @@ class KioskLauncher:
         url_entry = tk.Entry(url_frame, textvariable=self.url_var, font=("Segoe UI", 11), width=50)
         url_entry.pack(fill=tk.X, padx=10, pady=10)
         
-        # Быстрые кнопки для URL
         url_buttons_frame = tk.Frame(url_frame)
         url_buttons_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
         
@@ -532,6 +454,9 @@ class KioskLauncher:
                   font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
         tk.Button(url_buttons_frame, text="localhost:80", 
                   command=lambda: self.url_var.set("http://localhost"),
+                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
+        tk.Button(url_buttons_frame, text="172.17.11.8:5173", 
+                  command=lambda: self.url_var.set("http://172.17.11.8:5173"),
                   font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
         
         # === Монитор секция ===
@@ -605,7 +530,6 @@ class KioskLauncher:
         monitor = self.monitor_var.get()
         auto_launch = self.auto_launch_var.get()
         
-        # Сохраняем настройки
         self.config["url"] = url
         self.config["monitor"] = monitor
         self.config["auto_launch_on_second_monitor"] = auto_launch
@@ -634,20 +558,16 @@ def main():
     
     config = load_kiosk_config()
     
-    # Проверяем автозапуск при втором мониторе
     monitors = get_monitors()
     auto_launch_enabled = config.get("auto_launch_on_second_monitor", False)
     
-    # Если автозапуск включен и есть второй монитор, пропускаем GUI
     if auto_launch_enabled and len(monitors) >= 2 and not args.no_gui:
         args.no_gui = True
     
-    # Если переданы аргументы или --no-gui, пропускаем GUI
     if args.no_gui or (args.url and args.monitor is not None):
         url = args.url or config.get("url", "http://localhost:5173")
         monitor = args.monitor if args.monitor is not None else config.get("monitor", 1)
     else:
-        # Показываем GUI для выбора
         launcher = KioskLauncher()
         result = launcher.run()
         
@@ -665,21 +585,9 @@ def main():
             if len(parts) == 4:
                 geometry = {'x': parts[0], 'y': parts[1], 'width': parts[2], 'height': parts[3]}
         except ValueError:
-            pass
-
-    if not check_server_running(url, timeout=3):
-        # Показываем сообщение об ошибке
-        try:
-            import tkinter as tk
-            from tkinter import messagebox
-            root = tk.Tk()
-            root.withdraw()
-            messagebox.showerror("Ошибка", f"Сервер {url} не отвечает!\n\nУбедитесь что сервер запущен.")
-            root.destroy()
-        except:
-            pass
-        sys.exit(1)
+            print("[ERROR] Неверный формат геометрии")
     
+    # Открываем киоск сразу, он будет ждать сервер
     app = KioskDashboard(url=url, monitor_index=monitor, geometry=geometry)
     app.auto_launch_enabled = auto_launch_enabled
     app.run()

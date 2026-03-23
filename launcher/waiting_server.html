@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ожидание сервера</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f172a;
+            color: #e0e7ff;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .center-content {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .time {
+            font-size: 30vmin;
+            font-weight: bold;
+            color: #e0e7ff;
+            letter-spacing: -0.5vmin;
+        }
+
+        .date {
+            font-size: 5vmin;
+            font-weight: 300;
+            color: #94a3b8;
+            margin-top: 2vmin;
+            letter-spacing: 0.1vmin;
+        }
+
+        .spinner {
+            width: 12vmin;
+            height: 12vmin;
+            border: 0.5vmin solid rgba(255, 107, 0, 0.2);
+            border-top: 0.5vmin solid #ff6b00;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-top: 5vmin;
+            margin-bottom: 3vmin;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .status {
+            font-size: 3vmin;
+            color: #ffb74d;
+            font-weight: 500;
+            display: flex;
+            align-items: baseline;
+            gap: 0.3vmin;
+        }
+
+        .dots {
+            display: flex;
+            gap: 0.5vmin;
+            align-items: baseline;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 0.8vmin;
+            height: 0.8vmin;
+            border-radius: 50%;
+            background-color: #ffb74d;
+            animation: blink 1.4s infinite;
+            vertical-align: baseline;
+        }
+
+        .dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes blink {
+            0%, 60%, 100% {
+                opacity: 0.3;
+            }
+            30% {
+                opacity: 1;
+            }
+        }
+
+        .logo {
+            position: absolute;
+            bottom: 4vmin;
+            right: 4vmin;
+            width: 25vmin;
+            max-width: 300px;
+            opacity: 0.8;
+            transition: opacity 0.3s;
+        }
+
+        .logo:hover {
+            opacity: 1;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        body {
+            animation: fadeIn 0.5s ease-in;
+        }
+    </style>
+</head>
+<body>
+    <div class="center-content">
+        <div class="time" id="time">21:47</div>
+        <div class="date" id="date">Пятница, 7 февраля</div>
+        <div class="spinner"></div>
+        <div class="status">
+            Подключение<span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
+        </div>
+    </div>
+
+    <img src="ktm_colored.png" alt="Logo" class="logo">
+
+    <script>
+        // Обновление времени
+        function updateTime() {
+            const now = new Date();
+
+            // Время
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            document.getElementById('time').textContent = `${hours}:${minutes}`;
+
+            // Дата
+            const dayNames = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+            const monthNames = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+                'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+
+            const dayName = dayNames[now.getDay()];
+            const day = now.getDate();
+            const monthName = monthNames[now.getMonth()];
+
+            document.getElementById('date').textContent = `${dayName}, ${day} ${monthName}`;
+        }
+
+        // Запускаем обновления
+        updateTime();
+        setInterval(updateTime, 1000);
+
+        // Проверяем доступность сервера каждые 2 секунды
+        const checkServer = async () => {
+            try {
+                // Пытаемся загрузить главную страницу с timeout
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2000);
+                
+                const response = await fetch(window.location.origin + '/', {
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                // Если получили ответ, сервер доступен
+                if (response.status >= 200 && response.status < 500) {
+                    console.log('[INFO] Сервер доступен, перезагружаю...');
+                    window.location.reload();
+                }
+            } catch (error) {
+                // Сервер еще не доступен, продолжаем ждать
+                console.log('[DEBUG] Сервер недоступен, жду...');
+            }
+        };
+        
+        // Проверяем каждые 2 секунды
+        setInterval(checkServer, 2000);
+        
+        // Первая проверка через 1 секунду
+        setTimeout(checkServer, 1000);
+    </script>
+</body>
+</html>
