@@ -359,8 +359,18 @@ class ExcelService:
                 defect_str = str(defect_val).lower().strip()
                 is_defect = 'брак' in defect_str
             
+            # Format number (convert float to int to avoid 10.0 format)
+            number_val = row.get('number')
+            if pd.notna(number_val):
+                try:
+                    number_display = int(float(number_val))
+                except (ValueError, TypeError):
+                    number_display = str(number_val)
+            else:
+                number_display = '—'
+            
             products.append({
-                'number': row.get('number') if pd.notna(row.get('number')) else '—',
+                'number': number_display,
                 'date': date_str,
                 'time': time_str,
                 'client': row.get('client') if pd.notna(row.get('client')) else '—',
