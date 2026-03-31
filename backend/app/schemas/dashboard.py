@@ -46,6 +46,8 @@ class MatchedUnloadEvent(BaseModel):
     current_bath: Optional[int] = None  # Bath number 30-33 where hanger currently is
     bath_entry_time: Optional[str] = None  # Time when hanger entered current bath (HH:MM:SS)
     bath_processing_time: Optional[int] = None  # Expected processing time in seconds for current bath
+    # Warning if time difference exceeds limit
+    time_warning: Optional[str] = None  # Warning message if entry-exit time exceeds 6h limit
 
 
 class DashboardResponse(BaseModel):

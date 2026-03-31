@@ -57,4 +57,6 @@ export interface MatchedUnloadEvent {
   current_bath?: number | null
   bath_entry_time?: string | null
   bath_processing_time?: number | null
+  // Warning if time difference exceeds limit
+  time_warning?: string | null
 }

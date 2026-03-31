@@ -283,44 +283,63 @@ async def get_opcua_matched_unload_events(
         # Helper to parse date string to comparable format
         def parse_date(date_str: str) -> tuple:
             """Parse DD.MM.YYYY or DD.MM.YY to (year, month, day) tuple for comparison."""
-            if not date_str:
+            if not date_str or date_str == '—':
                 return (0, 0, 0)
             try:
+                # Remove any whitespace
+                date_str = date_str.strip()
                 parts = date_str.split('.')
                 if len(parts) == 3:
                     day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
-                    if year < 100:
+                    # Handle 2-digit years: 00-49 → 2000-2049, 50-99 → 1950-1999
+                    if year < 50:
                         year += 2000
+                    elif year < 100:
+                        year += 1900
                     return (year, month, day)
-            except:
+            except (ValueError, IndexError):
                 pass
             return (0, 0, 0)
         
         def parse_time(time_str: str) -> tuple:
             """Parse HH:MM:SS or HH:MM to (hour, minute, second) tuple."""
-            if not time_str:
+            if not time_str or time_str == '—':
                 return (0, 0, 0)
             try:
+                # Remove any whitespace
+                time_str = time_str.strip()
                 parts = time_str.split(':')
                 hour = int(parts[0]) if len(parts) > 0 else 0
                 minute = int(parts[1]) if len(parts) > 1 else 0
                 second = int(parts[2]) if len(parts) > 2 else 0
                 return (hour, minute, second)
-            except:
+            except (ValueError, IndexError):
                 pass
             return (0, 0, 0)
         
         def datetime_to_seconds(date_tuple: tuple, time_tuple: tuple) -> float:
-            """Convert date+time to total seconds for comparison."""
-            # Simple conversion, not accounting for month lengths
-            year_days = date_tuple[0] * 365
-            month_days = date_tuple[1] * 30
-            day = date_tuple[2]
-            
-            total_days = year_days + month_days + day
-            total_seconds = time_tuple[0] * 3600 + time_tuple[1] * 60 + time_tuple[2]
-            
-            return total_days * 86400 + total_seconds
+            """Convert date+time to total seconds for comparison using proper datetime."""
+            try:
+                year, month, day = date_tuple
+                hour, minute, second = time_tuple
+                
+                if year == 0 or month == 0 or day == 0:
+                    return 0
+                
+                # Use proper datetime for accurate conversion
+                dt = datetime(year, month, day, hour, minute, second)
+                # Convert to timestamp (seconds since epoch)
+                return dt.timestamp()
+            except (ValueError, OverflowError):
+                # Fallback to simple calculation if datetime fails
+                year_days = date_tuple[0] * 365
+                month_days = date_tuple[1] * 30
+                day = date_tuple[2]
+                
+                total_days = year_days + month_days + day
+                total_seconds = time_tuple[0] * 3600 + time_tuple[1] * 60 + time_tuple[2]
+                
+                return total_days * 86400 + total_seconds
 
         def make_product_key(p: dict) -> str:
             """Create unique key for product to track used entries."""
@@ -350,6 +369,8 @@ async def get_opcua_matched_unload_events(
             
             product = None
             best_diff = None
+            product_exceeds_limit = None  # Track product that exceeds time limit
+            time_diff_hours = None  # Track time difference for warning
             
             for p in candidates:
                 p_key = make_product_key(p)
@@ -371,12 +392,24 @@ async def get_opcua_matched_unload_events(
                 
                 diff = exit_seconds - entry_seconds
                 
-                if diff > 2 * 86400:  # 2 days
+                # Maximum time between entry and exit: 6 hours
+                if diff > 6 * 3600:  # 6 hours = 21600 seconds
+                    # Save this product as exceeding limit, but keep looking for better match
+                    if product_exceeds_limit is None or diff < best_diff:
+                        product_exceeds_limit = p
+                        best_diff = diff
+                        time_diff_hours = diff / 3600
                     continue
                 
                 if best_diff is None or diff < best_diff:
                     best_diff = diff
                     product = p
+            
+            # If no product within time limit, use the one that exceeds limit
+            warning_message = None
+            if not product and product_exceeds_limit:
+                product = product_exceeds_limit
+                warning_message = f"⚠ Время между входом и выходом: {time_diff_hours:.1f}ч (превышает лимит 6ч)"
             
             if product:
                 used_entries.add(make_product_key(product))
@@ -416,6 +449,7 @@ async def get_opcua_matched_unload_events(
                 lamels_qty=product.get('lamels_qty', 0) if product else 0,
                 kpz_number=str(product.get('kpz_number', '—')) if product else '—',
                 material_type=str(product.get('material_type', '—')) if product else '—',
+                time_warning=warning_message,  # Add warning if time exceeds limit
                 # Forecast info - will be populated below
                 current_bath=None,
                 bath_entry_time=None,

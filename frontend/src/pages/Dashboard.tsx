@@ -407,6 +407,11 @@ function PhotoCell({
         {hanger.is_defect && (
           <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
         )}
+        {hanger.time_warning && (
+          <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+            ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
+          </span>
+        )}
         {profilesInfo.map((prof, idx) => (
           <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} />
         ))}
@@ -430,6 +435,11 @@ function PhotoCell({
         {hanger.is_defect && (
           <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
         )}
+        {hanger.time_warning && (
+          <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+            ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
+          </span>
+        )}
         <div className="flex items-center">
           <img
             src={thumbUrl}
@@ -450,6 +460,11 @@ function PhotoCell({
     <div className="flex items-center justify-center gap-2" style={{ maxWidth: '800px' }}>
       {hanger.is_defect && (
         <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
+      )}
+      {hanger.time_warning && (
+        <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+          ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
+        </span>
       )}
       <div className="flex items-center">
         <div className="w-10 h-10 bg-muted rounded flex items-center justify-center flex-shrink-0">
@@ -615,7 +630,13 @@ function DataTable({
             return (
               <TableRow
                 key={`${hanger.number}-${idx}`}
-                className={idx % 2 === 0 ? 'bg-slate-200' : ''}
+                className={
+                  hanger.time_warning 
+                    ? 'bg-orange-200' 
+                    : idx % 2 === 0 
+                      ? 'bg-slate-200' 
+                      : ''
+                }
               >
                 {showEntryExit ? (
                   <>
@@ -1216,6 +1237,7 @@ export default function Dashboard() {
                       current_bath: e.current_bath,
                       bath_entry_time: e.bath_entry_time,
                       bath_processing_time: e.bath_processing_time,
+                      time_warning: e.time_warning,
                     }))}
                     onPhotoClick={handlePhotoClick}
                     isFullscreen={isFullscreen}
