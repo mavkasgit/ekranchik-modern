@@ -80,7 +80,7 @@ async def get_dashboard(
             profile = str(product.get('profile', ''))
             if profile and profile != '—':
                 # Handle multiple profiles separated by +
-                for p in profile.replace('+', ',').split(','):
+                for p in profile.split('+'):
                     p = p.strip()
                     if p:
                         profile_names.add(p)
@@ -101,7 +101,7 @@ async def get_dashboard(
             # Build profiles_info with photos and processing keywords
             profiles_info = []
             if profile_str and profile_str != '—':
-                for p in profile_str.replace('+', ',').split(','):
+                for p in profile_str.split('+'):
                     p = p.strip()
                     if p:
                         # Extract processing keywords from profile name
@@ -273,7 +273,7 @@ async def get_opcua_matched_unload_events(
         for p in products:
             profile = str(p.get('profile', ''))
             if profile and profile != '—':
-                for name in profile.replace('+', ',').split(','):
+                for name in profile.split('+'):
                     name = name.strip()
                     if name:
                         profile_names.add(name)
@@ -418,7 +418,7 @@ async def get_opcua_matched_unload_events(
             if product:
                 profile_str = str(product.get('profile', ''))
                 if profile_str and profile_str != '—':
-                    for prof_name in profile_str.replace('+', ',').split(','):
+                    for prof_name in profile_str.split('+'):
                         prof_name = prof_name.strip()
                         if prof_name:
                             clean_name, processing = parse_profile_name(prof_name)

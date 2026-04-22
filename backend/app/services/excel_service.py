@@ -32,6 +32,11 @@ class ExcelService:
         self._cache_mtime: Optional[float] = None
         self._cache_path: Optional[Path] = None
     
+    @property
+    def cache_mtime(self) -> Optional[float]:
+        """Get current cache modification time (for cache invalidation tracking)."""
+        return self._cache_mtime
+
     def invalidate_cache(self) -> None:
         """Force cache invalidation."""
         self._cache = None
@@ -181,7 +186,6 @@ class ExcelService:
         
         Handles formats like:
         - "Profile1 + Profile2"
-        - "Profile1, Profile2"
         - "Profile1 / Profile2"
         
         Args:
@@ -195,8 +199,8 @@ class ExcelService:
         
         text = str(text).strip()
         
-        # Split by common separators
-        parts = re.split(r'[+,/]', text)
+        # Split by profile separators
+        parts = re.split(r'[+/]', text)
         
         profiles = []
         for part in parts:
