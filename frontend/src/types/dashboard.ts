@@ -32,6 +32,7 @@ export interface HangerData {
   current_bath?: number | null  // Bath number 30-33 where hanger currently is
   bath_entry_time?: string | null  // Time when hanger entered current bath (HH:MM:SS)
   bath_processing_time?: number | null  // Expected processing time in seconds for current bath
+  time_warning?: string | null
 }
 
 export interface DashboardResponse {

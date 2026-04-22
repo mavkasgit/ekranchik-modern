@@ -845,8 +845,8 @@ export default function Dashboard() {
   
   // Таймер автовозврата в fullscreen
   const [autoReturnCountdown, setAutoReturnCountdown] = useState<number | null>(null)
-  const autoReturnTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const autoReturnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // State for "Последние 100" toggle
   const [isLast100Mode, setIsLast100Mode] = useState(false);
@@ -862,6 +862,55 @@ export default function Dashboard() {
   const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, loadingOnly)
   const { data: fileStatus } = useFileStatus()
   const { data: matchedEvents, refetch: refetchMatched } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
+
+  const hangerMetaByNumber = useMemo(() => {
+    const rows = data?.products ?? []
+    const events = matchedEvents ?? []
+
+    const toHangerKey = (value: string | number | null | undefined): string => {
+      if (value === null || value === undefined) return ''
+      const raw = String(value).trim()
+      if (!raw) return ''
+      const numeric = Number(raw.replace(',', '.'))
+      if (Number.isFinite(numeric)) {
+        return String(Math.trunc(numeric))
+      }
+      return raw
+    }
+
+    const normalizeValue = (value?: string | null): string | undefined => {
+      const trimmed = value?.trim()
+      return trimmed ? trimmed : undefined
+    }
+    const mergeMeta = (
+      acc: Record<string, { profile?: string; color?: string }>,
+      key: string,
+      profile?: string | null,
+      color?: string | null,
+    ) => {
+      const current = acc[key] ?? {}
+      acc[key] = {
+        profile: normalizeValue(profile) ?? current.profile,
+        color: normalizeValue(color) ?? current.color,
+      }
+    }
+
+    const metaFromRows = rows.reduce<Record<string, { profile?: string; color?: string }>>((acc, row) => {
+      const key = toHangerKey(row.number)
+      if (!key) return acc
+
+      mergeMeta(acc, key, row.profile, row.color)
+      return acc
+    }, {})
+
+    return events.reduce<Record<string, { profile?: string; color?: string }>>((acc, event) => {
+      const key = toHangerKey(event.hanger)
+      if (!key) return acc
+
+      mergeMeta(acc, key, event.profile, event.color)
+      return acc
+    }, metaFromRows)
+  }, [data?.products, matchedEvents])
 
   const handleToggleLast100 = () => {
     if (isMockMode) setIsMockMode(false); // Disable mock mode if switching to Last 100
@@ -1208,7 +1257,7 @@ export default function Dashboard() {
             )}
 
             {/* Forecast Row - Outside the green border */}
-            {filters.showForecast && <BathForecast />}
+            {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} />}
 
             <Card className="border-8 border-green-500 relative">
               {hasNewUnloadEvents && (
