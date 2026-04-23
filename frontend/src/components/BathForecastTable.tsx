@@ -116,7 +116,6 @@ function getCellStyle(colorHex: string) {
 
 export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
   const [bathData, setBathData] = useState<Map<number, BathForecastItem>>(new Map())
-  const [, setUpdateTrigger] = useState(0)
   const lastKnownHangerByBathRef = useRef<Map<number, number>>(new Map())
 
   const fetchData = useCallback(async () => {
@@ -166,7 +165,7 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
     }
   }, [])
 
-  const { status: wsStatus } = useRealtimeData({
+  useRealtimeData({
     onMessage: (message) => {
       if (message.type === 'data_update' || message.type === 'unload_event' || message.type === 'opcua_status') {
         void fetchData()
@@ -179,19 +178,41 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
   }, [fetchData])
 
   useEffect(() => {
-    if (wsStatus === 'connected') return
-
     const interval = setInterval(() => {
       void fetchData()
-    }, 1000)
+    }, 10000)
 
     return () => clearInterval(interval)
-  }, [fetchData, wsStatus])
+  }, [fetchData])
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setUpdateTrigger(prev => prev + 1)
+      setBathData(prev => {
+        if (prev.size === 0) return prev
+
+        const next = new Map<number, BathForecastItem>()
+        let changed = false
+
+        for (const [bathNum, item] of prev.entries()) {
+          if (bathNum === 34) {
+            next.set(bathNum, { ...item, inTime: item.inTime + 1 })
+            changed = true
+            continue
+          }
+
+          if (item.remainingTime > 0) {
+            next.set(bathNum, { ...item, remainingTime: Math.max(0, item.remainingTime - 1) })
+            changed = true
+            continue
+          }
+
+          next.set(bathNum, item)
+        }
+
+        return changed ? next : prev
+      })
     }, 1000)
+
     return () => clearInterval(timer)
   }, [])
 
@@ -211,7 +232,8 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
   const unloadSeconds = unloadDuration % 60
   const unloadTimeStr = `${unloadMinutes.toString().padStart(2, '0')}:${unloadSeconds.toString().padStart(2, '0')}`
 
-  const isCompact = sortedBaths.length >= 3
+  const totalForecastItems = sortedBaths.length + (bath34Item ? 1 : 0)
+  const isCompact = totalForecastItems > 2
 
   return (
     <div className="flex items-stretch py-1 px-2 bg-background rounded-md border border-slate-200 dark:border-slate-800 shadow-sm z-20 relative">
