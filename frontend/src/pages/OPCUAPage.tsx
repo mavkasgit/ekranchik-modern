@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, CheckCircle, Loader, RefreshCw, Activity, Zap, Clock, Settings } from 'lucide-react'
+import { AlertCircle, CheckCircle, Loader, RefreshCw, Activity, Zap, Clock, Settings, FlaskConical, Cpu } from 'lucide-react'
 import { LineVisualization } from '@/components/LineVisualization'
 import { HangerTracking } from '@/components/HangerTracking'
 
@@ -25,18 +25,27 @@ interface OPCUAStatus {
   }
 }
 
+interface SettingsState {
+  simulation_enabled: boolean
+  excel_path: string
+  opcua_endpoint: string
+}
+
 export function OPCUAPage() {
   const [data, setData] = useState<PLCData | null>(null)
   const [status, setStatus] = useState<OPCUAStatus | null>(null)
+  const [settings, setSettings] = useState<SettingsState | null>(null)
+  const [updatingSettings, setUpdatingSettings] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'line' | 'hangers' | 'settings'>('line')
 
   const fetchData = async () => {
     try {
-      const [dataRes, statusRes] = await Promise.all([
+      const [dataRes, statusRes, settingsRes] = await Promise.all([
         fetch('/api/opcua/data'),
-        fetch('/api/opcua/status')
+        fetch('/api/opcua/status'),
+        fetch('/api/dashboard/settings')
       ])
       
       if (dataRes.ok) {
@@ -47,6 +56,11 @@ export function OPCUAPage() {
       if (statusRes.ok) {
         const statusData = await statusRes.json()
         setStatus(statusData)
+      }
+
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json()
+        setSettings(settingsData)
       }
       
       setError(null)
@@ -79,6 +93,26 @@ export function OPCUAPage() {
       await fetchData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Disconnect failed')
+    }
+  }
+
+  const handleToggleSimulationMode = async () => {
+    if (!settings) return
+    setUpdatingSettings(true)
+    try {
+      const response = await fetch('/api/dashboard/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ simulation_enabled: !settings.simulation_enabled })
+      })
+      if (!response.ok) throw new Error('Failed to change settings')
+      const newSettings = await response.json()
+      setSettings(newSettings)
+      await fetchData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to switch mode')
+    } finally {
+      setUpdatingSettings(false)
     }
   }
 
@@ -216,7 +250,30 @@ export function OPCUAPage() {
             }`}
           >
             <Settings className="w-4 h-4" />
-            Settings
+            <span>Settings</span>
+            {settings && (
+              <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase transition-all ${
+                activeTab === 'settings'
+                  ? settings.simulation_enabled
+                    ? 'bg-yellow-500/30 text-yellow-200 border border-yellow-400/40'
+                    : 'bg-green-500/30 text-green-200 border border-green-400/40'
+                  : settings.simulation_enabled
+                    ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                    : 'bg-green-100 text-green-800 border border-green-200'
+              }`}>
+                {settings.simulation_enabled ? (
+                  <>
+                    <FlaskConical className="w-2.5 h-2.5" />
+                    Sim
+                  </>
+                ) : (
+                  <>
+                    <Cpu className="w-2.5 h-2.5" />
+                    Real
+                  </>
+                )}
+              </span>
+            )}
           </button>
         </div>
 
@@ -230,6 +287,34 @@ export function OPCUAPage() {
             <h2 className="text-xl font-semibold mb-6">OPC UA Settings</h2>
             
             <div className="space-y-6">
+              {/* Режим работы системы */}
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-3">Режим работы системы</h3>
+                <div className="bg-gray-50 rounded-lg p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <span className="font-semibold text-gray-900 block">
+                      {settings?.simulation_enabled ? '🧪 Тестовый режим (симуляция)' : '⚙️ Рабочий режим'}
+                    </span>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {settings?.simulation_enabled 
+                        ? 'Используются локальные файлы и симулятор OPC UA. Сетевые ресурсы не затрагиваются.' 
+                        : 'Используются реальные данные с производства. Подключение к реальному PLC и сетевому диску.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleToggleSimulationMode}
+                    disabled={updatingSettings}
+                    className={`px-4 py-2 font-bold text-sm rounded-lg border transition-all cursor-pointer whitespace-nowrap ${
+                      settings?.simulation_enabled
+                        ? "bg-yellow-100 border-yellow-300 text-yellow-800 hover:bg-yellow-200"
+                        : "bg-green-100 border-green-300 text-green-800 hover:bg-green-200"
+                    }`}
+                  >
+                    {updatingSettings ? 'Переключение...' : settings?.simulation_enabled ? 'Включить РАБОЧИЙ' : 'Включить ТЕСТ'}
+                  </button>
+                </div>
+              </div>
+
               {/* Connection Info */}
               <div>
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Connection</h3>

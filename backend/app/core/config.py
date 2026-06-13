@@ -73,5 +73,35 @@ class Settings(BaseSettings):
             return path
         return None
 
+    def update_simulation_mode_in_env(self, enabled: bool) -> None:
+        """Обновляет значение SIMULATION_ENABLED в файле .env"""
+        env_file = Path(".env")
+        if not env_file.exists():
+            for p in [Path("../.env"), Path("backend/.env"), Path("backend/app/.env")]:
+                if p.exists():
+                    env_file = p
+                    break
+        
+        if env_file.exists():
+            try:
+                with open(env_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                found = False
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('SIMULATION_ENABLED='):
+                        lines[i] = f"SIMULATION_ENABLED={'true' if enabled else 'false'}\n"
+                        found = True
+                        break
+                
+                if not found:
+                    lines.append(f"\nSIMULATION_ENABLED={'true' if enabled else 'false'}\n")
+                
+                with open(env_file, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to write SIMULATION_ENABLED to .env: {e}")
+
 
 settings = Settings()

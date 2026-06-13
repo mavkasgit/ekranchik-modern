@@ -427,6 +427,30 @@ class OPCUAService:
         if updated_count > 0:
             self._last_update = now
 
+    async def update_simulation_mode(self, enabled: bool):
+        """Динамически переключает режим симуляции и переподключается."""
+        was_running = self._running
+        if was_running:
+            await self.stop()
+            # Даем воркеру время завершиться и закрыть соединение
+            await asyncio.sleep(1.0)
+            
+        if enabled:
+            self._url = settings.OPCUA_SIM_ENDPOINT
+            self._poll_interval = settings.OPCUA_SIM_POLL_INTERVAL
+            logger.info(f"[OPC UA] Динамическое переключение: Активирован режим симуляции. Эндпоинт: {self._url}")
+        else:
+            self._url = settings.OPCUA_ENDPOINT
+            self._poll_interval = settings.OPCUA_POLL_INTERVAL
+            logger.info(f"[OPC UA] Динамическое переключение: Активирован режим реального OPC UA. Эндпоинт: {self._url}")
+            
+        # Очищаем кэш и списки при смене режима
+        self._cache.clear()
+        self._blacklist.clear()
+            
+        if was_running:
+            await self.start()
+
 
 # Singleton - импортируй этот объект в другие файлы
 opcua_service = OPCUAService()
