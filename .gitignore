@@ -73,3 +73,10 @@ repomix-output.xml
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent files
+.agents/
+
+# Active Excel state files
+static/active_excel.json
+static/active_excel_sim.json
