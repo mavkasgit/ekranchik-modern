@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List
 
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,10 @@ from app.schemas.dashboard import (
     DashboardResponse,
     HangerData,
     FileStatus,
-    MatchedUnloadEvent
+    MatchedUnloadEvent,
+    ExcelFileListResponse,
+    ExcelFileSelectRequest,
+    ExcelFileInfo
 )
 from app.schemas.profile import ProfileInfo
 
@@ -151,6 +154,31 @@ async def get_dashboard(
         )
 
 
+def get_excel_internal_modified_time(file_path: Path) -> Optional[datetime]:
+    """
+    Try to read the internal modified time from the Excel file's docProps/core.xml.
+    Returns datetime in local timezone if found, otherwise None.
+    """
+    import zipfile
+    import xml.etree.ElementTree as ET
+    
+    try:
+        with zipfile.ZipFile(file_path, 'r') as z:
+            core_xml = z.read('docProps/core.xml')
+            root = ET.fromstring(core_xml)
+            for elem in root.iter():
+                if elem.tag.endswith('}modified'):
+                    val = elem.text
+                    if val:
+                        if val.endswith('Z'):
+                            val = val[:-1] + '+00:00'
+                        dt = datetime.fromisoformat(val)
+                        return dt.astimezone()
+    except Exception as e:
+        logger.warning(f"Could not read internal modified time from {file_path}: {e}")
+    return None
+
+
 @router.get("/status/file", response_model=FileStatus)
 async def get_file_status():
     """
@@ -158,9 +186,10 @@ async def get_file_status():
     Detects if file is open by checking for Excel temp file (~$filename).
     """
     from app.core.config import settings
+    import time
     
     try:
-        path = settings.excel_path
+        path = excel_service.current_path
         
         # Check if path is configured
         if not path:
@@ -188,17 +217,263 @@ async def get_file_status():
         
         status_text = "Открыт в Excel" if is_open else "Закрыт"
         
+        # Try to get internal modified time (actual save time)
+        internal_mtime = get_excel_internal_modified_time(path)
+        if internal_mtime:
+            mtime_dt = internal_mtime
+            mtime_timestamp = internal_mtime.timestamp()
+        else:
+            mtime_timestamp = stat.st_mtime
+            mtime_dt = datetime.fromtimestamp(mtime_timestamp).astimezone()
+            
+        seconds_since_modified = max(0.0, time.time() - mtime_timestamp)
+        
         return FileStatus(
             is_open=is_open,
-            last_modified=datetime.fromtimestamp(stat.st_mtime),
+            last_modified=mtime_dt,
             file_name=path.name,
-            status_text=status_text
+            status_text=status_text,
+            seconds_since_modified=seconds_since_modified
         )
     except Exception as e:
         return FileStatus(
             status_text="Ошибка",
             error=str(e)
         )
+
+
+def format_size(bytes_size: int) -> str:
+    """Format file size in human readable units"""
+    for unit in ['Б', 'КБ', 'МБ', 'ГБ']:
+        if bytes_size < 1024:
+            return f"{bytes_size:.1f} {unit}"
+        bytes_size /= 1024
+    return f"{bytes_size:.1f} ТБ"
+
+
+@router.get("/excel/files", response_model=ExcelFileListResponse)
+async def get_excel_files(folder_path: Optional[str] = Query(default=None, description="Absolute folder path to list files in")):
+    """
+    Get list of available Excel files and directories in the requested or default path,
+    along with directory metadata and the active file absolute path.
+    """
+    try:
+        # Determine the target directory to scan
+        if folder_path:
+            current_dir = Path(folder_path).resolve()
+        else:
+            active_path = excel_service.current_path
+            if active_path and active_path.parent.exists():
+                current_dir = active_path.parent.resolve()
+            elif settings.excel_path and settings.excel_path.parent.exists():
+                current_dir = settings.excel_path.parent.resolve()
+            else:
+                current_dir = Path.cwd().resolve()
+                
+        if not current_dir.exists():
+            raise HTTPException(status_code=400, detail=f"Путь не существует: {current_dir}")
+        if not current_dir.is_dir():
+            raise HTTPException(status_code=400, detail=f"Путь не является папкой: {current_dir}")
+
+        files = []
+        try:
+            for item in current_dir.iterdir():
+                # Skip hidden folders / files starting with dot
+                if item.name.startswith('.'):
+                    continue
+                
+                if item.is_dir():
+                    try:
+                        stat = item.stat()
+                        mtime = datetime.fromtimestamp(stat.st_mtime)
+                    except Exception:
+                        mtime = datetime.now()
+                    files.append(ExcelFileInfo(
+                        name=item.name,
+                        path=str(item.resolve()),
+                        size_bytes=0,
+                        size_formatted="",
+                        last_modified=mtime,
+                        is_dir=True
+                    ))
+                elif item.is_file() and item.suffix.lower() in ('.xlsx', '.xls', '.xlsm') and not item.name.startswith('~$'):
+                    try:
+                        stat = item.stat()
+                        size = stat.st_size
+                        mtime = datetime.fromtimestamp(stat.st_mtime)
+                    except Exception:
+                        size = 0
+                        mtime = datetime.now()
+                    files.append(ExcelFileInfo(
+                        name=item.name,
+                        path=str(item.resolve()),
+                        size_bytes=size,
+                        size_formatted=format_size(size),
+                        last_modified=mtime,
+                        is_dir=False
+                    ))
+        except PermissionError:
+            raise HTTPException(status_code=403, detail=f"Нет доступа к папке: {current_dir}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Ошибка при чтении папки {current_dir}: {str(e)}")
+
+        # Sort: directories first (alphabetically), then files (alphabetically)
+        files.sort(key=lambda x: (not x.is_dir, x.name.lower()))
+
+        active_path = str(excel_service.current_path.resolve()) if excel_service.current_path else ""
+        parent_dir = current_dir.parent
+        parent_directory = str(parent_dir.resolve()) if parent_dir != current_dir else None
+
+        return ExcelFileListResponse(
+            success=True,
+            files=files,
+            active=active_path,
+            current_directory=str(current_dir.resolve()),
+            parent_directory=parent_directory
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DASHBOARD API] Failed to scan Excel files: {e}", exc_info=True)
+        fallback_active = str(excel_service.current_path.resolve()) if excel_service.current_path else ""
+        return ExcelFileListResponse(
+            success=False,
+            error=str(e),
+            files=[],
+            active=fallback_active,
+            current_directory=str(Path.cwd().resolve()),
+            parent_directory=None
+        )
+
+
+@router.post("/excel/select")
+async def select_excel_file(request: ExcelFileSelectRequest):
+    """
+    Select active Excel file.
+    """
+    try:
+        # Support both file_path (for custom paths) and file_name (for backward compatibility)
+        if request.file_path:
+            file_path = request.file_path.strip().strip('"\'')
+        elif request.file_name:
+            # Backward compatibility
+            path = settings.excel_path
+            if not path:
+                raise HTTPException(status_code=400, detail="Путь к Excel-файлу не настроен")
+            file_path = str((path.parent / request.file_name).resolve())
+        else:
+            raise HTTPException(status_code=400, detail="Не указан путь к файлу (file_path) или его имя (file_name)")
+
+        target_file = Path(file_path)
+        if not target_file.is_absolute():
+            if settings.excel_path:
+                target_file = (settings.excel_path.parent / target_file).resolve()
+            else:
+                raise HTTPException(status_code=400, detail="Невозможно разрешить относительный путь")
+
+        target_file = target_file.resolve()
+        
+        if not target_file.exists():
+            raise HTTPException(status_code=404, detail=f"Файл {target_file} не найден")
+            
+        if not target_file.is_file():
+            raise HTTPException(status_code=400, detail=f"Указанный путь не является файлом: {target_file}")
+            
+        if target_file.suffix.lower() not in ('.xlsx', '.xls', '.xlsm'):
+            raise HTTPException(status_code=400, detail=f"Недопустимое расширение файла: {target_file.suffix}")
+
+        excel_service.set_active_file(str(target_file))
+        logger.info(f"[DASHBOARD API] Switched active Excel file to: {target_file}")
+        
+        # Invalidate watcher cache if running
+        try:
+            from app.services.websocket_manager import websocket_manager
+            from app.schemas.websocket import WebSocketMessage
+            message = WebSocketMessage(
+                type="data_update",
+                payload={
+                    "source": "excel",
+                    "file": target_file.name,
+                    "file_path": str(target_file),
+                    "message": f"Активный файл Excel изменен на {target_file.name}"
+                },
+                timestamp=datetime.now()
+            )
+            await websocket_manager.broadcast(message)
+        except Exception as ws_err:
+            logger.warning(f"Could not broadcast websocket update for file switch: {ws_err}")
+            
+        return {
+            "success": True,
+            "active": str(target_file)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DASHBOARD API] Failed to select Excel file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/excel/upload")
+async def upload_excel_file(file: UploadFile = File(...)):
+    """
+    Upload an Excel file to the server and set it as the active Excel file.
+    """
+    try:
+        # Check file extension
+        suffix = Path(file.filename).suffix.lower()
+        if suffix not in ('.xlsx', '.xls', '.xlsm'):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Неподдерживаемый формат файла: {suffix}. Допустимы только .xlsx, .xls, .xlsm"
+            )
+            
+        path = settings.excel_path
+        if path:
+            target_dir = path.parent
+        else:
+            target_dir = Path(settings.STATIC_DIR) / "uploads"
+            
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file = target_dir / file.filename
+        
+        # Save file contents
+        content = await file.read()
+        with open(target_file, "wb") as f:
+            f.write(content)
+            
+        # Set this file as the active Excel file
+        excel_service.set_active_file(str(target_file.resolve()))
+        logger.info(f"[DASHBOARD API] Uploaded and selected Excel file: {target_file}")
+        
+        # Invalidate watcher cache if running, and notify via WS
+        try:
+            from app.services.websocket_manager import websocket_manager
+            from app.schemas.websocket import WebSocketMessage
+            message = WebSocketMessage(
+                type="data_update",
+                payload={
+                    "source": "excel",
+                    "file": target_file.name,
+                    "file_path": str(target_file.resolve()),
+                    "message": f"Активный файл Excel изменен на {target_file.name}"
+                },
+                timestamp=datetime.now()
+            )
+            await websocket_manager.broadcast(message)
+        except Exception as ws_err:
+            logger.warning(f"Could not broadcast websocket update for file switch: {ws_err}")
+            
+        return {
+            "success": True,
+            "active": str(target_file.resolve())
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DASHBOARD API] Failed to upload Excel file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.get("/status/opcua", response_model=FileStatus)
@@ -468,3 +743,72 @@ async def get_opcua_matched_unload_events(
 # This endpoint is redundant now as the logic is in /opcua-unload-matched
 # I'll remove it to avoid confusion
 # @router.get("/opcua-unload-events") ...
+
+
+class SettingsResponse(BaseModel):
+    simulation_enabled: bool
+    excel_path: str
+    opcua_endpoint: str
+
+
+class SettingsUpdateRequest(BaseModel):
+    simulation_enabled: bool
+
+
+@router.get("/settings", response_model=SettingsResponse)
+async def get_settings():
+    """Get current simulation settings."""
+    from app.services.opcua_service import opcua_service
+    return SettingsResponse(
+        simulation_enabled=settings.SIMULATION_ENABLED,
+        excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
+        opcua_endpoint=opcua_service._url
+    )
+
+
+@router.post("/settings", response_model=SettingsResponse)
+async def update_settings(request: SettingsUpdateRequest):
+    """Dynamically toggle simulation settings."""
+    from app.services.opcua_service import opcua_service
+    try:
+        new_mode = request.simulation_enabled
+        if new_mode != settings.SIMULATION_ENABLED:
+            # 1. Update settings in-memory
+            settings.SIMULATION_ENABLED = new_mode
+            
+            # 2. Update settings in .env
+            settings.update_simulation_mode_in_env(new_mode)
+            
+            # 3. Update OPC UA service
+            await opcua_service.update_simulation_mode(new_mode)
+            
+            # 4. Update Excel service
+            excel_service.update_simulation_mode()
+            
+            logger.info(f"[DASHBOARD API] Dynamically toggled simulation_enabled to: {new_mode}")
+            
+            # 5. Broadcast dynamic WS settings update
+            try:
+                from app.services.websocket_manager import websocket_manager
+                from app.schemas.websocket import WebSocketMessage
+                message = WebSocketMessage(
+                    type="data_update",
+                    payload={
+                        "source": "settings",
+                        "simulation_enabled": new_mode,
+                        "message": f"Режим работы переключен на {'ТЕСТОВЫЙ' if new_mode else 'РАБОЧИЙ'}"
+                    },
+                    timestamp=datetime.now()
+                )
+                await websocket_manager.broadcast(message)
+            except Exception as ws_err:
+                logger.warning(f"Could not broadcast websocket update for mode switch: {ws_err}")
+                
+        return SettingsResponse(
+            simulation_enabled=settings.SIMULATION_ENABLED,
+            excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
+            opcua_endpoint=opcua_service._url
+        )
+    except Exception as e:
+        logger.error(f"[DASHBOARD API] Failed to update settings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

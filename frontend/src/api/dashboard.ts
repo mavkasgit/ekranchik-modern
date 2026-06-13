@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { DashboardResponse, FileStatus } from '@/types/dashboard'
+import type { DashboardResponse, FileStatus, ExcelFilesResponse, ExcelSelectResponse } from '@/types/dashboard'
 
 export const dashboardApi = {
   getData: async (days = 7, limit = 100, unloadingLimit = 10, loadingOnly = true): Promise<DashboardResponse> => {
@@ -31,7 +31,33 @@ export const dashboardApi = {
     })
     return data
   },
+
+  getExcelFiles: async (folderPath?: string): Promise<ExcelFilesResponse> => {
+    const { data } = await api.get<ExcelFilesResponse>('/dashboard/excel/files', {
+      params: folderPath ? { folder_path: folderPath } : undefined,
+    })
+    return data
+  },
+
+  selectExcelFile: async (filePath: string): Promise<ExcelSelectResponse> => {
+    const { data } = await api.post<ExcelSelectResponse>('/dashboard/excel/select', {
+      file_path: filePath,
+    })
+    return data
+  },
+
+  uploadExcelFile: async (file: File): Promise<ExcelSelectResponse> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const { data } = await api.post<ExcelSelectResponse>('/dashboard/excel/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return data
+  },
 }
+
 
 export interface MatchedUnloadEvent {
   exit_date: string

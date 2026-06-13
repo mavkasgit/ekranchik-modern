@@ -11,7 +11,7 @@ from app.schemas.profile import (
     ProfileUpdate,
     ProfileResponse,
 )
-from app.schemas.dashboard import HangerData, UnloadEvent
+from app.schemas.dashboard import HangerData, UnloadEvent, FileStatus
 from app.schemas.websocket import WebSocketMessage
 
 
@@ -92,6 +92,15 @@ class TestDashboardSchemas:
         """Negative hanger number should fail"""
         with pytest.raises(ValidationError):
             UnloadEvent(time="10:00:00", hanger=-1)
+
+    def test_file_status_schema(self):
+        """FileStatus schema works with optional seconds_since_modified"""
+        status = FileStatus(is_open=True, status_text="Open", seconds_since_modified=120.5)
+        assert status.is_open is True
+        assert status.seconds_since_modified == 120.5
+        
+        status_none = FileStatus(is_open=False, status_text="Closed")
+        assert status_none.seconds_since_modified is None
 
 
 class TestWebSocketSchemas:

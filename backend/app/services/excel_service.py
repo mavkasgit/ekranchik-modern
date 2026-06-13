@@ -4,6 +4,7 @@ Excel Service - handles Excel file parsing, caching, and data extraction.
 import os
 import re
 import time
+import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -27,10 +28,72 @@ class ExcelService:
     - Product filtering and pagination
     """
     
+    @property
+    def _persistence_path(self) -> Path:
+        """Path to save persistent configuration"""
+        static_dir = Path(settings.STATIC_DIR)
+        filename = "active_excel_sim.json" if settings.SIMULATION_ENABLED else "active_excel.json"
+        if static_dir.exists():
+            return static_dir / filename
+        return Path(filename)
+
+    def _load_persisted_active_file(self) -> Optional[str]:
+        """Load the active file name from persistent JSON file"""
+        try:
+            path = self._persistence_path
+            if path.exists():
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    val = data.get("active_file")
+                    if val:
+                        return val
+        except Exception as e:
+            logger.error(f"Failed to load active file from persistence: {e}")
+        return None
+
+    def _save_persisted_active_file(self, file_name: str) -> None:
+        """Save the active file name to persistent JSON file"""
+        try:
+            path = self._persistence_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"active_file": file_name}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save active file to persistence: {e}")
+
     def __init__(self):
         self._cache: Optional[pd.DataFrame] = None
         self._cache_mtime: Optional[float] = None
         self._cache_path: Optional[Path] = None
+        self._active_file_name: Optional[str] = self._load_persisted_active_file()
+
+    @property
+    def current_path(self) -> Optional[Path]:
+        """Get path to the currently active Excel file"""
+        if self._active_file_name:
+            path = Path(self._active_file_name)
+            if path.is_absolute():
+                return path
+            elif settings.excel_path:
+                return settings.excel_path.parent / path
+        return settings.excel_path
+
+    def set_active_file(self, file_path: str) -> None:
+        """Set active Excel file path/name and invalidate cache"""
+        self._active_file_name = file_path
+        self._save_persisted_active_file(file_path)
+        self.invalidate_cache()
+        
+        # Restart watcher for new directory if it is running
+        try:
+            from app.services.excel_watcher import excel_watcher
+            if excel_watcher.is_running:
+                excel_watcher.stop()
+            active_p = self.current_path
+            if active_p and active_p.exists():
+                excel_watcher.start(watch_path=active_p)
+        except Exception as e:
+            logger.warning(f"Could not restart ExcelWatcher for new path: {e}")
     
     def invalidate_cache(self) -> None:
         """Force cache invalidation."""
@@ -67,7 +130,7 @@ class ExcelService:
         Returns:
             DataFrame with production data
         """
-        path = file_path or settings.excel_path
+        path = file_path or self.current_path
         if not path or not path.exists():
             return pd.DataFrame()
 
@@ -471,6 +534,22 @@ class ExcelService:
                 break
         
         return results
+
+    def update_simulation_mode(self) -> None:
+        """Обновляет активный файл и сбрасывает кэш при смене режима симуляции."""
+        self._active_file_name = self._load_persisted_active_file()
+        self.invalidate_cache()
+        
+        # Restart watcher for new directory if it is running
+        try:
+            from app.services.excel_watcher import excel_watcher
+            if excel_watcher.is_running:
+                excel_watcher.stop()
+            active_p = self.current_path
+            if active_p and active_p.exists():
+                excel_watcher.start(watch_path=active_p)
+        except Exception as e:
+            logger.warning(f"Could not restart ExcelWatcher after mode switch: {e}")
 
 
 # Singleton instance

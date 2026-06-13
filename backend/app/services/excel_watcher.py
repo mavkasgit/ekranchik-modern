@@ -31,7 +31,7 @@ class ExcelFileHandler(FileSystemEventHandler):
             return
         
         # Check if it's our Excel file
-        if not event.src_path.endswith(('.xlsx', '.xls')):
+        if not event.src_path.endswith(('.xlsx', '.xls', '.xlsm')):
             return
         
         # Debounce - ignore rapid successive changes

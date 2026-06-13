@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X
+  Image, Maximize2, Minimize2, X, AlertTriangle
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -20,12 +20,24 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu'
 import { Checkbox } from '@/components/ui/checkbox'
 
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { BathForecast } from '@/components/BathForecastTable'
+import { dashboardApi } from '@/api/dashboard'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
 import { useFullscreen } from '@/App'
 
@@ -504,7 +516,21 @@ function ProfilePhoto({
   )
 }
 
-function StatusBar() {
+function StatusBar({
+  activeFile,
+  recentFiles,
+  onSelectFile,
+  onOpenExplorer,
+  onOpenPathModal,
+  isFetching,
+}: {
+  activeFile: string;
+  recentFiles: string[];
+  onSelectFile: (filePath: string) => void;
+  onOpenExplorer: () => void;
+  onOpenPathModal: () => void;
+  isFetching: boolean;
+}) {
   const { data: fileStatus } = useFileStatus()
   const { data: opcuaStatus } = useOPCUAStatus()
   const { isConnected, lastMessage } = useRealtimeData()
@@ -519,50 +545,116 @@ function StatusBar() {
   return (
     <Card>
       <CardContent className="py-3">
-        <div className="flex flex-wrap items-center gap-6 text-sm">
-          <div className="flex items-center gap-2">
-            <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
-            <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-            <span className="font-medium">{fileStatus?.status_text || '—'}</span>
-            <span className="text-muted-foreground truncate max-w-[200px]">
-              {fileStatus?.file_name || ''}
-            </span>
-            {fileStatus?.last_modified && (
-              <span className="text-muted-foreground text-xs">
-                ({new Date(fileStatus.last_modified).toLocaleString('ru')})
-              </span>
-            )}
+        <div className="flex flex-wrap items-center justify-between gap-6 text-sm">
+          <div className="flex flex-wrap items-center gap-6">
+            <div className="flex items-center gap-2">
+              <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
+              <div className={`w-2 h-2 rounded-full ${statusColor}`} />
+              <span className="font-medium">{fileStatus?.status_text || '—'}</span>
+              <Button
+                variant="link"
+                size="sm"
+                onClick={onOpenExplorer}
+                className="text-foreground h-auto p-0 font-medium truncate max-w-[250px] hover:text-primary cursor-pointer border-b border-dashed border-foreground/50 hover:border-primary text-xs inline-flex hover:no-underline"
+                title="Нажмите, чтобы выбрать или изменить active файл Excel"
+              >
+                {fileStatus?.file_name || activeFile.split(/[\\/]/).pop() || 'Выбрать файл'}
+              </Button>
+              {fileStatus?.last_modified && (
+                <span className="text-muted-foreground text-xs">
+                  ({new Date(fileStatus.last_modified).toLocaleString('ru')})
+                </span>
+              )}
+              
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={isFetching}
+                    className="h-8 text-xs px-3 border border-slate-300 bg-transparent hover:bg-slate-100 text-slate-900 hover:text-black ml-1.5 font-normal"
+                    title="Выбрать активный Excel файл или открыть историю"
+                  >
+                    Сменить
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="bg-background border-border text-foreground">
+                  <DropdownMenuItem
+                    onClick={onOpenExplorer}
+                    disabled={isFetching}
+                    className="cursor-pointer text-xs focus:bg-accent focus:text-accent-foreground"
+                  >
+                    Выбрать новый файл...
+                  </DropdownMenuItem>
+                  {recentFiles.filter(Boolean).length > 0 && (
+                    <>
+                      <DropdownMenuSeparator className="bg-border" />
+                      <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold px-2 py-1">
+                        Последние файлы:
+                      </DropdownMenuLabel>
+                      {recentFiles.filter(Boolean).map((path, idx) => {
+                        const name = path.split(/[\\/]/).pop() || 'Без имени';
+                        const isActive = path === activeFile;
+                        return (
+                          <DropdownMenuItem
+                            key={`status-dropdown-recent-${path}-${idx}`}
+                            onClick={() => onSelectFile(path)}
+                            disabled={isFetching}
+                            className={`cursor-pointer text-xs font-mono truncate max-w-[320px] focus:bg-accent focus:text-accent-foreground ${
+                              isActive ? 'text-emerald-600 font-semibold' : ''
+                            }`}
+                            title={path}
+                          >
+                            {name}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onOpenPathModal}
+                disabled={isFetching}
+                className="h-8 text-xs px-3 border border-slate-300 bg-transparent hover:bg-slate-100 text-slate-900 hover:text-black ml-1.5 font-normal"
+                title="Указать прямой путь к файлу на сервере"
+              >
+                Ввести путь
+              </Button>
+            </div>
+
+            <div className="w-px h-4 bg-border" />
+
+            <div className="flex items-center gap-2">
+              <Server className="w-4 h-4 text-muted-foreground" />
+              <div className={`w-2 h-2 rounded-full ${opcuaStatus?.is_open ? 'bg-green-500' : 'bg-destructive'}`} />
+              <span>OPC UA: {opcuaStatus?.is_open ? 'OK' : 'Откл'}</span>
+              {opcuaStatus?.last_modified && (
+                <span className="text-muted-foreground text-xs">
+                  ({new Date(opcuaStatus.last_modified).toLocaleTimeString('ru')})
+                </span>
+              )}
+            </div>
+
+            <div className="w-px h-4 bg-border" />
+
+            <div className="flex items-center gap-2">
+              {isConnected ? (
+                <Wifi className="w-4 h-4 text-green-500" />
+              ) : (
+                <WifiOff className="w-4 h-4 text-destructive" />
+              )}
+              <span>WS: {isConnected ? 'Онлайн' : 'Офлайн'}</span>
+              {lastMessage?.timestamp && (
+                <span className="text-muted-foreground text-xs">
+                  ({new Date(lastMessage.timestamp).toLocaleTimeString('ru')})
+                </span>
+              )}
+            </div>
           </div>
-
-          <div className="w-px h-4 bg-border" />
-
-          <div className="flex items-center gap-2">
-            <Server className="w-4 h-4 text-muted-foreground" />
-            <div className={`w-2 h-2 rounded-full ${opcuaStatus?.is_open ? 'bg-green-500' : 'bg-destructive'}`} />
-            <span>OPC UA: {opcuaStatus?.is_open ? 'OK' : 'Откл'}</span>
-            {opcuaStatus?.last_modified && (
-              <span className="text-muted-foreground text-xs">
-                ({new Date(opcuaStatus.last_modified).toLocaleTimeString('ru')})
-              </span>
-            )}
-          </div>
-
-          <div className="w-px h-4 bg-border" />
-
-          <div className="flex items-center gap-2">
-            {isConnected ? (
-              <Wifi className="w-4 h-4 text-green-500" />
-            ) : (
-              <WifiOff className="w-4 h-4 text-destructive" />
-            )}
-            <span>WS: {isConnected ? 'Онлайн' : 'Офлайн'}</span>
-            {lastMessage?.timestamp && (
-              <span className="text-muted-foreground text-xs">
-                ({new Date(lastMessage.timestamp).toLocaleTimeString('ru')})
-              </span>
-            )}
-          </div>
-
         </div>
       </CardContent>
     </Card>
@@ -811,11 +903,29 @@ function FiltersPanel({
   )
 }
 
+const formatLastModified = (isoString?: string) => {
+  if (!isoString) return '—';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+    return `${day}.${month}.${year}, ${hours}:${minutes}:${seconds}`;
+  } catch {
+    return isoString;
+  }
+};
 // Main
 export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(loadFilters)
   const { isFullscreen, setIsFullscreen } = useFullscreen()
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
+  const [isPathModalOpen, setIsPathModalOpen] = useState(false)
+  const [customPathInput, setCustomPathInput] = useState('')
   const [hasNewRows, setHasNewRows] = useState(false)
   const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false)
   const lastModifiedRef = useRef<string | null>(null)
@@ -824,8 +934,8 @@ export default function Dashboard() {
   
   // Таймер автовозврата в fullscreen
   const [autoReturnCountdown, setAutoReturnCountdown] = useState<number | null>(null)
-  const autoReturnTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const autoReturnTimerRef = useRef<any>(null)
+  const countdownIntervalRef = useRef<any>(null)
 
   // State for "Последние 100" toggle
   const [isLast100Mode, setIsLast100Mode] = useState(false);
@@ -839,8 +949,130 @@ export default function Dashboard() {
   const loadingOnly = !isLast100Mode;
 
   const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, loadingOnly)
-  const { data: fileStatus } = useFileStatus()
+  const { data: fileStatus, refetch: refetchFileStatus } = useFileStatus()
   const { data: matchedEvents, refetch: refetchMatched } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
+
+  // Excel files selector state
+  const [activeFile, setActiveFile] = useState<string>('');
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
+
+  // Load recent files from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('ekranchik_recent_files');
+      if (saved) {
+        setRecentFiles(JSON.parse(saved));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const addRecentFile = useCallback((filePath: string) => {
+    if (!filePath) return;
+    setRecentFiles((prev) => {
+      const filtered = prev.filter((p) => p !== filePath);
+      const updated = [filePath, ...filtered].slice(0, 5);
+      localStorage.setItem('ekranchik_recent_files', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const res = await dashboardApi.uploadExcelFile(file);
+      if (res.success) {
+        setActiveFile(res.active);
+        addRecentFile(res.active);
+        // Refetch queries
+        refetch();
+        refetchMatched();
+        refetchFileStatus();
+      }
+    } catch (err: any) {
+      console.error('Ошибка загрузки Excel-файла:', err);
+      alert(err.response?.data?.detail || err.message || 'Ошибка загрузки файла');
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // Fetch Excel files list initially
+  useEffect(() => {
+    dashboardApi.getExcelFiles()
+      .then((res) => {
+        if (res.success) {
+          setActiveFile(res.active);
+          if (res.active) {
+            addRecentFile(res.active);
+          }
+        }
+      })
+      .catch((err) => console.error('Ошибка загрузки активного Excel-файла:', err));
+  }, [refetchFileStatus, addRecentFile]);
+
+  const handleSelectExcelFile = async (filePath: string) => {
+    try {
+      const res = await dashboardApi.selectExcelFile(filePath);
+      if (res.success) {
+        setActiveFile(res.active);
+        addRecentFile(res.active);
+        // Refetch queries
+        refetch();
+        refetchMatched();
+        refetchFileStatus();
+      }
+    } catch (err: any) {
+      console.error('Ошибка выбора Excel-файла:', err);
+      alert(err.response?.data?.detail || err.message || 'Ошибка выбора файла');
+    }
+  };
+
+  const [now, setNow] = useState(new Date())
+
+  // Обновление текущего времени каждые 10 секунд для актуализации разницы времени
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date())
+    }, 10000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const isDataOutdated = useMemo(() => {
+    if (!fileStatus) return false
+    
+    // 1. Если бэкенд возвращает seconds_since_modified (безопасно к таймзонам)
+    if (fileStatus.seconds_since_modified !== undefined && fileStatus.seconds_since_modified !== null) {
+      return fileStatus.seconds_since_modified > 1800 // 30 минут
+    }
+    
+    // 2. Резервный расчет на клиенте
+    if (!fileStatus.last_modified) return false
+    const lastMod = new Date(fileStatus.last_modified).getTime()
+    if (isNaN(lastMod)) return false;
+    const diffMin = (now.getTime() - lastMod) / (1000 * 60)
+    return diffMin > 30
+  }, [fileStatus, now])
+
+  const renderWarning = () => {
+    if (!isDataOutdated) return null;
+    return (
+      <div className="bg-gradient-to-r from-red-600 via-rose-600 to-red-600 border border-red-500 text-white p-3 rounded-lg flex items-center justify-center gap-3 animate-pulse shadow-md">
+        <AlertTriangle className="w-5 h-5 text-white shrink-0 animate-bounce" />
+        <div className="text-xs md:text-sm text-center font-medium">
+          <strong>Внимание!</strong> Файл не сохранялся более 30 минут. 
+          Отображаемые данные могут быть неверными! 
+          (Последнее сохранение: {formatLastModified(fileStatus?.last_modified)}). 
+          Настройте сохранение файла либо выберите копию файла.
+        </div>
+      </div>
+    );
+  }
 
   const handleToggleLast100 = () => {
     if (isMockMode) setIsMockMode(false); // Disable mock mode if switching to Last 100
@@ -1135,7 +1367,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!isFullscreen && <StatusBar />}
+      {!isFullscreen && (
+        <StatusBar
+          activeFile={activeFile}
+          recentFiles={recentFiles}
+          onSelectFile={handleSelectExcelFile}
+          onOpenExplorer={() => fileInputRef.current?.click()}
+          onOpenPathModal={() => setIsPathModalOpen(true)}
+          isFetching={isFetching}
+        />
+      )}
 
       {!isFullscreen && (
         <FiltersPanel
@@ -1150,31 +1391,32 @@ export default function Dashboard() {
         />
       )}
 
-      <div className="space-y-1 relative">
+      <div className="space-y-4 relative">
         {filters.showLoading && (
-          <Card className={`border-8 ${isMockMode ? 'border-purple-500' : 'border-blue-500'} relative`}>
-            {hasNewRows && !isMockMode && (
-              <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
-                <span className="text-white text-3xl font-bold">Обновление</span>
-              </div>
-            )}
-            <CardContent className="p-0">
-              {isLoading && !isMockMode ? <TableSkeleton /> : (isMockMode ? mockData : data?.products)?.length ? (
-                <DataTable
-                  data={isMockMode ? mockData : (data?.products ?? [])}
-                  onPhotoClick={handlePhotoClick}
-                  isFullscreen={isFullscreen}
-                />
-              ) : (
-                <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
-                  :( {'='.repeat(12)} :( {'='.repeat(12)} :( {'='.repeat(12)} :( {'='.repeat(12)} :(
+          <div className="flex flex-col gap-0">
+            {renderWarning()}
+            <Card className={`border-8 ${isMockMode ? 'border-purple-500' : 'border-blue-500'} relative`}>
+              {hasNewRows && !isMockMode && (
+                <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
+                  <span className="text-white text-3xl font-bold">Обновление</span>
                 </div>
               )}
-            </CardContent>
-          </Card>
+              <CardContent className="p-0">
+                {isLoading && !isMockMode ? <TableSkeleton /> : (isMockMode ? mockData : data?.products)?.length ? (
+                  <DataTable
+                    data={isMockMode ? mockData : (data?.products ?? [])}
+                    onPhotoClick={handlePhotoClick}
+                    isFullscreen={isFullscreen}
+                  />
+                ) : (
+                  <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
+                    :( {'='.repeat(12)} :( {'='.repeat(12)} :( {'='.repeat(12)} :( {'='.repeat(12)} :(
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         )}
-
-
 
         {filters.showRealtime && (
           <>
@@ -1189,45 +1431,48 @@ export default function Dashboard() {
             {/* Forecast Row - Outside the green border */}
             {filters.showForecast && <BathForecast />}
 
-            <Card className="border-8 border-green-500 relative">
-              {hasNewUnloadEvents && (
-                <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
-                  <span className="text-white text-3xl font-bold">Обновление</span>
-                </div>
-              )}
-              <CardContent className="p-0">
-                {matchedEvents && matchedEvents.length > 0 ? (
-                  <DataTable
-                    data={matchedEvents.map(e => ({
-                      number: String(e.hanger),
-                      date: e.exit_date,
-                      time: e.exit_time,
-                      client: e.client,
-                      profile: e.profile,
-                      profiles_info: e.profiles_info,
-                      color: e.color,
-                      lamels_qty: e.lamels_qty,
-                      kpz_number: e.kpz_number,
-                      material_type: e.material_type,
-                      entry_date: e.entry_date,
-                      entry_time: e.entry_time,
-                      exit_date: e.exit_date,
-                      exit_time: e.exit_time,
-                      current_bath: e.current_bath,
-                      bath_entry_time: e.bath_entry_time,
-                      bath_processing_time: e.bath_processing_time,
-                    }))}
-                    onPhotoClick={handlePhotoClick}
-                    isFullscreen={isFullscreen}
-                    showEntryExit
-                  />
-                ) : (
-                  <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
-                    :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :)
+            <div className="flex flex-col gap-0">
+              {renderWarning()}
+              <Card className="border-8 border-green-500 relative">
+                {hasNewUnloadEvents && (
+                  <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
+                    <span className="text-white text-3xl font-bold">Обновление</span>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+                <CardContent className="p-0">
+                  {matchedEvents && matchedEvents.length > 0 ? (
+                    <DataTable
+                      data={matchedEvents.map(e => ({
+                        number: String(e.hanger),
+                        date: e.exit_date,
+                        time: e.exit_time,
+                        client: e.client,
+                        profile: e.profile,
+                        profiles_info: e.profiles_info,
+                        color: e.color,
+                        lamels_qty: e.lamels_qty,
+                        kpz_number: e.kpz_number,
+                        material_type: e.material_type,
+                        entry_date: e.entry_date,
+                        entry_time: e.entry_time,
+                        exit_date: e.exit_date,
+                        exit_time: e.exit_time,
+                        current_bath: e.current_bath,
+                        bath_entry_time: e.bath_entry_time,
+                        bath_processing_time: e.bath_processing_time,
+                      }))}
+                      onPhotoClick={handlePhotoClick}
+                      isFullscreen={isFullscreen}
+                      showEntryExit
+                    />
+                  ) : (
+                    <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
+                      :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :)
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </>
         )}
 
@@ -1239,6 +1484,89 @@ export default function Dashboard() {
         onClose={() => setPhotoModal(null)}
         photoUrl={photoModal?.url || null}
         profileName={photoModal?.name || ''}
+      />
+
+      <Dialog open={isPathModalOpen} onOpenChange={(open) => { if (!open) { setIsPathModalOpen(false); setCustomPathInput(''); } }}>
+        <DialogContent className="max-w-xl bg-background border-border text-foreground p-6 rounded-lg shadow-2xl flex flex-col gap-4">
+          <DialogHeader className="space-y-1.5">
+            <DialogTitle className="text-xl font-bold flex items-center gap-2 text-emerald-600">
+              <FileSpreadsheet className="w-5 h-5" />
+              Ввод пути к Excel файлу
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground text-xs">
+              Укажите полный путь к Excel-файлу на сервере для его загрузки и активации в системе.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="custom-path-input" className="text-xs text-slate-700 font-medium">Путь к файлу:</label>
+              <Input
+                id="custom-path-input"
+                type="text"
+                placeholder="Например: C:\testdata\Учет КПЗ 2026.xlsm"
+                value={customPathInput}
+                onChange={(e) => setCustomPathInput(e.target.value)}
+                className="h-8 text-xs bg-background border-input text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
+
+            {/* Недавние введенные пути */}
+            {recentFiles.length > 0 && (
+              <div className="space-y-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">История путей:</span>
+                <div className="flex flex-col gap-1">
+                  {recentFiles.filter(Boolean).map((path, idx) => (
+                    <button
+                      key={`modal-recent-path-${path}-${idx}`}
+                      type="button"
+                      onClick={() => setCustomPathInput(path)}
+                      className="text-left text-xs text-slate-500 hover:text-emerald-600 truncate hover:underline focus:outline-none max-w-full font-mono transition-colors"
+                      title="Кликните, чтобы вставить этот путь"
+                    >
+                      {path}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-3 mt-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsPathModalOpen(false);
+                setCustomPathInput('');
+              }}
+              className="h-8 text-xs font-medium px-4"
+            >
+              Отмена
+            </Button>
+            <Button
+              onClick={async () => {
+                const cleaned = customPathInput.trim().replace(/^["']|["']$/g, '');
+                if (cleaned) {
+                  await handleSelectExcelFile(cleaned);
+                  setIsPathModalOpen(false);
+                  setCustomPathInput('');
+                }
+              }}
+              className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4"
+              disabled={isFetching || !customPathInput.trim()}
+            >
+              Применить
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleUploadFile}
+        accept=".xlsx,.xls,.xlsm"
+        className="hidden"
       />
     </div>
   )

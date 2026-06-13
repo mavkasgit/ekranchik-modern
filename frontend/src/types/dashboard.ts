@@ -51,6 +51,7 @@ export interface FileStatus {
   file_name?: string
   status_text: string
   error?: string
+  seconds_since_modified?: number
 }
 
 export interface WebSocketMessage {
@@ -58,3 +59,28 @@ export interface WebSocketMessage {
   payload: Record<string, unknown>
   timestamp: string
 }
+
+export interface ExcelFileInfo {
+  name: string
+  path: string
+  size_bytes: number
+  size_formatted: string
+  last_modified: string
+  is_dir?: boolean
+}
+
+export interface ExcelFilesResponse {
+  success: boolean
+  files: ExcelFileInfo[]
+  active: string
+  current_directory: string
+  parent_directory?: string | null
+  error?: string
+}
+
+export interface ExcelSelectResponse {
+  success: boolean
+  active: string
+}
+
+
