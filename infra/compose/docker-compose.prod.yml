@@ -1,0 +1,62 @@
+name: ekranchik-prod
+
+networks:
+  ekranchik-prod-network:
+    driver: bridge
+
+services:
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    container_name: ekranchik-backend-prod
+    env_file:
+      - ../../backend/.env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/static/ekranchik.db
+      - STATIC_DIR=/app/static
+      - IMAGES_DIR=/app/static/images
+      - ENVIRONMENT=production
+      - DEBUG=false
+    expose:
+      - "8000"
+    volumes:
+      - ../../static:/app/static
+      - ../../testdata:/app/testdata
+      # Если сетевой Excel смонтирован на хосте, раскомментируйте ниже:
+      # - /mnt/ktm-disk:/app/excel:ro
+    networks:
+      - ekranchik-prod-network
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    container_name: ekranchik-frontend-prod
+    expose:
+      - "5173"
+    depends_on:
+      - backend
+    networks:
+      - ekranchik-prod-network
+    restart: always
+
+  nginx:
+    image: nginx:alpine
+    container_name: ekranchik-nginx-prod
+    ports:
+      - "${PORT:-8082}:80"
+    volumes:
+      - ../nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - ekranchik-prod-network
+    restart: always
