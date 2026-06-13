@@ -182,6 +182,64 @@ class KioskDashboard:
         
         # Запускаем поток для проверки сервера и загрузки дашборда
         threading.Thread(target=self._wait_and_load_dashboard, daemon=True).start()
+
+    def _start_periodic_health_check(self):
+        """Запуск периодической проверки бэкенда."""
+        threading.Thread(target=self._periodic_health_check_loop, daemon=True).start()
+
+    def _periodic_health_check_loop(self):
+        """Фоновый цикл проверки доступности бэкенда."""
+        import urllib.request
+        import urllib.error
+        
+        is_server_down = False
+        check_interval = 10  # Проверяем каждые 10 секунд
+        
+        while True:
+            if not self.window:
+                break
+                
+            time.sleep(check_interval)
+            
+            if self.is_idle_mode:
+                continue
+                
+            try:
+                # Пингуем эндпоинт здоровья
+                urllib.request.urlopen(f"{self.url.rstrip('/')}/health", timeout=3)
+                
+                # Если бэкенд поднялся после сбоя
+                if is_server_down:
+                    print("[INFO] Связь с бэкендом восстановлена. Перезагрузка...")
+                    is_server_down = False
+                    self.window.load_url(self.original_url)
+                    
+            except (urllib.error.URLError, ConnectionRefusedError, Exception) as e:
+                if not is_server_down:
+                    print(f"[WARNING] Потеряна связь с бэкендом: {e}")
+                    is_server_down = True
+                    
+                    # Загружаем страницу ожидания
+                    waiting_html = Path(__file__).parent / "waiting_server.html"
+                    if waiting_html.exists():
+                        self.window.load_url(waiting_html.as_uri())
+                    else:
+                        self.window.load_html(f"""
+                        <html>
+                        <head>
+                            <meta charset="utf-8">
+                            <style>
+                                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: #0f172a; color: #f8fafc; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+                                h1 {{ color: #f59e0b; }}
+                                p {{ color: #94a3b8; }}
+                            </style>
+                        </head>
+                        <body>
+                            <h1>Связь потеряна</h1>
+                            <p>Ожидание подключения к бэкенду ({self.url})...</p>
+                        </body>
+                        </html>
+                        """)
     
     def _wait_and_load_dashboard(self):
         """Ждет пока сервер запустится и загружает дашборд."""
@@ -193,6 +251,7 @@ class KioskDashboard:
         
         print(f"[INFO] Ожидание сервера {self.url}...")
         
+        last_error = "Превышено время ожидания"
         while time.time() - start_time < max_wait:
             try:
                 urllib.request.urlopen(self.url, timeout=2)
@@ -200,12 +259,38 @@ class KioskDashboard:
                 print(f"[INFO] Сервер доступен! Загружаю дашборд...")
                 if self.window:
                     self.window.load_url(self.url)
+                    # Запускаем фоновую проверку здоровья
+                    self._start_periodic_health_check()
                 return
             except (urllib.error.URLError, ConnectionRefusedError, Exception) as e:
+                last_error = str(e)
                 time.sleep(2)  # Проверяем каждые 2 секунды
         
         # Если сервер не запустился за 5 минут, показываем ошибку
         print("[ERROR] Сервер не запустился за 5 минут")
+        if self.window:
+            error_html = f"""
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; color: #f8fafc; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+                    h1 {{ color: #ef4444; margin-bottom: 10px; }}
+                    p {{ color: #94a3b8; font-size: 1.1rem; margin-bottom: 20px; }}
+                    .error-box {{ background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; font-family: monospace; max-width: 80%; word-break: break-all; margin-bottom: 25px; color: #e2e8f0; }}
+                    button {{ background-color: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-size: 1rem; cursor: pointer; transition: background-color 0.2s; }}
+                    button:hover {{ background-color: #1d4ed8; }}
+                </style>
+            </head>
+            <body>
+                <h1>Ошибка подключения</h1>
+                <p>Не удалось подключиться к серверу бэкенда за 5 минут.</p>
+                <div class="error-box">URL: {self.url}<br>Детали ошибки: {last_error}</div>
+                <button onclick="location.reload()">Повторить попытку</button>
+            </body>
+            </html>
+            """
+            self.window.load_html(error_html)
     
     def toggle_fullscreen(self):
         """Переключение полноэкранного режима."""
@@ -408,6 +493,17 @@ class KioskLauncher:
         import tkinter as tk
         self.tk = tk
         
+        # Dark Slate Theme Colors
+        self.bg_dark = "#0f172a"      # slate-900
+        self.bg_card = "#1e293b"      # slate-800
+        self.fg_light = "#f8fafc"     # slate-50
+        self.fg_muted = "#94a3b8"     # slate-400
+        self.accent_blue = "#3b82f6"   # blue-500
+        self.accent_blue_hover = "#2563eb" # blue-600
+        self.accent_green = "#10b981"  # emerald-500
+        self.accent_green_hover = "#059669" # emerald-600
+        self.border_color = "#334155"  # slate-700
+        
         self.result = None
         self.monitors = get_monitors()
         self.config = load_kiosk_config()
@@ -415,6 +511,7 @@ class KioskLauncher:
         self.root = tk.Tk()
         self.root.title("Ekranchik Kiosk - Настройки")
         self.root.resizable(False, False)
+        self.root.configure(bg=self.bg_dark)
         
         if ICON_FILE.exists():
             try:
@@ -422,8 +519,8 @@ class KioskLauncher:
             except Exception:
                 pass
         
-        window_width = 500
-        window_height = 320 + len(self.monitors) * 45
+        window_width = 520
+        window_height = 340 + len(self.monitors) * 45
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -435,32 +532,86 @@ class KioskLauncher:
     def _create_widgets(self):
         tk = self.tk
         
+        # Helper to bind hover events to buttons
+        def bind_hover(widget, hover_bg, normal_bg, hover_fg=None, normal_fg=None):
+            def on_enter(e):
+                widget.configure(bg=hover_bg)
+                if hover_fg:
+                    widget.configure(fg=hover_fg)
+            def on_leave(e):
+                widget.configure(bg=normal_bg)
+                if normal_fg:
+                    widget.configure(fg=normal_fg)
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+
         # === URL секция ===
-        url_frame = tk.LabelFrame(self.root, text="URL дашборда", font=("Segoe UI", 11))
+        url_frame = tk.LabelFrame(
+            self.root, 
+            text=" URL дашборда ", 
+            font=("Segoe UI", 11, "bold"), 
+            bg=self.bg_dark, 
+            fg=self.fg_light, 
+            bd=1, 
+            relief=tk.SOLID,
+            highlightbackground=self.border_color
+        )
         url_frame.pack(fill=tk.X, padx=20, pady=(15, 10))
         
         self.url_var = tk.StringVar(value=self.config.get("url", "http://localhost:5173"))
-        url_entry = tk.Entry(url_frame, textvariable=self.url_var, font=("Segoe UI", 11), width=50)
-        url_entry.pack(fill=tk.X, padx=10, pady=10)
+        url_entry = tk.Entry(
+            url_frame, 
+            textvariable=self.url_var, 
+            font=("Segoe UI", 11), 
+            bg=self.bg_card, 
+            fg=self.fg_light, 
+            insertbackground=self.fg_light,
+            bd=0,
+            highlightthickness=1, 
+            highlightcolor=self.accent_blue, 
+            highlightbackground=self.border_color
+        )
+        url_entry.pack(fill=tk.X, padx=15, pady=12, ipady=4)
         
-        url_buttons_frame = tk.Frame(url_frame)
-        url_buttons_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        url_buttons_frame = tk.Frame(url_frame, bg=self.bg_dark)
+        url_buttons_frame.pack(fill=tk.X, padx=15, pady=(0, 12))
         
-        tk.Button(url_buttons_frame, text="localhost:5173", 
-                  command=lambda: self.url_var.set("http://localhost:5173"),
-                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
-        tk.Button(url_buttons_frame, text="localhost:3000", 
-                  command=lambda: self.url_var.set("http://localhost:3000"),
-                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
-        tk.Button(url_buttons_frame, text="localhost:80", 
-                  command=lambda: self.url_var.set("http://localhost"),
-                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
-        tk.Button(url_buttons_frame, text="172.17.11.8:5173", 
-                  command=lambda: self.url_var.set("http://172.17.11.8:5173"),
-                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=2)
+        quick_urls = [
+            ("localhost:5173", "http://localhost:5173"),
+            ("localhost:3000", "http://localhost:3000"),
+            ("localhost:80", "http://localhost"),
+            ("172.17.11.8:5173", "http://172.17.11.8:5173")
+        ]
+        
+        for text, target_url in quick_urls:
+            btn = tk.Button(
+                url_buttons_frame, 
+                text=text, 
+                command=lambda u=target_url: self.url_var.set(u),
+                font=("Segoe UI", 9),
+                bg=self.bg_card,
+                fg=self.fg_muted,
+                activebackground=self.accent_blue,
+                activeforeground=self.fg_light,
+                bd=0,
+                padx=8,
+                pady=3,
+                cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=3)
+            bind_hover(btn, self.accent_blue, self.bg_card, self.fg_light, self.fg_muted)
         
         # === Монитор секция ===
-        monitor_frame = tk.LabelFrame(self.root, text="Монитор", font=("Segoe UI", 11))
+        monitor_frame = tk.LabelFrame(
+            self.root, 
+            text=" Выберите монитор для киоска ", 
+            font=("Segoe UI", 11, "bold"), 
+            bg=self.bg_dark, 
+            fg=self.fg_light, 
+            bd=1, 
+            relief=tk.SOLID,
+            highlightbackground=self.border_color
+        )
         monitor_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
         saved_monitor = self.config.get("monitor", 1)
@@ -470,8 +621,8 @@ class KioskLauncher:
         self.monitor_var = tk.IntVar(value=saved_monitor)
         
         for i, mon in enumerate(self.monitors):
-            primary_text = " ★" if mon.get('is_primary') else ""
-            text = f"Монитор {i + 1}: {mon['width']}x{mon['height']}{primary_text} ({mon['name']})"
+            primary_text = " ★ (Основной)" if mon.get('is_primary') else ""
+            text = f" Монитор {i + 1}: {mon['width']}x{mon['height']}{primary_text} ({mon['name']})"
             
             rb = tk.Radiobutton(
                 monitor_frame, 
@@ -480,12 +631,27 @@ class KioskLauncher:
                 value=i,
                 font=("Segoe UI", 10),
                 anchor="w",
-                padx=10
+                padx=15,
+                bg=self.bg_dark,
+                fg=self.fg_light,
+                selectcolor=self.bg_card,
+                activebackground=self.bg_dark,
+                activeforeground=self.fg_light,
+                cursor="hand2"
             )
-            rb.pack(fill=tk.X, pady=3)
+            rb.pack(fill=tk.X, pady=4)
         
         # === Опции секция ===
-        options_frame = tk.LabelFrame(self.root, text="Опции", font=("Segoe UI", 11))
+        options_frame = tk.LabelFrame(
+            self.root, 
+            text=" Дополнительно ", 
+            font=("Segoe UI", 11, "bold"), 
+            bg=self.bg_dark, 
+            fg=self.fg_light, 
+            bd=1, 
+            relief=tk.SOLID,
+            highlightbackground=self.border_color
+        )
         options_frame.pack(fill=tk.X, padx=20, pady=10)
         
         self.auto_launch_var = tk.BooleanVar(value=self.config.get("auto_launch_on_second_monitor", False))
@@ -495,25 +661,36 @@ class KioskLauncher:
             variable=self.auto_launch_var,
             font=("Segoe UI", 10),
             anchor="w",
-            padx=10
+            padx=15,
+            bg=self.bg_dark,
+            fg=self.fg_light,
+            selectcolor=self.bg_card,
+            activebackground=self.bg_dark,
+            activeforeground=self.fg_light,
+            cursor="hand2"
         )
         auto_launch_cb.pack(fill=tk.X, pady=8)
         
         # === Кнопки ===
-        btn_frame = tk.Frame(self.root)
+        btn_frame = tk.Frame(self.root, bg=self.bg_dark)
         btn_frame.pack(pady=15)
         
         start_btn = tk.Button(
             btn_frame, 
-            text="▶ Запустить",
+            text="▶ Запустить киоск",
             command=self._on_start,
             font=("Segoe UI", 12, "bold"),
-            width=14,
+            width=18,
             height=2,
-            bg="#2E7D32",
-            fg="white"
+            bg=self.accent_green,
+            fg=self.fg_light,
+            activebackground=self.accent_green_hover,
+            activeforeground=self.fg_light,
+            bd=0,
+            cursor="hand2"
         )
         start_btn.pack(side=tk.LEFT, padx=10)
+        bind_hover(start_btn, self.accent_green_hover, self.accent_green)
         
         cancel_btn = tk.Button(
             btn_frame,
@@ -521,9 +698,16 @@ class KioskLauncher:
             command=self._on_cancel,
             font=("Segoe UI", 11),
             width=12,
-            height=2
+            height=2,
+            bg=self.bg_card,
+            fg=self.fg_light,
+            activebackground=self.border_color,
+            activeforeground=self.fg_light,
+            bd=0,
+            cursor="hand2"
         )
         cancel_btn.pack(side=tk.LEFT, padx=10)
+        bind_hover(cancel_btn, self.border_color, self.bg_card)
     
     def _on_start(self):
         url = self.url_var.get().strip()
