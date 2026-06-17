@@ -29,9 +29,13 @@ htmlcov/
 *.swo
 
 # Environment
-.env
+# .env
 .env.local
 *.local
+
+# Codegraph & App Settings
+.codegraph/
+static/app_settings.json
 
 # Database
 # *.db

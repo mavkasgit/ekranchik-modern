@@ -25,8 +25,7 @@ services:
     volumes:
       - ../../static:/app/static
       - ../../testdata:/app/testdata
-      # Если сетевой Excel смонтирован на хосте, раскомментируйте ниже:
-      # - /mnt/ktm-disk:/app/excel:ro
+      - /mnt/ktm-disk:/app/excel:ro
     networks:
       - ekranchik-prod-network
     restart: always
