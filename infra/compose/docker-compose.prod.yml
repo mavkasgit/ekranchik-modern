@@ -8,7 +8,9 @@ networks:
 
 services:
   backend:
-    image: ghcr.io/mavkasgit/ekranchik-backend:latest
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
     container_name: ekranchik-backend-prod
     env_file:
       - ../../backend/.env
@@ -35,7 +37,9 @@ services:
       retries: 3
 
   frontend:
-    image: ghcr.io/mavkasgit/ekranchik-frontend:latest
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
     container_name: ekranchik-frontend-prod
     expose:
       - "5173"
