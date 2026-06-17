@@ -53,8 +53,8 @@ interface Filters {
 }
 
 const defaultFilters: Filters = {
-  loadingLimit: 8,
-  realtimeLimit: 8,
+  loadingLimit: 6,
+  realtimeLimit: 15,
   showLoading: true,
   showRealtime: true,
   showForecast: true,
