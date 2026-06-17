@@ -578,6 +578,7 @@ class KioskLauncher:
         
         quick_urls = [
             ("localhost:5173", "http://localhost:5173"),
+            ("localhost:8083 (Prod)", "http://localhost:8083"),
             ("localhost:3000", "http://localhost:3000"),
             ("localhost:80", "http://localhost"),
             ("172.17.11.8:5173", "http://172.17.11.8:5173")
