@@ -70,7 +70,7 @@ class SimulatorConfig:
                 # BUGFIX: Если в последовательности есть 33 (которая не должна там быть по ТЗ пользователя), 
                 # сбрасываем на дефолтную рабочую последовательность
                 if 33 in self.bath_sequence:
-                    logger.warning("⚠️ Обнаружена некорректная ванна 33 в конфиге. Сброс последовательности на стандартную.")
+                    logger.warning("[WARNING] Обнаружена некорректная ванна 33 в конфиге. Сброс последовательности на стандартную.")
                     self.bath_sequence = [3, 5, 7, 10, 17, 18, 19, 20, 31, 34]
             return True
         except FileNotFoundError:
@@ -342,7 +342,7 @@ class ManualHangerWindow:
             val = self.spawn_interval_var.get()
             if val > 0:
                 self.config.hanger_spawn_interval = val
-                logger.info(f"⚙️ Auto-spawn interval updated to {val}s")
+                logger.info(f"[CONFIG] Auto-spawn interval updated to {val}s")
         except:
             pass
 
@@ -485,7 +485,7 @@ class ManualHangerWindow:
                 # или просто пометим его как завершенный.
                 # Самый простой способ - форсировать индекс до конца.
                 self.hangers[h_id].current_bath_index = len(self.hangers[h_id].bath_sequence) + 1
-                logger.warning(f"🗑️ Hanger {h_id} marked for deletion via GUI")
+                logger.warning(f"[DELETE] Hanger {h_id} marked for deletion via GUI")
 
     def _on_launch(self):
         try:
@@ -556,7 +556,7 @@ class ManualHangerWindow:
         self.config.manual_recipe = recipe
         self.config.manual_transition_time = self.transition_var.get()
         self.config.save()
-        logger.info("💾 Рецепт сохранен")
+        logger.info("[SAVE] Рецепт сохранен")
 
     def _load_recipe(self):
         """Загрузить сохраненный рецепт из конфига"""
@@ -572,7 +572,7 @@ class ManualHangerWindow:
             self.time_entries[i][1].set(item.get('time', 30))
             self.bath_checkboxes[i][1].set(item.get('active', True))
             self._update_row_active(i)
-        logger.info("✅ Рецепт загружен")
+        logger.info("[OK] Рецепт загружен")
 
 class HangerState:
     """Состояние подвеса в системе"""
@@ -610,7 +610,7 @@ class HangerState:
     def adjust_time(self, seconds: int):
         """Изменить время начала состояния, чтобы добавить или убавить оставшееся время"""
         self.state_start_time = self.state_start_time - timedelta(seconds=seconds)
-        logger.info(f"⏳ Hanger {self.hanger_id}: Adjusted time by {seconds}s")
+        logger.info(f"[TIME] Hanger {self.hanger_id}: Adjusted time by {seconds}s")
 
     def set_duration(self, seconds: int):
         """Установить новую длительность текущего состояния"""
@@ -618,7 +618,7 @@ class HangerState:
             self.time_in_bath = seconds
         else:
             self.transition_time = seconds
-        logger.info(f"⏱️ Hanger {self.hanger_id}: Set new duration {seconds}s for {self.state}")
+        logger.info(f"[TIME] Hanger {self.hanger_id}: Set new duration {seconds}s for {self.state}")
 
     def force_next_state(self):
         """Форсировать переход к следующему состоянию"""
@@ -628,12 +628,12 @@ class HangerState:
         if self.state == 'in_bath':
             self.state = 'transitioning'
             self.state_start_time = datetime.now()
-            logger.info(f"⏭ Hanger {self.hanger_id}: Forced transition from bath {self.current_bath}")
+            logger.info(f"[SKIP] Hanger {self.hanger_id}: Forced transition from bath {self.current_bath}")
         elif self.state == 'transitioning':
             self.current_bath_index += 1
             self.state = 'in_bath'
             self.state_start_time = datetime.now()
-            logger.info(f"⏭ Hanger {self.hanger_id}: Forced arrival at next bath")
+            logger.info(f"[SKIP] Hanger {self.hanger_id}: Forced arrival at next bath")
 
     def update(self) -> bool:
         """Обновить состояние подвеса. Возвращает True если нужно перейти к следующей ванне"""
@@ -679,7 +679,7 @@ class HangerStateManual(HangerState):
                 self.time_in_bath_list[self.current_bath_index] = seconds
         else:
             self.transition_time = seconds
-        logger.info(f"⏱️ Hanger {self.hanger_id} (Manual): Set new duration {seconds}s for {self.state}")
+        logger.info(f"[TIME] Hanger {self.hanger_id} (Manual): Set new duration {seconds}s for {self.state}")
     
     def update(self) -> bool:
         """Обновить состояние подвеса с учетом разных времен"""
@@ -814,13 +814,13 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
     gui_thread = threading.Thread(target=manual_window.show, daemon=True)
     gui_thread.start()
     
-    logger.info("🎨 Unified Control Panel GUI started")
+    logger.info("[GUI] Unified Control Panel GUI started")
     
     try:
         while True:
             # Проверяем флаг выхода
             if manual_window and manual_window.should_exit:
-                logger.info("🛑 Exiting from manual mode")
+                logger.info("[STOP] Exiting from manual mode")
                 break
             
             current_time = datetime.now()
@@ -862,7 +862,7 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
                         hanger = HangerStateManual(h_id, baths, times, trans)
 
                     hangers[h_id] = hanger
-                    logger.info(f"🚀 (Auto) Spawned hanger {h_id}, using GUI recipe: {baths}")
+                    logger.info(f"[START] (Auto) Spawned hanger {h_id}, using GUI recipe: {baths}")
                     last_spawn_time = current_time
             
             # 1b. Manual mode: check for manual launches from queue
@@ -881,7 +881,7 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
                     transition_time
                 )
                 hangers[hanger_id] = hanger
-                logger.info(f"🎯 Manual launch: Hanger {hanger_id}, baths {bath_sequence}, times {time_in_bath_list}s")
+                logger.info(f"[LAUNCH] Manual launch: Hanger {hanger_id}, baths {bath_sequence}, times {time_in_bath_list}s")
             
             # 2. Update all hangers
             finished_hangers = []
@@ -890,7 +890,7 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
                 
                 if hanger.is_finished:
                     finished_hangers.append(hanger_id)
-                    logger.info(f"✅ Hanger {hanger_id} completed the route")
+                    logger.info(f"[OK] Hanger {hanger_id} completed the route")
             
             # 3. Remove finished hangers
             for hanger_id in finished_hangers:
@@ -900,10 +900,10 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
             for bath_num in range(1, 41):
                 await bath_vars[bath_num]['InUse'].write_value(False)
                 await bath_vars[bath_num]['Free'].write_value(True)
-                await bath_vars[bath_num]['Pallete'].write_value(ua.UInt32(0))
-                await bath_vars[bath_num]['InTime'].write_value(ua.UInt32(0))
-                await bath_vars[bath_num]['OutTime'].write_value(ua.UInt32(0))
-                await bath_vars[bath_num]['dTime'].write_value(ua.UInt32(0))
+                await bath_vars[bath_num]['Pallete'].write_value(ua.Variant(0, ua.VariantType.UInt32))
+                await bath_vars[bath_num]['InTime'].write_value(ua.Variant(0, ua.VariantType.UInt32))
+                await bath_vars[bath_num]['OutTime'].write_value(ua.Variant(0, ua.VariantType.UInt32))
+                await bath_vars[bath_num]['dTime'].write_value(ua.Variant(0, ua.VariantType.UInt32))
             
             # 5. Update baths with current hangers
             for hanger_id, hanger in hangers.items():
@@ -914,17 +914,17 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
                     current_pallete = await bath_vars[bath_num]['Pallete'].read_value()
                     if current_pallete != 0:
                         # Bath is already occupied, skip this hanger (shouldn't happen in normal operation)
-                        logger.warning(f"⚠️ Bath {bath_num} already occupied by hanger {current_pallete}, skipping hanger {hanger_id}")
+                        logger.warning(f"[WARNING] Bath {bath_num} already occupied by hanger {current_pallete}, skipping hanger {hanger_id}")
                         continue
                     
                     elapsed = hanger.elapsed_time
                     
                     await bath_vars[bath_num]['InUse'].write_value(True)
                     await bath_vars[bath_num]['Free'].write_value(False)
-                    await bath_vars[bath_num]['Pallete'].write_value(ua.UInt32(hanger.hanger_id))
-                    await bath_vars[bath_num]['InTime'].write_value(ua.UInt32(elapsed))
-                    await bath_vars[bath_num]['OutTime'].write_value(ua.UInt32(hanger.get_bath_time()))
-                    await bath_vars[bath_num]['dTime'].write_value(ua.UInt32(hanger.get_bath_time()))
+                    await bath_vars[bath_num]['Pallete'].write_value(ua.Variant(hanger.hanger_id, ua.VariantType.UInt32))
+                    await bath_vars[bath_num]['InTime'].write_value(ua.Variant(elapsed, ua.VariantType.UInt32))
+                    await bath_vars[bath_num]['OutTime'].write_value(ua.Variant(hanger.get_bath_time(), ua.VariantType.UInt32))
+                    await bath_vars[bath_num]['dTime'].write_value(ua.Variant(hanger.get_bath_time(), ua.VariantType.UInt32))
             
             # 6. Log status every 10 seconds
             if int(current_time.timestamp()) % 10 == 0:
@@ -932,7 +932,7 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
                                  for h in hangers.values() if h.state == 'in_bath']
                 transitioning = [f"{h.hanger_id}→" 
                                 for h in hangers.values() if h.state == 'transitioning']
-                logger.info(f"📊 Active: {len(hangers)} hangers | In baths: {active_hangers} | Moving: {transitioning}")
+                logger.info(f"[STATUS] Active: {len(hangers)} hangers | In baths: {active_hangers} | Moving: {transitioning}")
             
             await asyncio.sleep(1)  # Update every second
             
@@ -949,7 +949,7 @@ if __name__ == "__main__":
     
     # Run simulator with configuration
     try:
-        logger.info("🚀 Starting unified simulator with GUI")
+        logger.info("[START] Starting unified simulator with GUI")
         asyncio.run(run_opcua_server_simulation(config))
     except KeyboardInterrupt:
         logger.info("Simulator stopped by user (Ctrl+C)")
