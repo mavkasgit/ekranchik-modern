@@ -53,8 +53,8 @@ interface Filters {
 }
 
 const defaultFilters: Filters = {
-  loadingLimit: 8,
-  realtimeLimit: 8,
+  loadingLimit: 6,
+  realtimeLimit: 15,
   showLoading: true,
   showRealtime: true,
   showForecast: true,
@@ -396,6 +396,10 @@ function PhotoModal({
 // Helper to build photo URL (paths in DB already include /static/)
 function getPhotoUrl(path: string | null | undefined, cacheBuster?: string | number): string | null {
   if (!path) return null
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    const bust = cacheBuster ? `${cacheBuster}_${Date.now()}` : Date.now()
+    return `${path}?v=${bust}`
+  }
   // Paths in DB can be like "/static/images/..." or "images/..."
   const base = path.startsWith('/') ? path : `/static/${path}`
   // Use both updated_at and current timestamp to bust browser cache
@@ -1065,10 +1069,9 @@ export default function Dashboard() {
       <div className="bg-gradient-to-r from-red-600 via-rose-600 to-red-600 border border-red-500 text-white p-3 rounded-lg flex items-center justify-center gap-3 animate-pulse shadow-md">
         <AlertTriangle className="w-5 h-5 text-white shrink-0 animate-bounce" />
         <div className="text-xs md:text-sm text-center font-medium">
-          <strong>Внимание!</strong> Файл не сохранялся более 30 минут. 
-          Отображаемые данные могут быть неверными! 
-          (Последнее сохранение: {formatLastModified(fileStatus?.last_modified)}). 
-          Настройте сохранение файла либо выберите копию файла.
+          <strong>Внимание!</strong> Файл не сохранялся более 30 минут. Отображаемые данные могут быть неверными!
+          <br />
+          (Последнее сохранение: {formatLastModified(fileStatus?.last_modified)}). Настройте сохранение файла либо выберите копию файла.
         </div>
       </div>
     );
@@ -1300,9 +1303,8 @@ export default function Dashboard() {
     setIsFullscreen(!isFullscreen)
   }, [isFullscreen, setIsFullscreen])
   
-  // Обработчик применения фильтров - сбрасывает таймер автовозврата
-  const handleApplyFilters = useCallback(() => {
-    // Сбрасываем таймер
+  // Отмена автовозврата в полноэкранный режим
+  const handleCancelAutoReturn = useCallback(() => {
     if (autoReturnTimerRef.current) {
       clearTimeout(autoReturnTimerRef.current)
       autoReturnTimerRef.current = null
@@ -1312,10 +1314,14 @@ export default function Dashboard() {
       countdownIntervalRef.current = null
     }
     setAutoReturnCountdown(null)
-    
+  }, [])
+
+  // Обработчик применения фильтров - сбрасывает таймер автовозврата
+  const handleApplyFilters = useCallback(() => {
+    handleCancelAutoReturn()
     // Применяем фильтры
     refetch()
-  }, [refetch])
+  }, [handleCancelAutoReturn, refetch])
 
   const handlePhotoClick = useCallback((url: string, name: string) => {
     setPhotoModal({ url, name })
@@ -1354,13 +1360,22 @@ export default function Dashboard() {
       {!isFullscreen && autoReturnCountdown !== null && (
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
           <Card className="bg-orange-500 border-orange-600 shadow-lg">
-            <CardContent className="py-3 px-6">
-              <div className="flex items-center gap-3 text-white">
+            <CardContent className="py-3 pl-6 pr-4">
+              <div className="flex items-center gap-4 text-white">
                 <div className="text-2xl font-bold">{autoReturnCountdown}</div>
-                <div className="text-sm">
+                <div className="text-sm flex-grow">
                   <div className="font-semibold">Автовозврат в полноэкранный режим</div>
                   <div className="text-xs opacity-90">Нажмите "Применить" чтобы остаться</div>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleCancelAutoReturn}
+                  className="h-8 w-8 text-white hover:bg-orange-600 hover:text-white rounded-full flex items-center justify-center shrink-0"
+                  title="Отменить автовозврат"
+                >
+                  <X className="w-5 h-5" />
+                </Button>
               </div>
             </CardContent>
           </Card>
