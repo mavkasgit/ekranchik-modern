@@ -80,6 +80,7 @@ Thumbs.db
 # Active Excel state files
 static/active_excel.json
 static/active_excel_sim.json
+static/app_settings.json
 
 # CodeGraph
 .codegraph/
