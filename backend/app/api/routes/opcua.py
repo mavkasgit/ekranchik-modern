@@ -1,7 +1,9 @@
 """
 OPC UA API routes - подключение к OMRON PLC и чтение данных.
 """
+import asyncio
 import logging
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -9,11 +11,151 @@ from pydantic import BaseModel
 
 from app.services.opcua_service import opcua_service
 from app.services.line_monitor import line_monitor
+from app.services.excel_service import excel_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opcua", tags=["opcua"])
+
+
+def _normalize_hanger_key(value: Any) -> str:
+    if value is None:
+        return ""
+
+    raw = str(value).strip()
+    if not raw:
+        return ""
+
+    try:
+        numeric = float(raw.replace(",", "."))
+        return str(int(numeric))
+    except (ValueError, TypeError):
+        return raw
+
+
+def _parse_excel_date(date_str: str) -> tuple[int, int, int]:
+    if not date_str or date_str == "—":
+        return (0, 0, 0)
+    try:
+        parts = date_str.strip().split(".")
+        if len(parts) != 3:
+            return (0, 0, 0)
+
+        day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
+        if year < 50:
+            year += 2000
+        elif year < 100:
+            year += 1900
+
+        return (year, month, day)
+    except (ValueError, IndexError):
+        return (0, 0, 0)
+
+
+def _parse_excel_time(time_str: str) -> tuple[int, int, int]:
+    if not time_str or time_str == "—":
+        return (0, 0, 0)
+    try:
+        parts = time_str.strip().split(":")
+        hour = int(parts[0]) if len(parts) > 0 else 0
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        second = int(parts[2]) if len(parts) > 2 else 0
+        return (hour, minute, second)
+    except (ValueError, IndexError):
+        return (0, 0, 0)
+
+
+def _excel_datetime_to_seconds(date_tuple: tuple[int, int, int], time_tuple: tuple[int, int, int]) -> float:
+    try:
+        year, month, day = date_tuple
+        hour, minute, second = time_tuple
+
+        if year == 0 or month == 0 or day == 0:
+            return 0.0
+
+        return datetime(year, month, day, hour, minute, second).timestamp()
+    except (ValueError, OverflowError):
+        return 0.0
+
+
+def _normalize_meta_value(value: Any) -> str:
+    text = str(value).strip() if value is not None else ""
+    return text if text else "—"
+
+
+def _build_latest_hanger_meta() -> Dict[str, Dict[str, str]]:
+    """Build latest profile/color by hanger number using Excel date+time comparison.
+    
+    NOTE: This is a synchronous, CPU/IO-heavy operation. 
+    Always call via _get_hanger_meta_async() to avoid blocking the event loop.
+    """
+    latest: Dict[str, Dict[str, str]] = {}
+    latest_ts: Dict[str, float] = {}
+
+    products = excel_service.get_products(
+        limit=3000,
+        days=30,
+        from_end=True,
+        loading_only=False,
+    )
+
+    for product in products:
+        hanger_key = _normalize_hanger_key(product.get("number"))
+        if not hanger_key:
+            continue
+
+        date_tuple = _parse_excel_date(str(product.get("date", "")))
+        time_tuple = _parse_excel_time(str(product.get("time", "")))
+        ts = _excel_datetime_to_seconds(date_tuple, time_tuple)
+
+        if ts >= latest_ts.get(hanger_key, 0.0):
+            latest_ts[hanger_key] = ts
+            latest[hanger_key] = {
+                "article": _normalize_meta_value(product.get("profile")),
+                "color": _normalize_meta_value(product.get("color")),
+            }
+
+    return latest
+
+
+# Module-level cache for hanger meta to avoid re-reading Excel on every request
+_hanger_meta_cache: Optional[Dict[str, Dict[str, str]]] = None
+_hanger_meta_cache_mtime: Optional[float] = None
+_hanger_meta_lock = asyncio.Lock()
+
+
+async def _get_hanger_meta_async() -> Dict[str, Dict[str, str]]:
+    """Get hanger meta with caching and thread-pool execution.
+    
+    Uses excel_service cache mtime to invalidate only when Excel data changes.
+    Runs the heavy sync work in a thread pool to avoid blocking the event loop.
+    Uses asyncio.Lock to prevent multiple concurrent cache builds.
+    """
+    global _hanger_meta_cache, _hanger_meta_cache_mtime
+
+    current_mtime = excel_service.cache_mtime
+
+    # Fast path: cache hit without locking
+    if _hanger_meta_cache is not None and _hanger_meta_cache_mtime == current_mtime:
+        return _hanger_meta_cache
+
+    # Slow path: acquire lock and build cache
+    async with _hanger_meta_lock:
+        # Double-check after acquiring lock
+        if _hanger_meta_cache is not None and _hanger_meta_cache_mtime == current_mtime:
+            return _hanger_meta_cache
+
+        # Cache miss: build in thread pool to avoid blocking event loop
+        logger.info(f"[OPC UA] Building hanger meta cache (Excel mtime: {current_mtime})...")
+        start = datetime.now()
+        result = await asyncio.to_thread(_build_latest_hanger_meta)
+        elapsed = (datetime.now() - start).total_seconds()
+        logger.info(f"[OPC UA] Hanger meta cache built: {len(result)} entries in {elapsed:.2f}s")
+
+        _hanger_meta_cache = result
+        _hanger_meta_cache_mtime = current_mtime
+        return result
 
 
 class OPCUAStatus(BaseModel):
@@ -429,6 +571,12 @@ async def get_line_status():
     Читает из кэша — мгновенный отклик.
     """
     try:
+        hanger_meta_by_number: Dict[str, Dict[str, str]] = {}
+        try:
+            hanger_meta_by_number = await _get_hanger_meta_async()
+        except Exception as meta_error:
+            logger.warning(f"[OPC UA] Could not build hanger meta map: {meta_error}")
+
         # Формируем результат из кэша
         baths = []
         for i in range(1, 40):
@@ -438,15 +586,19 @@ async def get_line_status():
             in_time = opcua_service.get_value(f"ns=4;s=Bath[{i}].InTime")
             out_time = opcua_service.get_value(f"ns=4;s=Bath[{i}].OutTime")
             d_time = opcua_service.get_value(f"ns=4;s=Bath[{i}].dTime")
+            pallet_number = int(pallete) if pallete else 0
+            hanger_meta = hanger_meta_by_number.get(_normalize_hanger_key(pallet_number), {})
             
             baths.append({
                 "bath_number": i,
                 "in_use": bool(in_use) if in_use is not None else False,
                 "free": bool(free) if free is not None else True,
-                "pallete": int(pallete) if pallete else 0,
+                "pallete": pallet_number,
                 "in_time": float(in_time) if in_time else 0,
                 "out_time": float(out_time) if out_time else 0,
                 "d_time": float(d_time) if d_time else 0,
+                "article": hanger_meta.get("article", "—"),
+                "color": hanger_meta.get("color", "—"),
             })
         
         # Данные блока питания
@@ -455,7 +607,6 @@ async def get_line_status():
             "voltage": float(opcua_service.get_value("ns=4;s=S8VK_X.Voltage") or 0),
         }
         
-        from datetime import datetime
         return {
             "baths": baths,
             "power_supply": power_supply,

@@ -52,22 +52,6 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
 
     isConnectingRef.current = true
 
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s max
-    const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 60000)
-    
-    if (reconnectAttemptsRef.current > 0) {
-      console.log(`[WS] Reconnect attempt ${reconnectAttemptsRef.current}, waiting ${delay}ms`)
-      
-      // Schedule connection after delay
-      reconnectTimeoutRef.current = window.setTimeout(() => {
-        if (!isUnmountingRef.current) {
-          connect()
-        }
-        isConnectingRef.current = false
-      }, delay)
-      return
-    }
-
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host}/ws`
     
@@ -131,13 +115,13 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
         }
       }
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current)
           connectionTimeoutRef.current = null
         }
         
-        console.log('[WS] Disconnected')
+        console.log(`[WS] Disconnected (code: ${event.code}, reason: ${event.reason || 'N/A'})`)
         setStatus('disconnected')
         wsRef.current = null
         isConnectingRef.current = false
@@ -156,10 +140,12 @@ export function useRealtimeData(options: UseRealtimeDataOptions = {}) {
         }
       }
 
-      ws.onerror = (event) => {
-        console.error('[WS] WebSocket error:', event)
+      ws.onerror = () => {
+        // Log without the useless Event object, then close to trigger onclose
+        console.error('[WS] WebSocket error occurred')
         setStatus('error')
-        isConnectingRef.current = false
+        // Explicitly close to ensure onclose fires and triggers reconnection logic
+        ws.close()
       }
     } catch (e) {
       setStatus('error')

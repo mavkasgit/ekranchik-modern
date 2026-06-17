@@ -419,6 +419,11 @@ function PhotoCell({
         {hanger.is_defect && (
           <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
         )}
+        {hanger.time_warning && (
+          <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+            ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
+          </span>
+        )}
         {profilesInfo.map((prof, idx) => (
           <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} />
         ))}
@@ -442,6 +447,11 @@ function PhotoCell({
         {hanger.is_defect && (
           <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
         )}
+        {hanger.time_warning && (
+          <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+            ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
+          </span>
+        )}
         <div className="flex items-center">
           <img
             src={thumbUrl}
@@ -462,6 +472,11 @@ function PhotoCell({
     <div className="flex items-center justify-center gap-2" style={{ maxWidth: '800px' }}>
       {hanger.is_defect && (
         <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
+      )}
+      {hanger.time_warning && (
+        <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+          ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
+        </span>
       )}
       <div className="flex items-center">
         <div className="w-10 h-10 bg-muted rounded flex items-center justify-center flex-shrink-0">
@@ -707,7 +722,13 @@ function DataTable({
             return (
               <TableRow
                 key={`${hanger.number}-${idx}`}
-                className={idx % 2 === 0 ? 'bg-slate-200' : ''}
+                className={
+                  hanger.time_warning 
+                    ? 'bg-orange-200' 
+                    : idx % 2 === 0 
+                      ? 'bg-slate-200' 
+                      : ''
+                }
               >
                 {showEntryExit ? (
                   <>
@@ -934,8 +955,8 @@ export default function Dashboard() {
   
   // Таймер автовозврата в fullscreen
   const [autoReturnCountdown, setAutoReturnCountdown] = useState<number | null>(null)
-  const autoReturnTimerRef = useRef<any>(null)
-  const countdownIntervalRef = useRef<any>(null)
+  const autoReturnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // State for "Последние 100" toggle
   const [isLast100Mode, setIsLast100Mode] = useState(false);
@@ -1073,6 +1094,55 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const hangerMetaByNumber = useMemo(() => {
+    const rows = data?.products ?? []
+    const events = matchedEvents ?? []
+
+    const toHangerKey = (value: string | number | null | undefined): string => {
+      if (value === null || value === undefined) return ''
+      const raw = String(value).trim()
+      if (!raw) return ''
+      const numeric = Number(raw.replace(',', '.'))
+      if (Number.isFinite(numeric)) {
+        return String(Math.trunc(numeric))
+      }
+      return raw
+    }
+
+    const normalizeValue = (value?: string | null): string | undefined => {
+      const trimmed = value?.trim()
+      return trimmed ? trimmed : undefined
+    }
+    const mergeMeta = (
+      acc: Record<string, { profile?: string; color?: string }>,
+      key: string,
+      profile?: string | null,
+      color?: string | null,
+    ) => {
+      const current = acc[key] ?? {}
+      acc[key] = {
+        profile: normalizeValue(profile) ?? current.profile,
+        color: normalizeValue(color) ?? current.color,
+      }
+    }
+
+    const metaFromRows = rows.reduce<Record<string, { profile?: string; color?: string }>>((acc, row) => {
+      const key = toHangerKey(row.number)
+      if (!key) return acc
+
+      mergeMeta(acc, key, row.profile, row.color)
+      return acc
+    }, {})
+
+    return events.reduce<Record<string, { profile?: string; color?: string }>>((acc, event) => {
+      const key = toHangerKey(event.hanger)
+      if (!key) return acc
+
+      mergeMeta(acc, key, event.profile, event.color)
+      return acc
+    }, metaFromRows)
+  }, [data?.products, matchedEvents])
 
   const handleToggleLast100 = () => {
     if (isMockMode) setIsMockMode(false); // Disable mock mode if switching to Last 100
@@ -1429,7 +1499,7 @@ export default function Dashboard() {
             )}
 
             {/* Forecast Row - Outside the green border */}
-            {filters.showForecast && <BathForecast />}
+            {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} />}
 
             <div className="flex flex-col gap-0">
               {renderWarning()}

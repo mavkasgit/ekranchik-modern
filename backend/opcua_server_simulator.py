@@ -167,8 +167,8 @@ class ManualHangerWindow:
         self.root.title("OPC UA Simulator - ПУЛЬТ УПРАВЛЕНИЯ")
         
         # Центрирование окна
-        window_width = 1600
-        window_height = 900
+        window_width = 1200
+        window_height = 700
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         center_x = int(screen_width/2 - window_width / 2)
@@ -178,34 +178,34 @@ class ManualHangerWindow:
         self.root.resizable(True, True)
         
         # Стилизация
-        self.root.option_add("*Font", "Arial 14")
+        self.root.option_add("*Font", "Arial 10")
         style = ttk.Style()
-        style.configure(".", font=('Arial', 14))
+        style.configure(".", font=('Arial', 10))
         style.configure("Monitor.TFrame", background="#f0f0f0")
-        style.configure("Hanger.TLabelframe", padding=10)
-        style.configure("TButton", padding=10)
-        style.configure("TEntry", font=('Arial', 14))
-        style.configure("TLabelframe.Label", font=('Arial', 14, 'bold'))
+        style.configure("Hanger.TLabelframe", padding=5)
+        style.configure("TButton", padding=5)
+        style.configure("TEntry", font=('Arial', 10))
+        style.configure("TLabelframe.Label", font=('Arial', 10, 'bold'))
         
         # Специальные стили для меток
-        style.configure("Title.TLabel", font=('Arial', 18, 'bold'))
-        style.configure("Bold.TLabel", font=('Arial', 14, 'bold'))
-        style.configure("Timer.TLabel", font=('Arial', 16, 'bold'))
+        style.configure("Title.TLabel", font=('Arial', 12, 'bold'))
+        style.configure("Bold.TLabel", font=('Arial', 10, 'bold'))
+        style.configure("Timer.TLabel", font=('Arial', 11, 'bold'))
         
         # Главный контейнер (две колонки)
         main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # --- ЛЕВАЯ КОЛОНКА (ЗАПУСК) ---
         left_frame = ttk.Frame(main_paned, padding="5")
         main_paned.add(left_frame, weight=1)
         
         title = ttk.Label(left_frame, text="🚀 Запуск подвеса", style="Title.TLabel")
-        title.pack(pady=(0, 15))
+        title.pack(pady=(0, 5))
         
         # Параметры (Hanger ID, Transition)
-        ps_frame = ttk.LabelFrame(left_frame, text="Параметры", padding=10)
-        ps_frame.pack(fill=tk.X, pady=5)
+        ps_frame = ttk.LabelFrame(left_frame, text="Параметры", padding=5)
+        ps_frame.pack(fill=tk.X, pady=3)
         
         row1 = ttk.Frame(ps_frame)
         row1.pack(fill=tk.X, pady=2)
@@ -226,37 +226,37 @@ class ManualHangerWindow:
         ttk.Entry(row2, textvariable=self.spawn_interval_var, width=8).pack(side=tk.LEFT, padx=5)
         
         # Рецепт
-        recipe_frame = ttk.LabelFrame(left_frame, text="Рецепт (ванны + время)", padding=10)
-        recipe_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        recipe_frame = ttk.LabelFrame(left_frame, text="Рецепт (ванны + время)", padding=5)
+        recipe_frame.pack(fill=tk.BOTH, expand=True, pady=3)
         
         grid_f = ttk.Frame(recipe_frame)
         grid_f.pack(fill=tk.X)
         
-        ttk.Label(grid_f, text="Ванна", style="Bold.TLabel").grid(row=0, column=1, pady=5)
-        ttk.Label(grid_f, text="Время (с)", style="Bold.TLabel").grid(row=0, column=2, pady=5)
-        ttk.Button(grid_f, text="🗑️", width=5, command=self._clear_all_recipe).grid(row=0, column=4, padx=5)
+        ttk.Label(grid_f, text="Ванна", style="Bold.TLabel").grid(row=0, column=1, pady=2)
+        ttk.Label(grid_f, text="Время (с)", style="Bold.TLabel").grid(row=0, column=2, pady=2)
+        ttk.Button(grid_f, text="🗑️", width=5, command=self._clear_all_recipe).grid(row=0, column=4, padx=2)
         
-        for i in range(7):
-            ttk.Label(grid_f, text=f"{i+1}:").grid(row=i+1, column=0, pady=5)
+        for i in range(5):
+            ttk.Label(grid_f, text=f"{i+1}:").grid(row=i+1, column=0, pady=1)
             
             b_var = tk.IntVar(value=0)
             b_entry = ttk.Entry(grid_f, textvariable=b_var, width=8)
-            b_entry.grid(row=i+1, column=1, padx=2, pady=5)
+            b_entry.grid(row=i+1, column=1, padx=1, pady=1)
             self.bath_entries.append((b_entry, b_var))
             
             t_var = tk.IntVar(value=30)
             t_entry = ttk.Entry(grid_f, textvariable=t_var, width=8)
-            t_entry.grid(row=i+1, column=2, padx=5, pady=5)
+            t_entry.grid(row=i+1, column=2, padx=2, pady=1)
             self.time_entries.append((t_entry, t_var))
             
             a_var = tk.BooleanVar(value=True)
             a_check = ToggleSwitch(grid_f, variable=a_var, 
                                  command=lambda idx=i: self._update_row_active(idx))
-            a_check.grid(row=i+1, column=3, padx=10)
+            a_check.grid(row=i+1, column=3, padx=5)
             self.bath_checkboxes.append((a_check, a_var))
             
             ttk.Button(grid_f, text="×", width=5, 
-                       command=lambda idx=i: self._clear_row_idx(idx)).grid(row=i+1, column=4, padx=2, pady=5)
+                       command=lambda idx=i: self._clear_row_idx(idx)).grid(row=i+1, column=4, padx=1, pady=1)
         
         btn_f = ttk.Frame(left_frame)
         btn_f.pack(pady=10)
@@ -492,7 +492,7 @@ class ManualHangerWindow:
             trans = self.transition_var.get()
             baths = []
             times = []
-            for i in range(7):
+            for i in range(5):
                 if self.bath_checkboxes[i][1].get():
                     b_num = self.bath_entries[i][1].get()
                     t_val = self.time_entries[i][1].get()
@@ -537,7 +537,7 @@ class ManualHangerWindow:
         self._update_row_active(idx)
 
     def _clear_all_recipe(self):
-        for i in range(7):
+        for i in range(5):
             self._clear_row_idx(i)
 
     def _save_recipe(self):
@@ -546,7 +546,7 @@ class ManualHangerWindow:
             return
         
         recipe = []
-        for i in range(7):
+        for i in range(5):
             recipe.append({
                 'bath': self.bath_entries[i][1].get(),
                 'time': self.time_entries[i][1].get(),
@@ -566,7 +566,7 @@ class ManualHangerWindow:
         if hasattr(self.config, 'manual_transition_time'):
             self.transition_var.set(self.config.manual_transition_time)
         
-        for i in range(min(7, len(self.config.manual_recipe))):
+        for i in range(min(5, len(self.config.manual_recipe))):
             item = self.config.manual_recipe[i]
             self.bath_entries[i][1].set(item.get('bath', 0))
             self.time_entries[i][1].set(item.get('time', 30))
@@ -900,10 +900,10 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
             for bath_num in range(1, 41):
                 await bath_vars[bath_num]['InUse'].write_value(False)
                 await bath_vars[bath_num]['Free'].write_value(True)
-                await bath_vars[bath_num]['Pallete'].write_value(0)
-                await bath_vars[bath_num]['InTime'].write_value(0)
-                await bath_vars[bath_num]['OutTime'].write_value(0)
-                await bath_vars[bath_num]['dTime'].write_value(0)
+                await bath_vars[bath_num]['Pallete'].write_value(ua.UInt32(0))
+                await bath_vars[bath_num]['InTime'].write_value(ua.UInt32(0))
+                await bath_vars[bath_num]['OutTime'].write_value(ua.UInt32(0))
+                await bath_vars[bath_num]['dTime'].write_value(ua.UInt32(0))
             
             # 5. Update baths with current hangers
             for hanger_id, hanger in hangers.items():
@@ -921,10 +921,10 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
                     
                     await bath_vars[bath_num]['InUse'].write_value(True)
                     await bath_vars[bath_num]['Free'].write_value(False)
-                    await bath_vars[bath_num]['Pallete'].write_value(hanger.hanger_id)
-                    await bath_vars[bath_num]['InTime'].write_value(elapsed)
-                    await bath_vars[bath_num]['OutTime'].write_value(hanger.get_bath_time())
-                    await bath_vars[bath_num]['dTime'].write_value(elapsed)
+                    await bath_vars[bath_num]['Pallete'].write_value(ua.UInt32(hanger.hanger_id))
+                    await bath_vars[bath_num]['InTime'].write_value(ua.UInt32(elapsed))
+                    await bath_vars[bath_num]['OutTime'].write_value(ua.UInt32(hanger.get_bath_time()))
+                    await bath_vars[bath_num]['dTime'].write_value(ua.UInt32(hanger.get_bath_time()))
             
             # 6. Log status every 10 seconds
             if int(current_time.timestamp()) % 10 == 0:
