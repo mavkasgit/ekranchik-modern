@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # --- Simulation Switch ---
     SIMULATION_ENABLED: bool = False # Set to True to use simulated OPC UA and test Excel file
 
+    # --- KTM-2000 Integration Settings ---
+    USE_KTM_API: bool = False
+    KTM_BACKEND_URL: str = "http://localhost:8010" # Default for local dev, can be set via env
+
     # --- OPC UA Configuration ---
     OPCUA_ENABLED: bool = True # Master switch to enable/disable OPC UA service
     OPCUA_ENDPOINT: str = "opc.tcp://172.17.11.131:4840/"
@@ -51,6 +55,21 @@ class Settings(BaseSettings):
     # Photo upload
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
     THUMBNAIL_SIZE: tuple = (200, 200)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Load from json file
+        try:
+            import json
+            static_path = Path(self.STATIC_DIR)
+            settings_file = static_path / "app_settings.json"
+            if settings_file.exists():
+                with open(settings_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if "use_ktm_api" in data:
+                        self.USE_KTM_API = bool(data["use_ktm_api"])
+        except Exception:
+            pass
     
     @property
     def excel_path(self) -> Path | None:
@@ -72,6 +91,31 @@ class Settings(BaseSettings):
         if path.exists():
             return path
         return None
+
+    def update_app_settings(self, use_ktm_api: bool) -> None:
+        """Saves settings to app_settings.json and updates in-memory config"""
+        self.USE_KTM_API = use_ktm_api
+        try:
+            import json
+            static_dir = Path(self.STATIC_DIR)
+            static_dir.mkdir(parents=True, exist_ok=True)
+            settings_file = static_dir / "app_settings.json"
+            
+            data = {}
+            if settings_file.exists():
+                with open(settings_file, "r", encoding="utf-8") as f:
+                    try:
+                        data = json.load(f)
+                    except Exception:
+                        pass
+                        
+            data["use_ktm_api"] = use_ktm_api
+            
+            with open(settings_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to save app_settings.json: {e}")
 
     def update_simulation_mode_in_env(self, enabled: bool) -> None:
         """Обновляет значение SIMULATION_ENABLED в файле .env"""

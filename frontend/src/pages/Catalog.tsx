@@ -42,6 +42,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useToast } from '@/hooks/use-toast'
+import { useQueryClient } from '@tanstack/react-query'
 import { 
   useCatalogAll, 
   useCatalogSearch, 
@@ -67,6 +68,10 @@ const STORAGE_KEYS = {
 
 function getPhotoUrl(path: string | null, cacheBuster?: string | number): string | null {
   if (!path) return null
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    const bust = cacheBuster ? `${cacheBuster}_${Date.now()}` : Date.now()
+    return `${path}?v=${bust}`
+  }
   const base = path.startsWith('/') ? path : `/static/${path}`
   // Use both updated_at and current timestamp to bust browser cache
   const bust = cacheBuster ? `${cacheBuster}_${Date.now()}` : Date.now()
@@ -1319,6 +1324,47 @@ function SearchSkeleton() {
 
 export default function Catalog() {
   // State
+  const queryClient = useQueryClient()
+  const [settings, setSettings] = useState<{ use_ktm_api: boolean } | null>(null)
+  const [updatingSettings, setUpdatingSettings] = useState(false)
+
+  const fetchSettings = async () => {
+    try {
+      const response = await fetch('/api/dashboard/settings')
+      if (response.ok) {
+        const settingsData = await response.json()
+        setSettings(settingsData)
+      }
+    } catch (err) {
+      console.error('Failed to fetch settings', err)
+    }
+  }
+
+  const handleToggleKtmApi = async () => {
+    if (!settings) return
+    setUpdatingSettings(true)
+    try {
+      const response = await fetch('/api/dashboard/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ use_ktm_api: !settings.use_ktm_api })
+      })
+      if (response.ok) {
+        const newSettings = await response.json()
+        setSettings(newSettings)
+        queryClient.invalidateQueries({ queryKey: ['catalog'] })
+      }
+    } catch (err) {
+      console.error('Failed to toggle KTM API mode', err)
+    } finally {
+      setUpdatingSettings(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchSettings()
+  }, [])
+
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>(() => 
@@ -1462,6 +1508,28 @@ export default function Catalog() {
             <h1 className="text-xl md:text-2xl font-bold">Каталог профилей</h1>
             {displayData.length > 0 && (
               <Badge variant="secondary" className="hidden sm:inline-flex">{displayData.length} профилей</Badge>
+            )}
+            {settings && (
+              <div className="flex items-center gap-1 border rounded-lg p-0.5 bg-muted/40 text-xs ml-2 md:ml-4 flex-shrink-0">
+                <Button 
+                  variant={settings.use_ktm_api ? 'ghost' : 'secondary'} 
+                  size="sm" 
+                  onClick={settings.use_ktm_api ? handleToggleKtmApi : undefined}
+                  className="text-[10px] md:text-xs h-6 md:h-7 px-1.5 md:px-2.5 font-medium rounded-md shadow-none"
+                  disabled={updatingSettings}
+                >
+                  БД SQLite
+                </Button>
+                <Button 
+                  variant={settings.use_ktm_api ? 'secondary' : 'ghost'} 
+                  size="sm" 
+                  onClick={!settings.use_ktm_api ? handleToggleKtmApi : undefined}
+                  className="text-[10px] md:text-xs h-6 md:h-7 px-1.5 md:px-2.5 font-medium rounded-md shadow-none"
+                  disabled={updatingSettings}
+                >
+                  API KTM-2000
+                </Button>
+              </div>
             )}
           </div>
           <div className="flex items-center gap-2">

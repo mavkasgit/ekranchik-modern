@@ -749,10 +749,12 @@ class SettingsResponse(BaseModel):
     simulation_enabled: bool
     excel_path: str
     opcua_endpoint: str
+    use_ktm_api: bool
 
 
 class SettingsUpdateRequest(BaseModel):
-    simulation_enabled: bool
+    simulation_enabled: Optional[bool] = None
+    use_ktm_api: Optional[bool] = None
 
 
 @router.get("/settings", response_model=SettingsResponse)
@@ -762,7 +764,8 @@ async def get_settings():
     return SettingsResponse(
         simulation_enabled=settings.SIMULATION_ENABLED,
         excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
-        opcua_endpoint=opcua_service._url
+        opcua_endpoint=opcua_service._url,
+        use_ktm_api=settings.USE_KTM_API
     )
 
 
@@ -771,44 +774,62 @@ async def update_settings(request: SettingsUpdateRequest):
     """Dynamically toggle simulation settings."""
     from app.services.opcua_service import opcua_service
     try:
-        new_mode = request.simulation_enabled
-        if new_mode != settings.SIMULATION_ENABLED:
-            # 1. Update settings in-memory
-            settings.SIMULATION_ENABLED = new_mode
-            
-            # 2. Update settings in .env
-            settings.update_simulation_mode_in_env(new_mode)
-            
-            # 3. Update OPC UA service
-            await opcua_service.update_simulation_mode(new_mode)
-            
-            # 4. Update Excel service
-            excel_service.update_simulation_mode()
-            
-            logger.info(f"[DASHBOARD API] Dynamically toggled simulation_enabled to: {new_mode}")
-            
-            # 5. Broadcast dynamic WS settings update
-            try:
-                from app.services.websocket_manager import websocket_manager
-                from app.schemas.websocket import WebSocketMessage
-                message = WebSocketMessage(
-                    type="data_update",
-                    payload={
-                        "source": "settings",
-                        "simulation_enabled": new_mode,
-                        "message": f"Режим работы переключен на {'ТЕСТОВЫЙ' if new_mode else 'РАБОЧИЙ'}"
-                    },
-                    timestamp=datetime.now()
-                )
-                await websocket_manager.broadcast(message)
-            except Exception as ws_err:
-                logger.warning(f"Could not broadcast websocket update for mode switch: {ws_err}")
+        if request.simulation_enabled is not None:
+            new_mode = request.simulation_enabled
+            if new_mode != settings.SIMULATION_ENABLED:
+                settings.SIMULATION_ENABLED = new_mode
+                settings.update_simulation_mode_in_env(new_mode)
+                await opcua_service.update_simulation_mode(new_mode)
+                excel_service.update_simulation_mode()
+                logger.info(f"[DASHBOARD API] Dynamically toggled simulation_enabled to: {new_mode}")
                 
+                try:
+                    from app.services.websocket_manager import websocket_manager
+                    from app.schemas.websocket import WebSocketMessage
+                    message = WebSocketMessage(
+                        type="data_update",
+                        payload={
+                            "source": "settings",
+                            "simulation_enabled": new_mode,
+                            "message": f"Режим работы переключен на {'ТЕСТОВЫЙ' if new_mode else 'РАБОЧИЙ'}"
+                        },
+                        timestamp=datetime.now()
+                    )
+                    await websocket_manager.broadcast(message)
+                except Exception as ws_err:
+                    logger.warning(f"Could not broadcast websocket update for mode switch: {ws_err}")
+
+        if request.use_ktm_api is not None:
+            new_ktm_mode = request.use_ktm_api
+            if new_ktm_mode != settings.USE_KTM_API:
+                settings.update_app_settings(new_ktm_mode)
+                logger.info(f"[DASHBOARD API] Dynamically toggled use_ktm_api to: {new_ktm_mode}")
+                
+                try:
+                    from app.services.websocket_manager import websocket_manager
+                    from app.schemas.websocket import WebSocketMessage
+                    message = WebSocketMessage(
+                        type="data_update",
+                        payload={
+                            "source": "settings",
+                            "use_ktm_api": new_ktm_mode,
+                            "message": f"Источник номенклатуры переключен на {'API KTM-2000' if new_ktm_mode else 'Локальную базу SQLite'}"
+                        },
+                        timestamp=datetime.now()
+                    )
+                    await websocket_manager.broadcast(message)
+                except Exception as ws_err:
+                    logger.warning(f"Could not broadcast websocket update for KTM mode switch: {ws_err}")
+
         return SettingsResponse(
             simulation_enabled=settings.SIMULATION_ENABLED,
             excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
-            opcua_endpoint=opcua_service._url
+            opcua_endpoint=opcua_service._url,
+            use_ktm_api=settings.USE_KTM_API
         )
     except Exception as e:
         logger.error(f"[DASHBOARD API] Failed to update settings: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+

@@ -910,6 +910,35 @@ class CatalogService:
         """
         if not profile_names:
             return {}
+            
+        from app.core.config import settings
+        if settings.USE_KTM_API:
+            from app.services.ktm_api_service import ktm_api_service
+            try:
+                ktm_profiles = await ktm_api_service.get_all_profiles()
+                results = {}
+                for p in ktm_profiles:
+                    results[p["name"].lower()] = {
+                        'thumb': p["photo_thumb"],
+                        'full': p["photo_full"],
+                        'name': p["name"],
+                        'updated_at': p["updated_at"]
+                    }
+                
+                final_map = {}
+                for name in profile_names:
+                    name_lower = name.lower()
+                    if name_lower in results:
+                        final_map[name] = results[name_lower]
+                    else:
+                        for ktm_name_lower, info in results.items():
+                            if ktm_name_lower in name_lower or name_lower in ktm_name_lower:
+                                final_map[name] = info
+                                break
+                return final_map
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"[KTM Batch Photos] Failed: {e}")
         
         async def _get_batch(sess: AsyncSession) -> dict[str, dict]:
             # Get ALL profiles (with and without photos) to know which ones exist
