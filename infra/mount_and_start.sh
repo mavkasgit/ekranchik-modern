@@ -2,7 +2,7 @@
 set -e
 
 MOUNT_POINT="/mnt/ktm-disk"
-SHARE_PATH="//172.17.11.115/Оператор" # Укажите актуальный IP/хост
+SHARE_PATH="//172.17.11.7/Оператор" # Укажите актуальный IP/хост
 CREDS_FILE="/etc/ekranchik-credentials"
 
 # 1. Проверяем / создаем файл учетных данных
