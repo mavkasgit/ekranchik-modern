@@ -1365,14 +1365,7 @@ export default function Dashboard() {
     }
   }, [isFullscreen, setIsFullscreen])
 
-  // Псевдо-фуллскрин: просто переключаем состояние React без браузерного fullscreen API
-  const toggleFullscreen = useCallback(() => {
-    setIsFullscreen(!isFullscreen)
-  }, [isFullscreen, setIsFullscreen])
-  
-  // Обработчик применения фильтров - сбрасывает таймер автовозврата
-  const handleApplyFilters = useCallback(() => {
-    // Сбрасываем таймер
+  const handleCancelAutoReturn = useCallback(() => {
     if (autoReturnTimerRef.current) {
       clearTimeout(autoReturnTimerRef.current)
       autoReturnTimerRef.current = null
@@ -1382,10 +1375,21 @@ export default function Dashboard() {
       countdownIntervalRef.current = null
     }
     setAutoReturnCountdown(null)
+  }, [])
+
+  // Псевдо-фуллскрин: просто переключаем состояние React без браузерного fullscreen API
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen(!isFullscreen)
+  }, [isFullscreen, setIsFullscreen])
+  
+  // Обработчик применения фильтров - сбрасывает таймер автовозврата
+  const handleApplyFilters = useCallback(() => {
+    // Сбрасываем таймер
+    handleCancelAutoReturn()
     
     // Применяем фильтры
     refetch()
-  }, [refetch])
+  }, [refetch, handleCancelAutoReturn])
 
   const handlePhotoClick = useCallback((url: string, name: string) => {
     setPhotoModal({ url, name })
@@ -1423,8 +1427,8 @@ export default function Dashboard() {
       {/* Уведомление об автовозврате в fullscreen */}
       {!isFullscreen && autoReturnCountdown !== null && (
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
-          <Card className="bg-orange-500 border-orange-600 shadow-lg">
-            <CardContent className="py-3 px-6">
+          <Card className="bg-orange-500 border-orange-600 shadow-lg relative pr-10">
+            <CardContent className="py-3 pl-6 pr-2">
               <div className="flex items-center gap-3 text-white">
                 <div className="text-2xl font-bold">{autoReturnCountdown}</div>
                 <div className="text-sm">
@@ -1433,6 +1437,13 @@ export default function Dashboard() {
                 </div>
               </div>
             </CardContent>
+            <button
+              onClick={handleCancelAutoReturn}
+              className="absolute top-1/2 right-3 transform -translate-y-1/2 text-white/80 hover:text-white transition-colors"
+              aria-label="Закрыть"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </Card>
         </div>
       )}
