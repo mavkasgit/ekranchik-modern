@@ -7,9 +7,13 @@
     "dev": "concurrently --names \"BACKEND,FRONTEND,SIMULATOR\" -c \"green,cyan,blue\" \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:simulator\"",
     "dev:frontend": "npm --prefix frontend run dev",
     "dev:backend": "cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000",
-    "dev:simulator": "cd backend && python opcua_server_simulator.py"
+    "dev:simulator": "cd backend && python opcua_server_simulator.py",
+    "test:e2e": "playwright test --config=playwright.config.mts",
+    "test:e2e:ui": "playwright test --config=playwright.config.mts --ui",
+    "chrome:debug": "start chrome --remote-debugging-port=9222 --no-first-run --no-default-browser-check --user-data-dir=\"c:\\Users\\user\\VibeCoding\\ekranchik-modern\\.chrome-dev-profile\" http://127.0.0.1:5173/opcua"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "concurrently": "^9.1.2"
   },
   "dependencies": {

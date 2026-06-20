@@ -81,6 +81,9 @@ Thumbs.db
 # Agent files
 .agents/
 
+# E2E test configuration (local paths)
+e2e/.env
+
 # Active Excel state files
 static/active_excel.json
 static/active_excel_sim.json
