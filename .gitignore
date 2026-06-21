@@ -87,3 +87,15 @@ e2e/.env
 # Active Excel state files
 static/active_excel.json
 static/active_excel_sim.json
+
+# .NET / C#
+**/bin/
+**/obj/
+*.csproj.user
+
+# Local Cache & Logs
+backend/hangers_cache.json
+backend/custom_simulator.log
+chrome_output.log
+chrome_stderr.log
+chrome_stdout.log
