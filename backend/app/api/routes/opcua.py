@@ -89,9 +89,15 @@ def _build_latest_hanger_meta() -> Dict[str, Dict[str, str]]:
     
     NOTE: This is a synchronous, CPU/IO-heavy operation. 
     Always call via _get_hanger_meta_async() to avoid blocking the event loop.
+
+    Priority rule:
+    - Entries with time filled (real loaded entries) always win over entries where
+      time is empty (draft/placeholder rows not yet loaded into the line).
+    - Among same-priority entries, the most recent timestamp wins.
     """
     latest: Dict[str, Dict[str, str]] = {}
     latest_ts: Dict[str, float] = {}
+    latest_has_time: Dict[str, bool] = {}  # Track if best entry has real time
 
     products = excel_service.get_products(
         limit=3000,
@@ -105,18 +111,32 @@ def _build_latest_hanger_meta() -> Dict[str, Dict[str, str]]:
         if not hanger_key:
             continue
 
+        raw_time = str(product.get("time", "") or "").strip()
+        entry_has_time = bool(raw_time) and raw_time not in ("—", "nan", "NaT", "None")
+
         date_tuple = _parse_excel_date(str(product.get("date", "")))
-        time_tuple = _parse_excel_time(str(product.get("time", "")))
+        time_tuple = _parse_excel_time(raw_time) if entry_has_time else (0, 0, 0)
         ts = _excel_datetime_to_seconds(date_tuple, time_tuple)
 
-        if ts >= latest_ts.get(hanger_key, 0.0):
-            latest_ts[hanger_key] = ts
-            latest[hanger_key] = {
-                "article": _normalize_meta_value(product.get("profile")),
-                "color": _normalize_meta_value(product.get("color")),
-            }
+        existing_has_time = latest_has_time.get(hanger_key, False)
+
+        # A draft entry (no time) must not beat a real loaded entry (has time)
+        if existing_has_time and not entry_has_time:
+            continue
+
+        # Among same-priority entries take the most recent
+        if entry_has_time == existing_has_time and ts < latest_ts.get(hanger_key, 0.0):
+            continue
+
+        latest_ts[hanger_key] = ts
+        latest_has_time[hanger_key] = entry_has_time
+        latest[hanger_key] = {
+            "article": _normalize_meta_value(product.get("profile")),
+            "color": _normalize_meta_value(product.get("color")),
+        }
 
     return latest
+
 
 
 # Module-level cache for hanger meta to avoid re-reading Excel on every request

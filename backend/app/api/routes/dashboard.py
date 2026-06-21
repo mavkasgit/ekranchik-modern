@@ -632,7 +632,9 @@ async def get_opcua_matched_unload_events(
             )
         )
         
-        # Match events with products (greedy: oldest exit first)
+        # Match events with products: take MOST RECENT entry before exit time.
+        # A hanger is a physical object — it can only be in one place at a time,
+        # so the most recent loaded entry IS the correct match.
         matched = []
         for event in events_to_match:
             hanger_num = str(event.get('hanger'))
@@ -643,9 +645,8 @@ async def get_opcua_matched_unload_events(
             exit_seconds = datetime_to_seconds(exit_date_tuple, exit_time_tuple)
             
             product = None
-            best_diff = None
-            product_exceeds_limit = None  # Track product that exceeds time limit
-            time_diff_hours = None  # Track time difference for warning
+            best_entry_seconds = None  # Track most recent entry timestamp
+            time_diff_hours = None
             
             for p in candidates:
                 p_key = make_product_key(p)
@@ -655,6 +656,7 @@ async def get_opcua_matched_unload_events(
                 entry_date = str(p.get('date', ''))
                 entry_time = str(p.get('time', ''))
                 
+                # Skip entries without time — hanger not yet loaded into line
                 if not entry_time or entry_time == '—':
                     continue
                 
@@ -662,32 +664,24 @@ async def get_opcua_matched_unload_events(
                 entry_time_tuple = parse_time(entry_time)
                 entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
                 
+                # Entry must be before exit
                 if entry_seconds >= exit_seconds:
                     continue
                 
-                diff = exit_seconds - entry_seconds
-                
-                # Maximum time between entry and exit: 6 hours
-                if diff > 6 * 3600:  # 6 hours = 21600 seconds
-                    # Save this product as exceeding limit, but keep looking for better match
-                    if product_exceeds_limit is None or diff < best_diff:
-                        product_exceeds_limit = p
-                        best_diff = diff
-                        time_diff_hours = diff / 3600
-                    continue
-                
-                if best_diff is None or diff < best_diff:
-                    best_diff = diff
+                # Take the MOST RECENT entry (highest entry_seconds)
+                if best_entry_seconds is None or entry_seconds > best_entry_seconds:
+                    best_entry_seconds = entry_seconds
                     product = p
+                    time_diff_hours = (exit_seconds - entry_seconds) / 3600
             
-            # If no product within time limit, use the one that exceeds limit
+            # Warning if gap exceeds 6h
             warning_message = None
-            if not product and product_exceeds_limit:
-                product = product_exceeds_limit
-                warning_message = f"⚠ Время между входом и выходом: {time_diff_hours:.1f}ч (превышает лимит 6ч)"
+            if product and time_diff_hours is not None and time_diff_hours > 6:
+                warning_message = f"⚠ Время между входом и выходом: {time_diff_hours:.1f}ч (проверить соответствие)"
             
             if product:
                 used_entries.add(make_product_key(product))
+
             
             profiles_info = []
             if product:

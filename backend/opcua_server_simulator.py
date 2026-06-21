@@ -28,6 +28,7 @@ class SimulatorConfig:
         self.max_hangers = 10  # Максимальное количество подвесов в системе
         self.manual_recipe = []  # Сохраненный рецепт для ручного режима
         self.manual_transition_time = 30  # Время перехода для ручного режима
+        self.recipes = {}  # База рецептов для вкладок: {"1": {"steps": [...], "transition_time": 30}, ...}
         self._next_id = 1
         
     def get_next_id(self):
@@ -51,8 +52,54 @@ class SimulatorConfig:
                 'max_hangers': self.max_hangers,
                 'manual_recipe': self.manual_recipe,
                 'manual_transition_time': self.manual_transition_time,
+                'recipes': self.recipes,
             }, f, indent=2)
     
+    def _get_default_recipes(self):
+        """Сгенерировать стандартные рецепты по умолчанию"""
+        return {
+            "1": {
+                "steps": [
+                    {"bath": 3, "time": 60, "active": True},
+                    {"bath": 5, "time": 60, "active": True},
+                    {"bath": 7, "time": 60, "active": True},
+                    {"bath": 10, "time": 60, "active": True},
+                    {"bath": 17, "time": 60, "active": True}
+                ],
+                "transition_time": 30
+            },
+            "2": {
+                "steps": [
+                    {"bath": 18, "time": 30, "active": True},
+                    {"bath": 19, "time": 30, "active": True},
+                    {"bath": 20, "time": 30, "active": True},
+                    {"bath": 0, "time": 30, "active": False},
+                    {"bath": 0, "time": 30, "active": False}
+                ],
+                "transition_time": 15
+            },
+            "3": {
+                "steps": [
+                    {"bath": 3, "time": 120, "active": True},
+                    {"bath": 5, "time": 120, "active": True},
+                    {"bath": 7, "time": 120, "active": True},
+                    {"bath": 10, "time": 120, "active": True},
+                    {"bath": 17, "time": 120, "active": True}
+                ],
+                "transition_time": 30
+            },
+            "4": {
+                "steps": [
+                    {"bath": 31, "time": 60, "active": True},
+                    {"bath": 34, "time": 60, "active": True},
+                    {"bath": 0, "time": 30, "active": False},
+                    {"bath": 0, "time": 30, "active": False},
+                    {"bath": 0, "time": 30, "active": False}
+                ],
+                "transition_time": 30
+            }
+        }
+
     def load(self, filepath: str = "simulator_config.json"):
         """Загрузить конфигурацию из файла"""
         try:
@@ -66,6 +113,17 @@ class SimulatorConfig:
                 self.manual_recipe = data.get('manual_recipe', [])
                 self.manual_transition_time = data.get('manual_transition_time', 30)
                 self.manual_recipe_times = data.get('manual_recipe_times', [])
+                self.recipes = data.get('recipes', {})
+                
+                # Популируем дефолты если рецептов нет
+                if not self.recipes:
+                    self.recipes = self._get_default_recipes()
+                    # Если был старый ручной рецепт, импортируем его в Рецепт 1
+                    if self.manual_recipe:
+                        self.recipes["1"] = {
+                            "steps": self.manual_recipe,
+                            "transition_time": self.manual_transition_time
+                        }
                 
                 # BUGFIX: Если в последовательности есть 33 (которая не должна там быть по ТЗ пользователя), 
                 # сбрасываем на дефолтную рабочую последовательность
@@ -74,6 +132,8 @@ class SimulatorConfig:
                     self.bath_sequence = [3, 5, 7, 10, 17, 18, 19, 20, 31, 34]
             return True
         except FileNotFoundError:
+            # Загружаем базовые рецепты при отсутствии файла
+            self.recipes = self._get_default_recipes()
             return False
 
 
@@ -155,6 +215,8 @@ class ManualHangerWindow:
         self._root_after_handle = None
         self.auto_spawn_var = None
         self.spawn_interval_var = None
+        self.active_recipe_tab = "1"
+        self.tab_buttons = {}
         
     def show(self):
         """Показать окно ручного режима с мониторингом"""
@@ -228,6 +290,26 @@ class ManualHangerWindow:
         # Рецепт
         recipe_frame = ttk.LabelFrame(left_frame, text="Рецепт (ванны + время)", padding=5)
         recipe_frame.pack(fill=tk.BOTH, expand=True, pady=3)
+
+        # Панель вкладок рецептов
+        tabs_frame = ttk.Frame(recipe_frame)
+        tabs_frame.pack(fill=tk.X, pady=(2, 8))
+        
+        self.tab_buttons = {}
+        for tab_id in ["1", "2", "3", "4"]:
+            btn = tk.Button(
+                tabs_frame, 
+                text=f"Рецепт {tab_id}", 
+                command=lambda tid=tab_id: self._switch_recipe_tab(tid),
+                relief=tk.RAISED, 
+                bg="#e0e0e0", 
+                activebackground="#cccccc",
+                font=('Arial', 9, 'bold'),
+                padx=10, 
+                pady=2
+            )
+            btn.pack(side=tk.LEFT, padx=2)
+            self.tab_buttons[tab_id] = btn
         
         grid_f = ttk.Frame(recipe_frame)
         grid_f.pack(fill=tk.X)
@@ -504,8 +586,22 @@ class ManualHangerWindow:
                 messagebox.showerror("Ошибка", "Рецепт пуст!")
                 return
             
-            # Используем централизованный ID из конфига
-            h_id = self.config.get_next_id()
+            # Получаем ID, введенный пользователем
+            try:
+                h_id = self.hanger_id_var.get()
+                if h_id <= 0:
+                    raise ValueError()
+            except (ValueError, Exception):
+                messagebox.showerror("Ошибка", "Номер подвеса должен быть целым положительным числом!")
+                return
+
+            # Проверка граничного случая: подвес с таким ID уже на линии
+            if h_id in self.hangers:
+                messagebox.showerror("Ошибка", f"Подвес №{h_id} уже запущен и находится на линии!")
+                return
+            
+            # Синхронизируем счетчик в конфигурации
+            self.config.set_next_id(h_id + 1)
             self.hanger_id_var.set(h_id + 1) # Предлагаем следующий во фронте
                 
             hanger_data = {
@@ -540,11 +636,48 @@ class ManualHangerWindow:
         for i in range(5):
             self._clear_row_idx(i)
 
+    def _switch_recipe_tab(self, tab_id):
+        self.active_recipe_tab = tab_id
+        
+        # Обновим визуальное выделение кнопок-вкладок
+        for tid, btn in self.tab_buttons.items():
+            if tid == tab_id:
+                btn.configure(bg="#2196F3", fg="white", relief=tk.SUNKEN) # Активная синяя
+            else:
+                btn.configure(bg="#e0e0e0", fg="black", relief=tk.RAISED) # Обычная серая
+                
+        # Загрузим рецепт для этой вкладки
+        self._load_recipe_from_tab(tab_id)
+
+    def _load_recipe_from_tab(self, tab_id):
+        if not self.config or not self.config.recipes or tab_id not in self.config.recipes:
+            return
+            
+        recipe_data = self.config.recipes[tab_id]
+        steps = recipe_data.get('steps', [])
+        
+        for i in range(5):
+            if i < len(steps):
+                item = steps[i]
+                self.bath_entries[i][1].set(item.get('bath', 0))
+                self.time_entries[i][1].set(item.get('time', 30))
+                self.bath_checkboxes[i][1].set(item.get('active', True))
+            else:
+                self.bath_entries[i][1].set(0)
+                self.time_entries[i][1].set(30)
+                self.bath_checkboxes[i][1].set(False)
+            self._update_row_active(i)
+            
+        if 'transition_time' in recipe_data:
+            self.transition_var.set(recipe_data['transition_time'])
+            
+        logger.info(f"[OK] Вкладка {tab_id} загружена")
+
     def _save_recipe(self):
-        """Сохранить текущий рецепт в конфиг"""
+        """Сохранить текущий рецепт в активную вкладку конфигурации"""
         if not self.config:
             return
-        
+            
         recipe = []
         for i in range(5):
             recipe.append({
@@ -552,27 +685,18 @@ class ManualHangerWindow:
                 'time': self.time_entries[i][1].get(),
                 'active': self.bath_checkboxes[i][1].get()
             })
-        
-        self.config.manual_recipe = recipe
-        self.config.manual_transition_time = self.transition_var.get()
+            
+        self.config.recipes[self.active_recipe_tab] = {
+            'steps': recipe,
+            'transition_time': self.transition_var.get()
+        }
         self.config.save()
-        logger.info("[SAVE] Рецепт сохранен")
+        logger.info(f"[SAVE] Рецепт для вкладки {self.active_recipe_tab} сохранен")
+        messagebox.showinfo("Успех", f"Рецепт сохранен во вкладку {self.active_recipe_tab}!")
 
     def _load_recipe(self):
-        """Загрузить сохраненный рецепт из конфига"""
-        if not self.config or not self.config.manual_recipe:
-            return
-        
-        if hasattr(self.config, 'manual_transition_time'):
-            self.transition_var.set(self.config.manual_transition_time)
-        
-        for i in range(min(5, len(self.config.manual_recipe))):
-            item = self.config.manual_recipe[i]
-            self.bath_entries[i][1].set(item.get('bath', 0))
-            self.time_entries[i][1].set(item.get('time', 30))
-            self.bath_checkboxes[i][1].set(item.get('active', True))
-            self._update_row_active(i)
-        logger.info("[OK] Рецепт загружен")
+        """Загрузить рецепт при инициализации"""
+        self._switch_recipe_tab("1")
 
 class HangerState:
     """Состояние подвеса в системе"""

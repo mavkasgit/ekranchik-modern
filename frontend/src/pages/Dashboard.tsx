@@ -1541,6 +1541,7 @@ export default function Dashboard() {
                         current_bath: e.current_bath,
                         bath_entry_time: e.bath_entry_time,
                         bath_processing_time: e.bath_processing_time,
+                        time_warning: e.time_warning,
                       }))}
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
