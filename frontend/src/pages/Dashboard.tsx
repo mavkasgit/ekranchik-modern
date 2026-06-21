@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, AlertTriangle
+  Image, Maximize2, Minimize2, X, AlertTriangle, Inbox
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -1490,8 +1490,9 @@ export default function Dashboard() {
                     isFullscreen={isFullscreen}
                   />
                 ) : (
-                  <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
-                    :( {'='.repeat(12)} :( {'='.repeat(12)} :( {'='.repeat(12)} :( {'='.repeat(12)} :(
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <Inbox className="w-8 h-8 text-muted-foreground/30 mb-2" />
+                    <span className="text-sm text-muted-foreground">Очередь загрузки пуста</span>
                   </div>
                 )}
               </CardContent>
@@ -1548,8 +1549,9 @@ export default function Dashboard() {
                       showEntryExit
                     />
                   ) : (
-                    <div className="w-full py-8 text-center text-muted-foreground font-mono text-lg">
-                      :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :) {'='.repeat(12)} :)
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                      <Inbox className="w-8 h-8 text-muted-foreground/30 mb-2" />
+                      <span className="text-sm text-muted-foreground">Нет событий выгрузки</span>
                     </div>
                   )}
                 </CardContent>
