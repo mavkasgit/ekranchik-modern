@@ -9,6 +9,7 @@ using System.Text.Json;
 using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
+using System.ComponentModel;
 
 namespace EkranchikKiosk
 {
@@ -148,6 +149,50 @@ namespace EkranchikKiosk
         }
     }
 
+    // === Круглый индикатор доступности ссылки ===
+    public class StatusIndicator : Control
+    {
+        private Color indicatorColor = Color.Gray;
+        
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public Color IndicatorColor
+        {
+            get => indicatorColor;
+            set
+            {
+                indicatorColor = value;
+                if (this.InvokeRequired)
+                {
+                    try { this.BeginInvoke(new Action(() => this.Invalidate())); } catch { }
+                }
+                else
+                {
+                    this.Invalidate();
+                }
+            }
+        }
+
+        public StatusIndicator()
+        {
+            this.Size = new Size(16, 16);
+            this.DoubleBuffered = true;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var brush = new SolidBrush(indicatorColor))
+            {
+                e.Graphics.FillEllipse(brush, 1, 1, this.Width - 3, this.Height - 3);
+            }
+            using (var pen = new Pen(Color.FromArgb(51, 65, 85), 1.5f))
+            {
+                e.Graphics.DrawEllipse(pen, 1, 1, this.Width - 3, this.Height - 3);
+            }
+        }
+    }
+
     // === Форма предзапуска / Выбора ссылки (Launcher) ===
     public class LauncherForm : Form
     {
@@ -157,9 +202,25 @@ namespace EkranchikKiosk
         public bool WindowsStartup { get; private set; }
 
         private TextBox txtUrl;
-        private ComboBox cmbMonitors;
         private CheckBox chkAutoLaunch;
         private CheckBox chkWindowsStartup;
+
+        private System.Threading.Timer? debounceTimer;
+        private StatusIndicator txtUrlIndicator;
+
+        // Переменные для динамического перестроения мониторов
+        private int defaultMonitor;
+        private Color bgCard;
+        private Color fgLight;
+        private Color accentBlue;
+        private Color borderGray;
+        private int monitorStartY;
+
+        // Динамически воссоздаваемые элементы
+        private List<RadioButton> radMonitors = new List<RadioButton>();
+        private Label? lblMon;
+        private Button? btnOk;
+        private Button? btnCancel;
 
         public LauncherForm(string defaultUrl, int defaultMonitor, bool defaultAutoLaunch, bool defaultWindowsStartup)
         {
@@ -168,12 +229,14 @@ namespace EkranchikKiosk
             AutoLaunchOnSecond = defaultAutoLaunch;
             WindowsStartup = defaultWindowsStartup;
 
+            this.defaultMonitor = defaultMonitor;
+
             // Цветовая гамма Slate (Slate-900 / Slate-800)
             Color bgDark = Color.FromArgb(15, 23, 42);     // #0f172a
-            Color bgCard = Color.FromArgb(30, 41, 59);     // #1e293b
-            Color fgLight = Color.FromArgb(248, 250, 252); // #f8fafc
-            Color accentBlue = Color.FromArgb(59, 130, 246); // #3b82f6
-            Color borderGray = Color.FromArgb(51, 65, 85);   // #334155
+            this.bgCard = Color.FromArgb(30, 41, 59);     // #1e293b
+            this.fgLight = Color.FromArgb(248, 250, 252); // #f8fafc
+            this.accentBlue = Color.FromArgb(59, 130, 246); // #3b82f6
+            this.borderGray = Color.FromArgb(51, 65, 85);   // #334155
 
             this.Text = "Ekranchik Settings";
             this.Size = new Size(500, 520);
@@ -221,7 +284,7 @@ namespace EkranchikKiosk
                     ForeColor = fgLight,
                     FlatStyle = FlatStyle.Flat,
                     Location = new Point(40, startY),
-                    Size = new Size(400, 36),
+                    Size = new Size(370, 36),
                     Cursor = Cursors.Hand
                 };
                 btn.FlatAppearance.BorderColor = borderGray;
@@ -232,6 +295,18 @@ namespace EkranchikKiosk
                 };
 
                 this.Controls.Add(btn);
+
+                // Создаем и позиционируем индикатор справа от кнопки
+                StatusIndicator ind = new StatusIndicator
+                {
+                    Location = new Point(425, startY + 10),
+                    Size = new Size(16, 16)
+                };
+                this.Controls.Add(ind);
+
+                // Запускаем асинхронную фоновую проверку
+                Task.Run(() => CheckUrlAvailability(item.Url, ind));
+
                 startY += 42;
             }
 
@@ -253,59 +328,119 @@ namespace EkranchikKiosk
                 BackColor = bgCard,
                 ForeColor = fgLight,
                 Location = new Point(40, startY + 32),
-                Size = new Size(400, 28),
+                Size = new Size(370, 28),
                 BorderStyle = BorderStyle.FixedSingle
             };
+            txtUrl.TextChanged += TxtUrl_TextChanged;
             this.Controls.Add(txtUrl);
+
+            txtUrlIndicator = new StatusIndicator
+            {
+                Location = new Point(425, startY + 38),
+                Size = new Size(16, 16)
+            };
+            this.Controls.Add(txtUrlIndicator);
+
+            // Проверяем начальный URL
+            if (!string.IsNullOrEmpty(defaultUrl))
+            {
+                Task.Run(() => CheckUrlAvailability(defaultUrl, txtUrlIndicator));
+            }
+
             startY += 70;
+            this.monitorStartY = startY;
+
+            // Строим выбор монитора
+            RebuildMonitorSection();
+        }
+
+        private void RebuildMonitorSection()
+        {
+            if (this.InvokeRequired)
+            {
+                try { this.BeginInvoke(new Action(RebuildMonitorSection)); } catch { }
+                return;
+            }
+
+            // Удаляем старые элементы
+            if (lblMon != null) this.Controls.Remove(lblMon);
+            foreach (var rad in radMonitors) this.Controls.Remove(rad);
+            radMonitors.Clear();
+            if (chkAutoLaunch != null) this.Controls.Remove(chkAutoLaunch);
+            if (chkWindowsStartup != null) this.Controls.Remove(chkWindowsStartup);
+            if (btnOk != null) this.Controls.Remove(btnOk);
+            if (btnCancel != null) this.Controls.Remove(btnCancel);
+
+            int startY = monitorStartY;
 
             // Выбор монитора
-            Label lblMon = new Label
+            lblMon = new Label
             {
                 Text = "Выбор экрана:",
-                Font = new Font("Segoe UI", 9.5f),
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
                 Location = new Point(40, startY + 12),
-                Size = new Size(110, 25),
-                TextAlign = ContentAlignment.MiddleLeft
+                Size = new Size(400, 25),
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Color.FromArgb(148, 163, 184)
             };
             this.Controls.Add(lblMon);
 
-            cmbMonitors = new ComboBox
-            {
-                Location = new Point(160, startY + 12),
-                Size = new Size(280, 25),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = bgCard,
-                ForeColor = fgLight,
-                Font = new Font("Segoe UI", 9.5f)
-            };
-
             var screens = Screen.AllScreens;
+            int radY = startY + 40;
             for (int i = 0; i < screens.Length; i++)
             {
                 var s = screens[i];
                 string name = s.Primary ? "Основной" : "Дополнительный";
-                cmbMonitors.Items.Add($"Экран {i + 1}: {s.Bounds.Width}x{s.Bounds.Height} ({name})");
+                
+                bool isChecked = (i == defaultMonitor) || (defaultMonitor >= screens.Length && i == 0);
+
+                RadioButton rad = new RadioButton
+                {
+                    Text = $"Экран {i + 1}: {s.Bounds.Width}x{s.Bounds.Height} ({name})",
+                    Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                    Location = new Point(40, radY),
+                    Size = new Size(370, 36),
+                    Tag = i,
+                    Checked = isChecked,
+                    Appearance = Appearance.Button,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = isChecked ? accentBlue : bgCard,
+                    ForeColor = fgLight,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Cursor = Cursors.Hand
+                };
+                rad.FlatAppearance.BorderColor = borderGray;
+                rad.FlatAppearance.BorderSize = 1;
+
+                rad.CheckedChanged += (snd, ev) => {
+                    var r = (RadioButton)snd;
+                    if (r.Checked)
+                    {
+                        r.BackColor = accentBlue;
+                        r.ForeColor = Color.White;
+                    }
+                    else
+                    {
+                        r.BackColor = bgCard;
+                        r.ForeColor = fgLight;
+                    }
+                };
+
+                this.Controls.Add(rad);
+                radMonitors.Add(rad);
+                radY += 42;
             }
 
-            if (defaultMonitor >= 0 && defaultMonitor < cmbMonitors.Items.Count)
-            {
-                cmbMonitors.SelectedIndex = defaultMonitor;
-            }
-            else
-            {
-                cmbMonitors.SelectedIndex = 0;
-            }
-            this.Controls.Add(cmbMonitors);
+            startY = radY + 10;
 
             // Чекбоксы настроек автозапуска
             chkAutoLaunch = new CheckBox
             {
                 Text = "Автоматически запускать при наличии второго экрана",
                 Font = new Font("Segoe UI", 9.5f),
-                Location = new Point(40, startY + 50),
+                Location = new Point(40, startY + 10),
                 Size = new Size(420, 25),
-                Checked = defaultAutoLaunch,
+                Checked = AutoLaunchOnSecond,
                 FlatStyle = FlatStyle.Flat
             };
             this.Controls.Add(chkAutoLaunch);
@@ -314,19 +449,19 @@ namespace EkranchikKiosk
             {
                 Text = "Запускать автоматически при старте Windows",
                 Font = new Font("Segoe UI", 9.5f),
-                Location = new Point(40, startY + 80),
+                Location = new Point(40, startY + 40),
                 Size = new Size(420, 25),
-                Checked = defaultWindowsStartup,
+                Checked = WindowsStartup,
                 FlatStyle = FlatStyle.Flat
             };
             this.Controls.Add(chkWindowsStartup);
 
             // Кнопка ОК / Запуск
-            Button btnOk = new Button
+            btnOk = new Button
             {
                 Text = "Применить",
                 Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Location = new Point(130, startY + 120),
+                Location = new Point(130, startY + 80),
                 Size = new Size(110, 32),
                 BackColor = Color.FromArgb(22, 163, 74), // Зеленый
                 ForeColor = Color.White,
@@ -335,7 +470,17 @@ namespace EkranchikKiosk
             btnOk.FlatAppearance.BorderSize = 0;
             btnOk.Click += (s, e) => {
                 SelectedUrl = txtUrl.Text;
-                SelectedMonitor = cmbMonitors.SelectedIndex;
+                
+                SelectedMonitor = 0;
+                foreach (var rad in radMonitors)
+                {
+                    if (rad.Checked)
+                    {
+                        SelectedMonitor = (int)rad.Tag;
+                        break;
+                    }
+                }
+
                 AutoLaunchOnSecond = chkAutoLaunch.Checked;
                 WindowsStartup = chkWindowsStartup.Checked;
                 this.DialogResult = DialogResult.OK;
@@ -344,11 +489,11 @@ namespace EkranchikKiosk
             this.Controls.Add(btnOk);
 
             // Кнопка Отмена
-            Button btnCancel = new Button
+            btnCancel = new Button
             {
                 Text = "Отмена",
                 Font = new Font("Segoe UI", 9.5f),
-                Location = new Point(260, startY + 120),
+                Location = new Point(260, startY + 80),
                 Size = new Size(110, 32),
                 BackColor = bgCard,
                 ForeColor = fgLight,
@@ -360,6 +505,92 @@ namespace EkranchikKiosk
                 this.Close();
             };
             this.Controls.Add(btnCancel);
+
+            this.Size = new Size(500, startY + 160);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            const int WM_DISPLAYCHANGE = 0x007E;
+            if (m.Msg == WM_DISPLAYCHANGE)
+            {
+                RebuildMonitorSection();
+            }
+        }
+
+        private async Task CheckUrlAvailability(string url, StatusIndicator indicator)
+        {
+            if (indicator == null || indicator.IsDisposed) return;
+            
+            try
+            {
+                this.Invoke(new Action(() => {
+                    indicator.IndicatorColor = Color.FromArgb(234, 179, 8); // Желтый (проверка)
+                }));
+            }
+            catch { }
+
+            using (var client = new HttpClient())
+            {
+                client.Timeout = TimeSpan.FromSeconds(2);
+                try
+                {
+                    var response = await client.GetAsync(url);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        try
+                        {
+                            this.Invoke(new Action(() => {
+                                indicator.IndicatorColor = Color.FromArgb(34, 197, 94); // Зеленый (доступен)
+                            }));
+                        }
+                        catch { }
+                        return;
+                    }
+                }
+                catch { }
+                
+                try
+                {
+                    this.Invoke(new Action(() => {
+                        indicator.IndicatorColor = Color.FromArgb(239, 68, 68); // Красный (недоступен)
+                    }));
+                }
+                catch { }
+            }
+        }
+
+        private void TxtUrl_TextChanged(object sender, EventArgs e)
+        {
+            string url = txtUrl.Text;
+            txtUrlIndicator.IndicatorColor = Color.Gray;
+
+            debounceTimer?.Dispose();
+            debounceTimer = new System.Threading.Timer(async _ =>
+            {
+                if (Uri.TryCreate(url, UriKind.Absolute, out var uriResult) 
+                    && (uriResult.Scheme == Uri.UriSchemeHttp || uriResult.Scheme == Uri.UriSchemeHttps))
+                {
+                    await CheckUrlAvailability(url, txtUrlIndicator);
+                }
+                else
+                {
+                    try
+                    {
+                        this.Invoke(new Action(() => {
+                            txtUrlIndicator.IndicatorColor = Color.FromArgb(239, 68, 68); // Невалидный URL
+                        }));
+                    }
+                    catch { }
+                }
+            }, null, 600, Timeout.Infinite);
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            debounceTimer?.Dispose();
+            base.OnFormClosing(e);
         }
     }
 
