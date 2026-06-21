@@ -47,6 +47,75 @@
             letter-spacing: 0.1vmin;
         }
 
+        .mode-selector {
+            margin-top: 5vh;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(30, 41, 59, 0.7);
+            padding: 10px 20px;
+            border-radius: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .mode-label {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: #94a3b8;
+            min-width: 140px;
+            text-align: right;
+            transition: color 0.3s;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #475569;
+            transition: .4s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #3b82f6;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
         .logo {
             position: absolute;
             bottom: 4vmin;
@@ -60,8 +129,6 @@
         .logo:hover {
             opacity: 1;
         }
-
-
 
         /* Плавное появление */
         @keyframes fadeIn {
@@ -84,6 +151,13 @@
     <div class="center-content">
         <div class="time" id="time">21:47</div>
         <div class="date" id="date">Пятница, 7 февраля</div>
+        <div class="mode-selector">
+            <span class="mode-label" id="mode-text">Режим простоя</span>
+            <label class="switch">
+                <input type="checkbox" id="mode-toggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
     </div>
 
     <img src="ktm_colored.png" alt="Logo" class="logo">
@@ -113,6 +187,24 @@
         // Запускаем обновления
         updateTime();
         setInterval(updateTime, 1000);
+
+        // Логика переключателя
+        const toggle = document.getElementById('mode-toggle');
+        const label = document.getElementById('mode-text');
+        toggle.addEventListener('change', function() {
+            if (!this.checked) {
+                label.textContent = 'Переход к работе...';
+                label.style.color = '#3b82f6';
+                setTimeout(() => {
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage('toggle_idle');
+                    }
+                }, 150);
+            } else {
+                label.textContent = 'Режим простоя';
+                label.style.color = '#94a3b8';
+            }
+        });
     </script>
 </body>
 
