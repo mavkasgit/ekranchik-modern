@@ -99,3 +99,6 @@ backend/custom_simulator.log
 chrome_output.log
 chrome_stderr.log
 chrome_stdout.log
+
+# Executables
+*.exe
