@@ -420,7 +420,10 @@ function PhotoCell({
           <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
         )}
         {hanger.time_warning && (
-          <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+          <span 
+            className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap"
+            title={hanger.time_warning}
+          >
             ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
           </span>
         )}
@@ -448,7 +451,10 @@ function PhotoCell({
           <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
         )}
         {hanger.time_warning && (
-          <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+          <span 
+            className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap"
+            title={hanger.time_warning}
+          >
             ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
           </span>
         )}
@@ -474,7 +480,10 @@ function PhotoCell({
         <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
       )}
       {hanger.time_warning && (
-        <span className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap">
+        <span 
+          className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap"
+          title={hanger.time_warning}
+        >
           ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
         </span>
       )}

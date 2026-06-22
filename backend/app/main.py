@@ -1,6 +1,15 @@
 """
 Ekranchik Modern - FastAPI Application Entry Point
 """
+import os
+import time
+try:
+    os.environ['TZ'] = 'Europe/Moscow'
+    time.tzset()
+except AttributeError:
+    # time.tzset() is not available on Windows
+    pass
+
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path

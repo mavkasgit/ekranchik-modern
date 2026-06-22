@@ -664,8 +664,8 @@ async def get_opcua_matched_unload_events(
                 entry_time_tuple = parse_time(entry_time)
                 entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
                 
-                # Entry must be before exit
-                if entry_seconds >= exit_seconds:
+                # Entry must not be too far after exit (max 3 hours allowed for operator input delay)
+                if entry_seconds - exit_seconds > 3 * 3600:
                     continue
                 
                 # Take the MOST RECENT entry (highest entry_seconds)
@@ -678,6 +678,31 @@ async def get_opcua_matched_unload_events(
             warning_message = None
             if product and time_diff_hours is not None and time_diff_hours > 6:
                 warning_message = f"⚠ Время между входом и выходом: {time_diff_hours:.1f}ч (проверить соответствие)"
+                
+                # Detailed diagnostic logging
+                logger.warning(
+                    f"[Matching Diagnostic] Hanger {hanger_num} exit at {event.get('date')} {event.get('time')} "
+                    f"matched with an old entry from {product.get('date')} {product.get('time')} (diff: {time_diff_hours:.1f}h). "
+                    f"Total candidates in Excel: {len(candidates)}."
+                )
+                for i, p_cand in enumerate(candidates):
+                    p_key_cand = make_product_key(p_cand)
+                    c_date = p_cand.get('date')
+                    c_time = p_cand.get('time')
+                    status = "OK"
+                    if p_key_cand in used_entries and p_key_cand != make_product_key(product):
+                        status = "Already used in another match"
+                    elif not c_time or c_time == '—':
+                        status = "Skipped (time is empty)"
+                    else:
+                        c_date_tuple = parse_date(c_date)
+                        c_time_tuple = parse_time(c_time)
+                        c_seconds = datetime_to_seconds(c_date_tuple, c_time_tuple)
+                        if c_seconds >= exit_seconds:
+                            status = f"Skipped (entry time {c_date} {c_time} is after or equal to exit time)"
+                        else:
+                            status = f"Valid entry, diff: {(exit_seconds - c_seconds)/3600:.1f}h"
+                    logger.warning(f"  Candidate {i+1}: Date={c_date}, Time={c_time}, Profile={p_cand.get('profile')}, Client={p_cand.get('client')} -> {status}")
             
             if product:
                 used_entries.add(make_product_key(product))
