@@ -20,6 +20,7 @@ services:
       - IMAGES_DIR=/app/static/images
       - ENVIRONMENT=production
       - DEBUG=false
+      - SIMULATION_ENABLED=false
     expose:
       - "8000"
     volumes:
