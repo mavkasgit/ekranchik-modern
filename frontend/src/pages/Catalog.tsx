@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { 
   Search, Image, X, Upload, Grid, List, Plus, Pencil, Trash2,
-  ArrowUpDown, ArrowUp, ArrowDown, Maximize2, Minimize2
+  ArrowUpDown, ArrowUp, ArrowDown, Maximize2, Minimize2, Download
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -54,6 +54,7 @@ import {
   useDeleteThumbnail,
 } from '@/hooks/useCatalog'
 import type { Profile, ProfileCreate } from '@/types/profile'
+import { api } from '@/api/client'
 
 type ViewMode = 'grid' | 'table'
 type SortField = 'name' | 'updated_at' | 'has_photo'
@@ -1318,6 +1319,7 @@ function SearchSkeleton() {
 
 
 export default function Catalog() {
+  const { toast } = useToast()
   // State
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -1437,6 +1439,35 @@ export default function Catalog() {
     setEditDialogOpen(true)
   }, [])
 
+  const [exporting, setExporting] = useState(false)
+
+  const handleExportZip = useCallback(async () => {
+    setExporting(true)
+    try {
+      const response = await api.get('/catalog/export/zip', {
+        responseType: 'blob',
+      })
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', `ekranchik_catalog_${new Date().toISOString().slice(0, 10)}.zip`)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+      toast({ title: 'Экспорт завершен', description: 'Каталог успешно экспортирован в ZIP-архив' })
+    } catch (error) {
+      console.error('Export failed:', error)
+      toast({ 
+        title: 'Ошибка экспорта', 
+        description: 'Не удалось сгенерировать ZIP-архив с каталогом', 
+        variant: 'destructive' 
+      })
+    } finally {
+      setExporting(false)
+    }
+  }, [toast])
+
   const toggleSort = useCallback((field: SortField) => {
     if (sortField === field) {
       setSortDirection(d => d === 'asc' ? 'desc' : 'asc')
@@ -1465,6 +1496,10 @@ export default function Catalog() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleExportZip} disabled={exporting}>
+              <Download className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">{exporting ? 'Экспорт...' : 'Экспорт ZIP'}</span>
+            </Button>
             {/* View mode buttons - desktop only */}
             {!isMobile && (
               <>
