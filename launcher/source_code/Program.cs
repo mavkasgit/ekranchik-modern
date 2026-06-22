@@ -601,8 +601,6 @@ namespace EkranchikKiosk
         private string targetUrl;
         private int monitorIndex;
         private bool isIdleMode = false;
-        private bool isServerDown = false;
-        private CancellationTokenSource cts;
         private NotifyIcon trayIcon;
         private ToolStripMenuItem idleMenuItem;
 
@@ -725,11 +723,8 @@ namespace EkranchikKiosk
                 }
             };
 
-            // Загружаем локальную заглушку и запускаем проверку бэкенда
-            LoadLocalPage("waiting_server.html", GetFallbackWaitingHtml());
-            
-            cts = new CancellationTokenSource();
-            Task.Run(() => CheckServerLoop(cts.Token));
+            // Сразу загружаем целевой URL бэкенда
+            webView.CoreWebView2.Navigate(targetUrl);
         }
 
         private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -789,7 +784,6 @@ namespace EkranchikKiosk
                 trayIcon.Visible = false;
                 trayIcon.Dispose();
             }
-            cts?.Cancel();
             webView?.Dispose();
             Application.Exit();
             Environment.Exit(0);
@@ -806,7 +800,7 @@ namespace EkranchikKiosk
             ConfigManager.Save(newUrl, monitorIndex, config.auto_launch_on_second_monitor, config.windows_startup);
 
             this.Invoke(new Action(() => {
-                LoadLocalPage("waiting_server.html", GetFallbackWaitingHtml());
+                webView.CoreWebView2.Navigate(targetUrl);
             }));
         }
 
@@ -869,7 +863,7 @@ namespace EkranchikKiosk
             {
                 isIdleMode = false;
                 if (idleMenuItem != null) idleMenuItem.Text = "🕐 Режим простоя";
-                LoadLocalPage("waiting_server.html", GetFallbackWaitingHtml());
+                webView.CoreWebView2.Navigate(targetUrl);
             }
             else
             {
@@ -914,56 +908,7 @@ namespace EkranchikKiosk
             }
         }
 
-        // Поток циклической проверки доступности бэкенда
-        private async Task CheckServerLoop(CancellationToken token)
-        {
-            using (var client = new HttpClient())
-            {
-                client.Timeout = TimeSpan.FromSeconds(2);
-                while (!token.IsCancellationRequested)
-                {
-                    if (isIdleMode)
-                    {
-                        await Task.Delay(1000, token);
-                        continue;
-                    }
 
-                    bool isUp = false;
-                    try
-                    {
-                        var response = await client.GetAsync(targetUrl, token);
-                        isUp = response.IsSuccessStatusCode;
-                    }
-                    catch
-                    {
-                        isUp = false;
-                    }
-
-                    if (isUp)
-                    {
-                        if (isServerDown || webView.Source.ToString().Contains("waiting_server.html") || webView.Source.ToString().StartsWith("data:text/html"))
-                        {
-                            isServerDown = false;
-                            this.Invoke(new Action(() => {
-                                webView.CoreWebView2.Navigate(targetUrl);
-                            }));
-                        }
-                    }
-                    else
-                    {
-                        if (!isServerDown)
-                        {
-                            isServerDown = true;
-                            this.Invoke(new Action(() => {
-                                LoadLocalPage("waiting_server.html", GetFallbackWaitingHtml());
-                            }));
-                        }
-                    }
-
-                    await Task.Delay(5000, token);
-                }
-            }
-        }
 
         // === Fallback HTML-страницы ===
         private string GetFallbackWaitingHtml()
