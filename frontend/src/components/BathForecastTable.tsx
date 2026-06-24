@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Clock } from 'lucide-react'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 
 interface BathForecastItem {
@@ -269,27 +268,7 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
           ))
         ) : null}
       </div>
-
-      <div className="flex items-center gap-1.5 pl-3 border-l border-slate-200 dark:border-slate-800 shrink-0">
-        <Clock className="w-4 h-4 text-muted-foreground" />
-        <span className="font-mono text-[18px] font-bold leading-[18px] text-foreground whitespace-nowrap">
-          <ClockInline />
-        </span>
-      </div>
     </div>
-  )
-}
-
-function ClockInline() {
-  const [time, setTime] = useState(new Date())
-
-  useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000)
-    return () => clearInterval(timer)
-  }, [])
-
-  return (
-    <span>{time.toLocaleTimeString('ru-RU')}</span>
   )
 }
 

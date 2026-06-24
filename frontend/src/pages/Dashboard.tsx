@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, AlertTriangle, Inbox
+  Image, Maximize2, Minimize2, X, AlertTriangle, Inbox, Clock
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -415,18 +415,10 @@ function PhotoCell({
 
   if (profilesInfo.length > 0) {
     return (
-      <div className="flex flex-wrap gap-2 items-center justify-center" style={{ maxWidth: '800px' }}>
-        {hanger.is_defect && (
-          <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
-        )}
-        {hanger.time_warning && (
-          <span 
-            className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap"
-            title={hanger.time_warning}
-          >
-            ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
-          </span>
-        )}
+      <div 
+        className="flex flex-nowrap gap-2 items-center justify-start overflow-x-auto py-1 px-0.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 dark:[&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-thumb]:rounded-full" 
+        style={{ maxWidth: '350px' }}
+      >
         {profilesInfo.map((prof, idx) => (
           <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} />
         ))}
@@ -437,7 +429,7 @@ function PhotoCell({
   // Helper to render profile name next to photo
   const ProfileName = () => (
     <div className="flex flex-col justify-center min-w-0 ml-2 text-left">
-      <p className="text-xs text-muted-foreground truncate max-w-[100px]">
+      <p className="text-xs font-bold text-foreground truncate max-w-[70px]">
         {hanger.canonical_name || hanger.profile}
       </p>
     </div>
@@ -446,23 +438,12 @@ function PhotoCell({
   const thumbUrl = getPhotoUrl(hanger.profile_photo_thumb)
   if (thumbUrl) {
     return (
-      <div className="flex items-center justify-center gap-2" style={{ maxWidth: '800px' }}>
-        {hanger.is_defect && (
-          <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
-        )}
-        {hanger.time_warning && (
-          <span 
-            className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap"
-            title={hanger.time_warning}
-          >
-            ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
-          </span>
-        )}
+      <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: '800px' }}>
         <div className="flex items-center">
           <img
             src={thumbUrl}
             alt={hanger.profile}
-            className="w-auto h-auto max-h-[48px] max-w-[120px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
+            className="w-auto h-auto max-h-[40px] max-w-[90px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
             onClick={() => onPhotoClick(
               getPhotoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || '',
               hanger.profile
@@ -475,18 +456,7 @@ function PhotoCell({
   }
 
   return (
-    <div className="flex items-center justify-center gap-2" style={{ maxWidth: '800px' }}>
-      {hanger.is_defect && (
-        <span className="text-red-600 font-bold text-lg px-2 py-1 bg-red-100 rounded">БРАК</span>
-      )}
-      {hanger.time_warning && (
-        <span 
-          className="text-orange-700 font-bold text-xs px-2 py-1 bg-orange-300 rounded whitespace-nowrap"
-          title={hanger.time_warning}
-        >
-          ⚠ ЗАДЕРЖКА<br/>(проверить соответствие)
-        </span>
-      )}
+    <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: '800px' }}>
       <div className="flex items-center">
         <div className="w-10 h-10 bg-muted rounded flex items-center justify-center flex-shrink-0">
           <Image className="w-5 h-5 text-muted-foreground" />
@@ -499,10 +469,12 @@ function PhotoCell({
 
 function ProfilePhoto({
   profile,
-  onPhotoClick
+  onPhotoClick,
+  hideText = false
 }: {
   profile: ProfileInfo
   onPhotoClick: (url: string, name: string) => void
+  hideText?: boolean
 }) {
   const thumbUrl = getPhotoUrl(profile.photo_thumb, profile.updated_at)
   const fullUrl = getPhotoUrl(profile.photo_full || profile.photo_thumb, profile.updated_at)
@@ -514,7 +486,7 @@ function ProfilePhoto({
         <img
           src={thumbUrl}
           alt={profile.name}
-          className="w-auto h-auto max-h-[48px] max-w-[120px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary flex-shrink-0"
+          className="w-auto h-auto max-h-[40px] max-w-[90px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary flex-shrink-0"
           onClick={() => onPhotoClick(fullUrl || '', profile.canonical_name || profile.name)}
         />
       ) : (
@@ -522,20 +494,22 @@ function ProfilePhoto({
           <Image className="w-5 h-5 text-muted-foreground" />
         </div>
       )}
-      <div className="flex flex-col justify-center min-w-0">
-        <p className="text-xs text-muted-foreground truncate max-w-[100px]">
-          {profile.canonical_name || profile.name}
-        </p>
-        {profile.processing && profile.processing.length > 0 && (
-          <div className="flex gap-1 mt-1 flex-wrap">
-            {profile.processing.map((proc, i) => (
-              <Badge key={i} className="text-[10px] px-1 py-0 bg-yellow-400 text-yellow-900 hover:bg-yellow-500">
-                {proc}
-              </Badge>
-            ))}
-          </div>
-        )}
-      </div>
+      {!hideText && (
+        <div className="flex flex-col justify-center min-w-0">
+          <p className="text-xs font-bold text-foreground truncate max-w-[70px]">
+            {profile.canonical_name || profile.name}
+          </p>
+          {profile.processing && profile.processing.length > 0 && (
+            <div className="flex gap-1 mt-1 flex-wrap">
+              {profile.processing.map((proc, i) => (
+                <Badge key={i} className="text-[10px] px-1 py-0 bg-yellow-400 text-yellow-900 hover:bg-yellow-500">
+                  {proc}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -685,8 +659,46 @@ function StatusBar({
   )
 }
 
+function extractProfileText(profile: string): string {
+  if (!profile) return '—';
+  const normalized = profile
+    .replace(/\s+/g, '')
+    .replace(/[^0-9()+*xхX×\/.,;]/g, '')
+  return normalized || '—'
+}
+
+const isSticks = (hanger: HangerData) => {
+  return hanger.material_type?.toLowerCase().includes('клюш') || 
+         hanger.profile?.toLowerCase().includes('клюш');
+}
+
+const getRowClassName = (hanger: HangerData, idx: number) => {
+  if (hanger.is_defect) {
+    return 'bg-red-300 hover:bg-red-400 dark:bg-red-900 dark:hover:bg-red-800 text-red-950 dark:text-red-50 font-semibold';
+  }
+  if (isSticks(hanger)) {
+    return 'bg-sky-300 hover:bg-sky-400 dark:bg-sky-900 dark:hover:bg-sky-800 text-sky-950 dark:text-sky-50 font-semibold';
+  }
+  if (hanger.time_warning) {
+    return 'bg-orange-200 hover:bg-orange-300/80 dark:bg-orange-950/40';
+  }
+  return idx % 2 === 0 ? 'bg-slate-200 dark:bg-slate-800/50' : '';
+}
 
 
+
+function ClockInline() {
+  const [time, setTime] = useState(new Date())
+
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  return (
+    <span>{time.toLocaleTimeString('ru-RU')}</span>
+  )
+}
 
 // Data table
 function DataTable({
@@ -702,94 +714,337 @@ function DataTable({
   showEntryExit?: boolean
   headerChildren?: React.ReactNode
 }) {
+  const gridTemplateColumns = showEntryExit
+    ? '[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 45px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px'
+    : '[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 45px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px';
+
   return (
-    <div className={`overflow-auto text-xs ${isFullscreen ? 'max-h-screen' : 'rounded-md border max-h-[500px]'}`}>
-      <Table>
-        <TableHeader className="sticky top-0 bg-muted z-10">
-          {headerChildren && (
-            <TableRow className="bg-background border-b hover:bg-background">
-              <TableCell colSpan={10} className="p-0">
-                {headerChildren}
-              </TableCell>
-            </TableRow>
+    <div className={`overflow-auto text-xs border border-slate-200 dark:border-slate-800 ${isFullscreen ? 'max-h-screen rounded-none border-none' : 'rounded-md max-h-[500px]'}`}>
+      <div 
+        className="grid w-full text-xs"
+        style={{ gridTemplateColumns }}
+      >
+        {headerChildren && (
+          <div 
+            className="bg-background border-b border-slate-200 dark:border-slate-800 p-0"
+            style={{ gridColumn: '1 / -1' }}
+          >
+            {headerChildren}
+          </div>
+        )}
+
+        {/* Шапка таблицы */}
+        <div 
+          className="sticky top-0 bg-muted z-20 text-[12px] font-semibold text-foreground/85 tracking-tight border-b border-slate-300 dark:border-slate-700 grid col-span-full"
+          style={{ gridTemplateColumns, display: 'grid' }}
+        >
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'date' }}>Дата</div>
+          {showEntryExit && (
+            <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'time' }}>Время</div>
           )}
-          <TableRow>
-            <TableHead className="w-20 text-center py-1">Дата</TableHead>
-            <TableHead className="w-16 text-center py-1">Время</TableHead>
-            <TableHead className="w-16 text-center py-1">№</TableHead>
-            <TableHead className="w-16 text-center py-1">Тип</TableHead>
-            <TableHead className="w-20 text-center py-1">№ КПЗ</TableHead>
-            <TableHead className="text-center py-1">Клиент</TableHead>
-            <TableHead className="max-w-[180px] text-center py-1">Профиль</TableHead>
-            <TableHead className="text-center py-1" style={{ maxWidth: '800px' }}>Фото</TableHead>
-            <TableHead className="w-16 text-center py-1">Ламели</TableHead>
-            <TableHead className="text-center py-1">Цвет</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data.map((hanger, idx) => {
-            return (
-              <TableRow
-                key={`${hanger.number}-${idx}`}
-                className={
-                  hanger.time_warning 
-                    ? 'bg-orange-200' 
-                    : idx % 2 === 0 
-                      ? 'bg-slate-200' 
-                      : ''
-                }
-              >
-                {showEntryExit ? (
-                  <>
-                    <TableCell className="text-center py-1 text-xs">
-                      {formatDate(hanger.entry_date) === formatDate(hanger.exit_date) ? (
-                        <span>{formatDate(hanger.entry_date)}</span>
-                      ) : (
-                        <div className="flex flex-col">
-                          <span className="text-blue-600">{formatDate(hanger.entry_date)}</span>
-                          <span className="text-green-600">{formatDate(hanger.exit_date)}</span>
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-center py-1 text-xs">
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'num' }}>№</div>
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'type' }}>Тип</div>
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'kpz' }}>№ КПЗ</div>
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'client' }}>Клиент</div>
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'profile' }}>Профиль</div>
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'photo' }}>Фото</div>
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'lamels' }}>Ламели</div>
+          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'color' }}>Цвет</div>
+        </div>
+
+        {/* Тело таблицы */}
+        {data.map((hanger, idx) => {
+          const profilesInfo = hanger.profiles_info || [];
+          const showPhotosBelow = profilesInfo.length > 2;
+          const numAdditionalRows = showPhotosBelow || hanger.time_warning || hanger.is_defect ? 1 : 0;
+          const totalRowsForHanger = 1 + numAdditionalRows;
+
+          return (
+            <div
+              key={`${hanger.number}-${idx}`}
+              className={`grid col-span-full border-b border-slate-200 dark:border-slate-800 group ${getRowClassName(hanger, idx)}`}
+              style={{ gridTemplateColumns, display: 'grid' }}
+            >
+              {/* Дата и Время (с вертикальным объединением) */}
+              {showEntryExit ? (
+                <>
+                  <div 
+                    className="text-center py-1 text-xs flex items-center justify-center" 
+                    style={{ 
+                      gridColumn: 'date', 
+                      gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                    }}
+                  >
+                    {formatDate(hanger.entry_date) === formatDate(hanger.exit_date) ? (
+                      <span>{formatDate(hanger.entry_date)}</span>
+                    ) : (
                       <div className="flex flex-col">
-                        <span className="text-blue-600">{formatTime(hanger.entry_time)}</span>
-                        <span className="text-green-600">{formatTime(hanger.exit_time)}</span>
+                        <span className="text-blue-600">{formatDate(hanger.entry_date)}</span>
+                        <span className="text-green-600">{formatDate(hanger.exit_date)}</span>
                       </div>
-                    </TableCell>
-                  </>
-                ) : (
-                  <>
-                    <TableCell className="text-center py-1">{hanger.date}</TableCell>
-                    <TableCell className="text-center py-1">{hanger.time}</TableCell>
-                  </>
-                )}
-                <TableCell className="text-center font-bold py-1">{hanger.number}</TableCell>
-                <TableCell className="text-center py-1">{hanger.material_type}</TableCell>
-                <TableCell className="text-center py-1">{hanger.kpz_number}</TableCell>
-                <TableCell className="text-center truncate max-w-[120px] py-1">{hanger.client}</TableCell>
-                <TableCell className="text-center max-w-[180px] py-1">
-                  <span className="break-words">{hanger.profile?.replace(/\+/g, '+ ') || '—'}</span>
-                </TableCell>
-                <TableCell className="py-1" style={{ maxWidth: '800px' }}>
-                  <PhotoCell hanger={hanger} onPhotoClick={onPhotoClick} />
-                </TableCell>
-                <TableCell className="text-center font-bold py-1">{hanger.lamels_qty}</TableCell>
-                <TableCell className="text-center py-1">
-                  <div className="inline-flex flex-col items-center max-w-[80px]">
-                    <span className="text-sm leading-tight text-center break-words">{hanger.color}</span>
-                    <div
-                      className="w-full h-1.5 rounded-full mt-0.5"
-                      style={{ backgroundColor: getColorHex(hanger.color), minWidth: '50px' }}
-                    />
+                    )}
                   </div>
-                </TableCell>
-              </TableRow>
-            )
-          })}
-        </TableBody>
-      </Table>
+                  <div 
+                    className="text-center py-1 text-xs flex items-center justify-center" 
+                    style={{ 
+                      gridColumn: 'time', 
+                      gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                    }}
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-blue-600">{formatTime(hanger.entry_time)}</span>
+                      <span className="text-green-600">{formatTime(hanger.exit_time)}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div 
+                  className="text-center py-1 flex items-center justify-center" 
+                  style={{ 
+                    gridColumn: 'date', 
+                    gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                  }}
+                >
+                  {hanger.date}
+                </div>
+              )}
+
+              {/* Номер вешалки */}
+              <div 
+                className="text-center font-bold py-1 flex items-center justify-center" 
+                style={{ 
+                  gridColumn: 'num', 
+                  gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                }}
+              >
+                {hanger.number}
+              </div>
+
+              {/* Основные параметры детали (Тип, КПЗ, Клиент) */}
+              <div 
+                className="text-center py-1 flex items-center justify-center" 
+                style={{ gridColumn: 'type', gridRow: '1' }}
+              >
+                {hanger.material_type}
+              </div>
+              <div 
+                className="text-center py-1 flex items-center justify-center" 
+                style={{ gridColumn: 'kpz', gridRow: '1' }}
+              >
+                {hanger.kpz_number}
+              </div>
+              <div 
+                className="text-center py-1 flex items-center justify-center truncate min-w-0 px-1" 
+                style={{ gridColumn: 'client', gridRow: '1' }}
+                title={hanger.client}
+              >
+                {hanger.client}
+              </div>
+
+              {/* Профиль и Фото в зависимости от showPhotosBelow */}
+              {showPhotosBelow ? (
+                <div 
+                  className="text-center py-1 flex items-center justify-center min-w-0 px-2" 
+                  style={{ gridColumn: 'profile / lamels', gridRow: '1' }}
+                  title={hanger.profile}
+                >
+                  <span className="truncate font-bold text-foreground">
+                    {(isSticks(hanger) && (hanger.profile === '—' || !hanger.profile || hanger.profile.trim() === ''))
+                      ? 'Клюшки'
+                      : (hanger.profile?.replace(/\+/g, '+ ') || '—')}
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <div 
+                    className="text-center py-1 flex items-center justify-center min-w-0 px-1" 
+                    style={{ gridColumn: 'profile', gridRow: '1' }}
+                    title={hanger.profile}
+                  >
+                    <span className="truncate">
+                      {(isSticks(hanger) && (hanger.profile === '—' || !hanger.profile || hanger.profile.trim() === ''))
+                        ? 'Клюшки'
+                        : (hanger.profile?.replace(/\+/g, '+ ') || '—')}
+                    </span>
+                  </div>
+                  <div 
+                    className="py-1 flex items-center justify-center" 
+                    style={{ 
+                      gridColumn: 'photo', 
+                      gridRow: `span ${totalRowsForHanger}` 
+                    }}
+                  >
+                    <PhotoCell hanger={hanger} onPhotoClick={onPhotoClick} />
+                  </div>
+                </>
+              )}
+
+              {/* Ламели */}
+              <div 
+                className="text-center font-bold py-1 flex items-center justify-center" 
+                style={{ 
+                  gridColumn: 'lamels', 
+                  gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                }}
+              >
+                {hanger.lamels_qty}
+              </div>
+
+              {/* Цвет */}
+              <div 
+                className="text-center py-1 flex items-center justify-center" 
+                style={{ 
+                  gridColumn: 'color', 
+                  gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                }}
+              >
+                <div className="inline-flex flex-col items-center max-w-[80px]">
+                  <span className="text-sm leading-tight text-center break-words">{hanger.color}</span>
+                  <div
+                    className="w-full h-1.5 rounded-full mt-0.5"
+                    style={{ backgroundColor: getColorHex(hanger.color), minWidth: '50px' }}
+                  />
+                </div>
+              </div>
+
+              {/* Дополнительная строка */}
+              {numAdditionalRows > 0 && (
+                <div
+                  className="py-1.5 px-3 flex flex-wrap items-center justify-start gap-x-4 gap-y-1.5"
+                  style={{ 
+                    gridRow: '2', 
+                    gridColumn: showPhotosBelow ? '1 / -1' : 'type / photo' 
+                  }}
+                >
+                  {/* Предупреждения */}
+                  {(hanger.time_warning || hanger.is_defect) && (
+                    <div className="flex items-center gap-1.5">
+                      {hanger.time_warning && (
+                        <span 
+                          className="text-orange-700 font-bold text-[10px] px-2 py-0.5 bg-orange-200 dark:bg-orange-950/60 dark:text-orange-400 rounded whitespace-nowrap inline-block border border-orange-300/50"
+                          title={hanger.time_warning}
+                        >
+                          ⚠ ЗАДЕРЖКА (проверить соответствие)
+                        </span>
+                      )}
+                      {hanger.is_defect && (
+                        <span 
+                          className="text-red-700 font-bold text-[10px] px-2 py-0.5 bg-red-200 dark:bg-red-950/60 dark:text-red-400 rounded whitespace-nowrap inline-block border border-red-300/50"
+                        >
+                          ⚠ БРАК
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Список профилей (только если showPhotosBelow === true) */}
+                  {showPhotosBelow && (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                      {profilesInfo.map((prof, pIdx) => (
+                        <ProfilePhoto key={pIdx} profile={prof} onPhotoClick={onPhotoClick} hideText={false} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
+  )
+}
+
+function SidebarQueueTable({
+  data,
+  isLoading,
+  isFullscreen = false,
+}: {
+  data?: HangerData[]
+  isLoading: boolean
+  isFullscreen?: boolean
+}) {
+  const filteredData = useMemo(() => {
+    const nonEmpty = data?.filter(hanger => {
+      const hasTime = hanger.time && hanger.time.trim() !== '—' && hanger.time.trim() !== '';
+      const hasProfile = hanger.profile && hanger.profile.trim() !== '—' && hanger.profile.trim() !== '';
+      const hasMaterial = hanger.material_type && hanger.material_type.trim() !== '—' && hanger.material_type.trim() !== '';
+      return hasTime || hasProfile || hasMaterial;
+    }) || [];
+
+    const withoutTime = nonEmpty.filter(h => !h.time || h.time.trim() === '—' || h.time.trim() === '');
+    const withTime = nonEmpty.filter(h => h.time && h.time.trim() !== '—' && h.time.trim() !== '');
+
+    // Ограничиваем планируемые/активные (без времени) до 6 ближайших к выгрузке
+    const recentWithoutTime = withoutTime.slice(-6);
+
+    // Выгруженные (со временем) оставляем полностью
+    return [...recentWithoutTime, ...withTime];
+  }, [data]);
+
+  return (
+    <Card className={`border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col w-full ${isFullscreen ? 'max-h-screen h-screen rounded-none border-none' : 'max-h-[500px] xl:max-h-[600px]'}`}>
+      <CardContent className="p-0 overflow-hidden flex flex-col flex-1">
+        {isLoading ? (
+          <div className="space-y-1.5 p-3">
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} className="h-8 w-full" />
+            ))}
+          </div>
+        ) : filteredData.length > 0 ? (
+          <div className="overflow-auto text-[11px] flex-1 h-full">
+            <Table>
+              <TableHeader className="sticky top-0 bg-muted z-10 text-[12px] font-semibold text-foreground/85 tracking-tight">
+                <TableRow>
+                  <TableHead className="w-12 text-center py-1.5 px-2">Время</TableHead>
+                  <TableHead className="w-10 text-center py-1.5 px-2">№</TableHead>
+                  <TableHead className="text-left py-1.5 px-2">Профиль</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredData.map((hanger, idx) => {
+                  const isSticksHanger = isSticks(hanger);
+                  let cleanedProfile = extractProfileText(hanger.profile);
+                  if (isSticksHanger && (cleanedProfile === '—' || !cleanedProfile)) {
+                    cleanedProfile = 'Клюшки';
+                  }
+                  const displayProfile = cleanedProfile.length > 8 ? cleanedProfile.slice(0, 8) + '..' : cleanedProfile;
+                  return (
+                    <TableRow
+                      key={`sidebar-${hanger.number}-${idx}`}
+                      className={getRowClassName(hanger, idx)}
+                    >
+                      <TableCell className="text-center py-1.5 px-2 font-mono whitespace-nowrap">
+                        {hanger.time || '—'}
+                      </TableCell>
+                      <TableCell className="text-center py-1.5 px-2 font-bold font-mono">
+                        {hanger.number || '—'}
+                      </TableCell>
+                      <TableCell className="text-left py-1.5 px-2 font-semibold truncate max-w-[120px]" title={hanger.profile}>
+                        <div className="flex items-center gap-1.5">
+                          {hanger.color && hanger.color.trim() !== '—' && hanger.color.trim() !== '' && (
+                            <span 
+                              className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-black/15 dark:border-white/15" 
+                              style={{ backgroundColor: getColorHex(hanger.color) }}
+                              title={hanger.color}
+                            />
+                          )}
+                          <span className="truncate">{displayProfile}</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground text-xs">
+            <span>Очередь пуста</span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -979,6 +1234,7 @@ export default function Dashboard() {
   const loadingOnly = !isLast100Mode;
 
   const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, loadingOnly)
+  const { data: recentAllData, isLoading: isLoadingAll, refetch: refetchRecentAll, isFetching: isRecentAllFetching } = useDashboard(7, 35, false)
   const { data: fileStatus, refetch: refetchFileStatus } = useFileStatus()
   const { data: matchedEvents, refetch: refetchMatched } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
 
@@ -1019,6 +1275,7 @@ export default function Dashboard() {
         addRecentFile(res.active);
         // Refetch queries
         refetch();
+        refetchRecentAll();
         refetchMatched();
         refetchFileStatus();
       }
@@ -1054,6 +1311,7 @@ export default function Dashboard() {
         addRecentFile(res.active);
         // Refetch queries
         refetch();
+        refetchRecentAll();
         refetchMatched();
         refetchFileStatus();
       }
@@ -1223,6 +1481,7 @@ export default function Dashboard() {
       const newModified = fileStatus.last_modified
       if (lastModifiedRef.current && lastModifiedRef.current !== newModified) {
         // File was modified - refetch data
+        refetchRecentAll();
         refetch().then((result) => {
           const newData = result.data?.products ?? []
           const prevData = prevDataRef.current
@@ -1398,7 +1657,8 @@ export default function Dashboard() {
     
     // Применяем фильтры
     refetch()
-  }, [refetch, handleCancelAutoReturn])
+    refetchRecentAll()
+  }, [refetch, refetchRecentAll, handleCancelAutoReturn])
 
   const handlePhotoClick = useCallback((url: string, name: string) => {
     setPhotoModal({ url, name })
@@ -1413,8 +1673,8 @@ export default function Dashboard() {
           <div className="flex items-center gap-4">
             <Badge variant="secondary">Всего: {data?.total_all ?? '—'}</Badge>
             <Badge variant="outline">Показано: {data?.total ?? '—'}</Badge>
-            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-              <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+            <Button variant="outline" size="sm" onClick={() => { refetch(); refetchRecentAll(); }} disabled={isFetching || isRecentAllFetching}>
+              <RefreshCw className={`w-4 h-4 mr-2 ${(isFetching || isRecentAllFetching) ? 'animate-spin' : ''}`} />
               Обновить
             </Button>
             <Button variant="outline" size="sm" onClick={toggleFullscreen}>
@@ -1481,95 +1741,99 @@ export default function Dashboard() {
         />
       )}
 
-      <div className="space-y-4 relative">
-        {filters.showLoading && (
-          <div className="flex flex-col gap-0">
-            {renderWarning()}
-            <Card className={`border-8 ${isMockMode ? 'border-purple-500' : 'border-blue-500'} relative`}>
-              {hasNewRows && !isMockMode && (
-                <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
-                  <span className="text-white text-3xl font-bold">Обновление</span>
-                </div>
-              )}
-              <CardContent className="p-0">
-                {isLoading && !isMockMode ? <TableSkeleton /> : (isMockMode ? mockData : data?.products)?.length ? (
-                  <DataTable
-                    data={isMockMode ? mockData : (data?.products ?? [])}
-                    onPhotoClick={handlePhotoClick}
-                    isFullscreen={isFullscreen}
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-8 text-center">
-                    <Inbox className="w-8 h-8 text-muted-foreground/30 mb-2" />
-                    <span className="text-sm text-muted-foreground">Очередь загрузки пуста</span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {filters.showRealtime && (
-          <>
-            {console.log('[Dashboard] matchedEvents:', matchedEvents)}
-            {matchedEvents && matchedEvents.length > 0 && (
-              <>
-                {console.log('[Dashboard] First event:', matchedEvents[0])}
-                {console.log('[Dashboard] Rendering table with', matchedEvents.length, 'events')}
-              </>
-            )}
-
-            {/* Forecast Row - Outside the green border */}
-            {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} />}
-
+      <div className={`grid ${isFullscreen ? 'grid-cols-5' : 'grid-cols-1 xl:grid-cols-5'} gap-4 items-start relative`}>
+        <div className={`${isFullscreen ? 'col-span-4 space-y-4' : 'xl:col-span-4 space-y-4'}`}>
+          {filters.showLoading && (
             <div className="flex flex-col gap-0">
               {renderWarning()}
-              <Card className="border-8 border-green-500 relative">
-                {hasNewUnloadEvents && (
-                  <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
+              <Card className={`border-8 ${isMockMode ? 'border-purple-500' : 'border-blue-500'} relative`}>
+                {hasNewRows && !isMockMode && (
+                  <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
                     <span className="text-white text-3xl font-bold">Обновление</span>
                   </div>
                 )}
                 <CardContent className="p-0">
-                  {matchedEvents && matchedEvents.length > 0 ? (
+                  {isLoading && !isMockMode ? <TableSkeleton /> : (isMockMode ? mockData : data?.products)?.length ? (
                     <DataTable
-                      data={matchedEvents.map(e => ({
-                        number: String(e.hanger),
-                        date: e.exit_date,
-                        time: e.exit_time,
-                        client: e.client,
-                        profile: e.profile,
-                        profiles_info: e.profiles_info,
-                        color: e.color,
-                        lamels_qty: e.lamels_qty,
-                        kpz_number: e.kpz_number,
-                        material_type: e.material_type,
-                        entry_date: e.entry_date,
-                        entry_time: e.entry_time,
-                        exit_date: e.exit_date,
-                        exit_time: e.exit_time,
-                        current_bath: e.current_bath,
-                        bath_entry_time: e.bath_entry_time,
-                        bath_processing_time: e.bath_processing_time,
-                        time_warning: e.time_warning,
-                      }))}
+                      data={isMockMode ? mockData : (data?.products ?? [])}
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
-                      showEntryExit
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
                       <Inbox className="w-8 h-8 text-muted-foreground/30 mb-2" />
-                      <span className="text-sm text-muted-foreground">Нет событий выгрузки</span>
+                      <span className="text-sm text-muted-foreground">Очередь загрузки пуста</span>
                     </div>
                   )}
                 </CardContent>
               </Card>
             </div>
-          </>
-        )}
+          )}
 
+          {filters.showRealtime && (
+            <>
+              {console.log('[Dashboard] matchedEvents:', matchedEvents)}
+              {matchedEvents && matchedEvents.length > 0 && (
+                <>
+                  {console.log('[Dashboard] First event:', matchedEvents[0])}
+                  {console.log('[Dashboard] Rendering table with', matchedEvents.length, 'events')}
+                </>
+              )}
 
+              {/* Forecast Row - Outside the green border */}
+              {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} />}
+
+              <div className="flex flex-col gap-0">
+                {renderWarning()}
+                <Card className="border-8 border-green-500 relative">
+                  {hasNewUnloadEvents && (
+                    <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
+                      <span className="text-white text-3xl font-bold">Обновление</span>
+                    </div>
+                  )}
+                  <CardContent className="p-0">
+                    {matchedEvents && matchedEvents.length > 0 ? (
+                      <DataTable
+                        data={matchedEvents.map(e => ({
+                          number: String(e.hanger),
+                          date: e.exit_date,
+                          time: e.exit_time,
+                          client: e.client,
+                          profile: e.profile,
+                          profiles_info: e.profiles_info,
+                          color: e.color,
+                          lamels_qty: e.lamels_qty,
+                          kpz_number: e.kpz_number,
+                          material_type: e.material_type,
+                          entry_date: e.entry_date,
+                          entry_time: e.entry_time,
+                          exit_date: e.exit_date,
+                          exit_time: e.exit_time,
+                          current_bath: e.current_bath,
+                          bath_entry_time: e.bath_entry_time,
+                          bath_processing_time: e.bath_processing_time,
+                          time_warning: e.time_warning,
+                        }))}
+                        onPhotoClick={handlePhotoClick}
+                        isFullscreen={isFullscreen}
+                        showEntryExit
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <Inbox className="w-8 h-8 text-muted-foreground/30 mb-2" />
+                        <span className="text-sm text-muted-foreground">Нет событий выгрузки</span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className={`${isFullscreen ? 'col-span-1' : 'xl:col-span-1'} w-full`}>
+          <SidebarQueueTable data={recentAllData?.products} isLoading={isLoadingAll} isFullscreen={isFullscreen} />
+        </div>
       </div>
 
       <PhotoModal
@@ -1661,6 +1925,14 @@ export default function Dashboard() {
         accept=".xlsx,.xls,.xlsm"
         className="hidden"
       />
+
+      {/* Фиксированные часы в правом нижнем углу */}
+      <div className="fixed bottom-4 right-4 z-50 bg-background/95 dark:bg-slate-900/95 backdrop-blur-sm border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-2 shadow-lg flex items-center gap-2">
+        <Clock className="w-5 h-5 text-slate-500" />
+        <span className="font-mono text-2xl font-bold text-foreground tracking-wider">
+          <ClockInline />
+        </span>
+      </div>
     </div>
   )
 }
