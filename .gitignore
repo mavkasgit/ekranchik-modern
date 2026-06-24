@@ -103,3 +103,7 @@ chrome_stdout.log
 # Executables
 *.exe
 launcher.zip
+
+# Launcher build outputs
+launcher/*.pdb
+launcher/Microsoft.Web.WebView2.*.xml

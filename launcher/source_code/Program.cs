@@ -694,7 +694,7 @@ namespace EkranchikKiosk
                 await webView.EnsureCoreWebView2Async(env);
             }
             catch (Exception ex) {
-                MessageBox.Show($"Ошибка инициализации WebView2: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Ошибка инициализации WebView2:\n\n{ex}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Application.Exit();
                 return;
             }
