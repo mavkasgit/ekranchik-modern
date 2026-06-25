@@ -46,8 +46,12 @@ function pickMetaValue(primary: string | null | undefined, fallback: string | nu
   return normalizeMetaValue(fallback)
 }
 
+function normalizeColorName(colorName: string): string {
+  return colorName.toLowerCase().replace(/[\s\-_]/g, '')
+}
+
 function getColorHex(colorName: string): string {
-  const name = colorName.toLowerCase().trim()
+  const name = normalizeColorName(colorName)
 
   const colorMap: Record<string, string> = {
     'серебро': '#C0C0C0',
@@ -61,17 +65,22 @@ function getColorHex(colorName: string): string {
     'rosegold': '#B76E79',
   }
 
-  if (colorMap[name]) return colorMap[name]
-
+  // Exact match with normalized key
   for (const [key, value] of Object.entries(colorMap)) {
-    if (name.includes(key) || key.includes(name)) return value
+    if (normalizeColorName(key) === name) return value
+  }
+
+  // Partial match
+  for (const [key, value] of Object.entries(colorMap)) {
+    const normKey = normalizeColorName(key)
+    if (name.includes(normKey) || normKey.includes(name)) return value
   }
 
   return '#9CA3AF'
 }
 
 function abbreviateColor(colorName: string): string {
-  const name = colorName.toLowerCase().trim()
+  const name = normalizeColorName(colorName)
   const abbrevMap: Record<string, string> = {
     'серебро': 'сер',
     'черный': 'чер',
@@ -83,8 +92,20 @@ function abbreviateColor(colorName: string): string {
     'растрав': 'рст',
     'rosegold': 'роз',
   }
-  if (abbrevMap[name]) return abbrevMap[name]
-  return name.slice(0, 4) || '—'
+
+  // Exact match with normalized key
+  for (const [key, value] of Object.entries(abbrevMap)) {
+    if (normalizeColorName(key) === name) return value
+  }
+
+  // Partial match
+  for (const [key, value] of Object.entries(abbrevMap)) {
+    const normKey = normalizeColorName(key)
+    if (name.includes(normKey) || normKey.includes(name)) return value
+  }
+
+  const cleanName = colorName.toLowerCase().trim()
+  return cleanName.slice(0, 4) || '—'
 }
 
 function extractProfileText(profile: string): string {

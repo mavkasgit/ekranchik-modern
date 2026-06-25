@@ -103,8 +103,12 @@ function formatDate(date: string | undefined): string {
 }
 
 // Color mapping - top 15 most used colors
+function normalizeColorName(colorName: string): string {
+  return colorName.toLowerCase().replace(/[\s\-_]/g, '')
+}
+
 function getColorHex(colorName: string): string {
-  const name = colorName.toLowerCase().trim()
+  const name = normalizeColorName(colorName)
 
   const colorMap: Record<string, string> = {
     // Top colors by usage
@@ -119,12 +123,15 @@ function getColorHex(colorName: string): string {
     'rosegold': '#B76E79',     // 126 uses
   }
 
-  // Try exact match
-  if (colorMap[name]) return colorMap[name]
+  // Try exact match with normalized keys
+  for (const [key, value] of Object.entries(colorMap)) {
+    if (normalizeColorName(key) === name) return value
+  }
 
   // Try partial match
   for (const [key, value] of Object.entries(colorMap)) {
-    if (name.includes(key) || key.includes(name)) return value
+    const normKey = normalizeColorName(key)
+    if (name.includes(normKey) || normKey.includes(name)) return value
   }
 
   // Default gray for unknown
@@ -715,13 +722,13 @@ function DataTable({
   headerChildren?: React.ReactNode
 }) {
   const gridTemplateColumns = showEntryExit
-    ? '[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 45px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px'
-    : '[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 45px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px';
+    ? '[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px'
+    : '[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px';
 
   return (
-    <div className={`overflow-auto text-xs border border-slate-200 dark:border-slate-800 ${isFullscreen ? 'max-h-screen rounded-none border-none' : 'rounded-md max-h-[500px]'}`}>
+    <div className={`overflow-auto text-sm border border-slate-200 dark:border-slate-800 ${isFullscreen ? 'max-h-screen rounded-none border-none' : 'rounded-md max-h-[500px]'}`}>
       <div 
-        className="grid w-full text-xs"
+        className="grid w-full text-sm"
         style={{ gridTemplateColumns }}
       >
         {headerChildren && (
@@ -735,7 +742,7 @@ function DataTable({
 
         {/* Шапка таблицы */}
         <div 
-          className="sticky top-0 bg-muted z-20 text-[12px] font-semibold text-foreground/85 tracking-tight border-b border-slate-300 dark:border-slate-700 grid col-span-full"
+          className="sticky top-0 bg-muted z-20 text-[14px] font-semibold text-foreground/85 tracking-tight border-b border-slate-300 dark:border-slate-700 grid col-span-full"
           style={{ gridTemplateColumns, display: 'grid' }}
         >
           <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'date' }}>Дата</div>
@@ -745,8 +752,8 @@ function DataTable({
           <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'num' }}>№</div>
           <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'type' }}>Тип</div>
           <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'kpz' }}>№ КПЗ</div>
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'client' }}>Клиент</div>
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'profile' }}>Профиль</div>
+          <div className="text-left py-1.5 px-2 flex items-center justify-start" style={{ gridColumn: 'client' }}>Клиент</div>
+          <div className="text-left py-1.5 px-2 flex items-center justify-start" style={{ gridColumn: 'profile' }}>Профиль</div>
           <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'photo' }}>Фото</div>
           <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'lamels' }}>Ламели</div>
           <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'color' }}>Цвет</div>
@@ -769,7 +776,7 @@ function DataTable({
               {showEntryExit ? (
                 <>
                   <div 
-                    className="text-center py-1 text-xs flex items-center justify-center" 
+                    className="text-center py-1 text-sm flex items-center justify-center" 
                     style={{ 
                       gridColumn: 'date', 
                       gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
@@ -785,7 +792,7 @@ function DataTable({
                     )}
                   </div>
                   <div 
-                    className="text-center py-1 text-xs flex items-center justify-center" 
+                    className="text-center py-1 text-sm flex items-center justify-center" 
                     style={{ 
                       gridColumn: 'time', 
                       gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
@@ -834,7 +841,7 @@ function DataTable({
                 {hanger.kpz_number}
               </div>
               <div 
-                className="text-center py-1 flex items-center justify-center truncate min-w-0 px-1" 
+                className="text-left py-1 flex items-center justify-start truncate min-w-0 px-2" 
                 style={{ gridColumn: 'client', gridRow: '1' }}
                 title={hanger.client}
               >
@@ -844,7 +851,7 @@ function DataTable({
               {/* Профиль и Фото в зависимости от showPhotosBelow */}
               {showPhotosBelow ? (
                 <div 
-                  className="text-center py-1 flex items-center justify-center min-w-0 px-2" 
+                  className="text-left py-1 flex items-center justify-start min-w-0 px-2" 
                   style={{ gridColumn: 'profile / lamels', gridRow: '1' }}
                   title={hanger.profile}
                 >
@@ -857,7 +864,7 @@ function DataTable({
               ) : (
                 <>
                   <div 
-                    className="text-center py-1 flex items-center justify-center min-w-0 px-1" 
+                    className="text-left py-1 flex items-center justify-start min-w-0 px-2" 
                     style={{ gridColumn: 'profile', gridRow: '1' }}
                     title={hanger.profile}
                   >
