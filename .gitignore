@@ -104,6 +104,9 @@ chrome_stdout.log
 *.exe
 launcher.zip
 
+# Inno Setup
+*.iss
+
 # Launcher build outputs
 launcher/*.pdb
 launcher/Microsoft.Web.WebView2.*.xml
