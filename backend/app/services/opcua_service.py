@@ -72,6 +72,10 @@ class OPCUAService:
         # Черный список (битые адреса)
         self._blacklist: Set[str] = set()
         
+        # Счётчик последовательных ошибок чтения (для автопереподключения)
+        self._consecutive_read_errors = 0
+        self._max_consecutive_read_errors = 5
+        
         # Статистика (с защитой от переполнения)
         self._stats = {
             'connections': 0,
@@ -399,6 +403,9 @@ class OPCUAService:
                 # Используем read_values() вместо несуществующего read_attributes()
                 data_values = await client.read_values(ua_nodes)
                 
+                # Успешное чтение — сбрасываем счётчик ошибок
+                self._consecutive_read_errors = 0
+                
                 # Обновляем кэш, проверяя каждое значение
                 for node_id, value in zip(chunk, data_values):
                     if value is not None:
@@ -416,13 +423,40 @@ class OPCUAService:
                     logger.info("[OPC UA] Stats counter reset (reads)")
             
             except Exception as e:
-                # Если ошибка связи - пробрасываем выше для реконнекта
+                error_type = type(e).__name__
                 error_str = str(e).lower()
-                if any(err in error_str for err in ["badsession", "oserror", "timeout", "closed"]):
+                
+                # Проверяем по ТИПУ исключения (надёжно) + по строке (для asyncua-specific)
+                is_network_error = isinstance(e, (
+                    OSError,
+                    TimeoutError,
+                    ConnectionError,
+                    ConnectionAbortedError,
+                    BrokenPipeError,
+                ))
+                is_session_error = any(err in error_str for err in [
+                    "badsession", "closed", "badtoo", "badsessionid"
+                ])
+                
+                if is_network_error or is_session_error:
+                    logger.warning(f"[OPC UA] Сетевая ошибка в пачке: {error_type}: {e}")
                     raise e
                 
-                logger.warning(f"[OPC UA] Ошибка чтения пачки: {e}")
+                # Несетевая ошибка (битый узел и т.д.) — логируем и продолжаем
+                self._consecutive_read_errors += 1
                 self._stats['errors'] += 1
+                logger.warning(
+                    f"[OPC UA] Ошибка чтения пачки ({self._consecutive_read_errors}/"
+                    f"{self._max_consecutive_read_errors}): {error_type}: {e}"
+                )
+                
+                # Если слишком много ошибок подряд — сессия "зомби", реконнект
+                if self._consecutive_read_errors >= self._max_consecutive_read_errors:
+                    logger.error(
+                        f"[OPC UA] {self._consecutive_read_errors} ошибок подряд! "
+                        f"Сессия не работает. Запускаем реконнект..."
+                    )
+                    raise e
         
         if updated_count > 0:
             self._last_update = now

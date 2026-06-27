@@ -313,12 +313,17 @@ class ExcelService:
                 if key in df.columns and value:
                     df = df[df[key].astype(str).str.contains(str(value), case=False, na=False)]
         
-        # OPTIMIZATION: If loading_only=False and limit is small, take last N rows BEFORE processing
-        # This avoids processing the entire dataset when we only need recent records
-        if not loading_only and limit < 500:
-            # Take last (limit * 2) rows to ensure we have enough after filtering
-            df = df.tail(limit * 2)
-            logger.info(f"[OPTIMIZATION] Pre-filtered to last {len(df)} rows before processing")
+        # Filter out completely empty rows for non-loading modes
+        # This ensures sidebar gets a mix of loading and completed rows
+        if not loading_only:
+            def _is_empty_val(v):
+                return pd.isna(v) or str(v).strip() in ('', '—', 'nan', 'NaT')
+            
+            mask = ~(df.apply(lambda row: _is_empty_val(row.get('profile')) 
+                              and _is_empty_val(row.get('material_type'))
+                              and _is_empty_val(row.get('time')), axis=1))
+            df = df[mask]
+            logger.info(f"[FILTER] After removing empty rows: {len(df)} rows")
         
         # Process records with filtering
         records = self._process_dataframe(df, loading_only=loading_only)
@@ -366,6 +371,15 @@ class ExcelService:
             date_val = row.get('date')
             material_type = row.get('material_type')
             time_val = row.get('time')
+            number_val = row.get('number')
+            profile_val = row.get('profile')
+            
+            # Skip completely empty rows (all key fields are '—' or empty)
+            def _is_empty(v):
+                return pd.isna(v) or str(v).strip() in ('', '—', 'nan', 'NaT')
+            
+            if _is_empty(number_val) and _is_empty(profile_val) and _is_empty(material_type):
+                continue
             
             # For loading_only mode: strict filtering
             if loading_only:

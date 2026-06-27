@@ -315,11 +315,16 @@ class LineMonitorService:
                 hanger_state = self._hangers.get(hanger_id)
 
                 # --- New Cycle Detection ---
-                # If hanger is not tracked, or was previously unloaded (inactive), it's a new cycle.
-                if not hanger_state or hanger_state.current_bath is None:
+                # If hanger is not tracked, it's a genuinely new hanger — create state.
+                # If it was previously unloaded (current_bath=None) but reappears, 
+                # reuse existing state to preserve path history.
+                if not hanger_state:
                     hanger_state = HangerState(id=hanger_id)
                     self._hangers[hanger_id] = hanger_state
                     logger.info(f"Hanger {hanger_id} started a new cycle upon entering bath {bath_name}.")
+                elif hanger_state.current_bath is None:
+                    # Re-appearing hanger — keep old path, just reset current position
+                    logger.info(f"Hanger {hanger_id} re-entered line at bath {bath_name} (was inactive).")
 
                 # --- State Update ---
                 # If hanger moved to a new bath
@@ -348,11 +353,23 @@ class LineMonitorService:
             except Exception as e:
                 logger.error(f"[Line Monitor] Error scanning bath {bath_name}: {e}")
 
-        # --- Handle hangers that are no longer seen ---
-        # This logic is tricky. A hanger might disappear due to a transient read error.
-        # The definitive signal that a hanger is off the line is the unload event.
-        # We will rely on _record_unload to set current_bath to None.
-        pass
+        # --- Handle hangers that are no longer seen in ANY bath ---
+        # НЕ удаляем сразу — transient read error может пропустить узел на 1-2 цикла.
+        # Даём grace period: если подвес не виден > 5 секунд — считаем его ушедшим.
+        HANGER_MISSING_GRACE = timedelta(seconds=5)
+        for hanger_id, state in list(self._hangers.items()):
+            if state.current_bath is None:
+                continue  # Уже неактивен (выгружен)
+            if hanger_id in hangers_seen_in_scan:
+                continue  # Виден в текущем скане
+            # Подвес не найден ни в одной ванне
+            time_missing = now - state.last_seen
+            if time_missing > HANGER_MISSING_GRACE:
+                logger.info(
+                    f"[Line Monitor] Hanger {hanger_id} missing for {time_missing.total_seconds():.0f}s "
+                    f"(was at bath {state.current_bath}). Marking inactive."
+                )
+                state.current_bath = None
 
     async def _check_unload(self) -> None:
         """Check Bath[34] for unload events."""
