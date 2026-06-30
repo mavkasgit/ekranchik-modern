@@ -31,7 +31,24 @@ class CatalogService:
     - Photo management
     - Analysis queries (profiles without photos)
     """
-    
+    def _normalize_db_path(self, path: Optional[str]) -> Optional[str]:
+        """
+        Normalize image path from DB to be relative to static directory without leading slashes.
+        e.g. '/static/images/123.jpg' -> 'images/123.jpg'
+             'images/123.jpg' -> 'images/123.jpg'
+        """
+        if not path:
+            return None
+        
+        # Remove leading slashes and backslashes
+        clean_path = path.replace('\\', '/').lstrip('/')
+        
+        # Remove 'static/' if it exists
+        if clean_path.startswith('static/'):
+            clean_path = clean_path[7:]
+            
+        return clean_path
+
     async def search_profiles(
         self,
         query: str,
@@ -315,21 +332,25 @@ class CatalogService:
         
         # Rename thumbnail: {name}-thumb.jpg
         if old_thumb_path:
-            old_thumb_file = images_dir.parent / old_thumb_path
-            if old_thumb_file.exists():
-                new_thumb_filename = f"{new_name}-thumb.jpg"
-                new_thumb_file = images_dir / new_thumb_filename
-                old_thumb_file.rename(new_thumb_file)
-                new_thumb_path = f"images/{new_thumb_filename}"
+            norm_thumb = self._normalize_db_path(old_thumb_path)
+            if norm_thumb:
+                old_thumb_file = images_dir.parent / norm_thumb
+                if old_thumb_file.exists():
+                    new_thumb_filename = f"{new_name}-thumb.jpg"
+                    new_thumb_file = images_dir / new_thumb_filename
+                    old_thumb_file.rename(new_thumb_file)
+                    new_thumb_path = f"images/{new_thumb_filename}"
         
         # Rename full photo: {name}.jpg
         if old_full_path:
-            old_full_file = images_dir.parent / old_full_path
-            if old_full_file.exists():
-                new_full_filename = f"{new_name}.jpg"
-                new_full_file = images_dir / new_full_filename
-                old_full_file.rename(new_full_file)
-                new_full_path = f"images/{new_full_filename}"
+            norm_full = self._normalize_db_path(old_full_path)
+            if norm_full:
+                old_full_file = images_dir.parent / norm_full
+                if old_full_file.exists():
+                    new_full_filename = f"{new_name}.jpg"
+                    new_full_file = images_dir / new_full_filename
+                    old_full_file.rename(new_full_file)
+                    new_full_path = f"images/{new_full_filename}"
         
         return new_thumb_path, new_full_path
     
@@ -522,13 +543,17 @@ class CatalogService:
             if profile:
                 # Delete old photos if they exist
                 if profile.photo_thumb:
-                    old_thumb = settings.images_path.parent / profile.photo_thumb
-                    if old_thumb.exists():
-                        old_thumb.unlink()
+                    norm_old_thumb = self._normalize_db_path(profile.photo_thumb)
+                    if norm_old_thumb:
+                        old_thumb = settings.images_path.parent / norm_old_thumb
+                        if old_thumb.exists():
+                            old_thumb.unlink()
                 if profile.photo_full:
-                    old_full = settings.images_path.parent / profile.photo_full
-                    if old_full.exists():
-                        old_full.unlink()
+                    norm_old_full = self._normalize_db_path(profile.photo_full)
+                    if norm_old_full:
+                        old_full = settings.images_path.parent / norm_old_full
+                        if old_full.exists():
+                            old_full.unlink()
                 
                 profile.photo_thumb = rel_thumb
                 profile.photo_full = rel_full
@@ -635,14 +660,18 @@ class CatalogService:
             
             # Delete files
             if profile.photo_thumb:
-                thumb_path = settings.images_path.parent / profile.photo_thumb
-                if thumb_path.exists():
-                    thumb_path.unlink()
+                norm_thumb = self._normalize_db_path(profile.photo_thumb)
+                if norm_thumb:
+                    thumb_path = settings.images_path.parent / norm_thumb
+                    if thumb_path.exists():
+                        thumb_path.unlink()
             
             if profile.photo_full:
-                full_path = settings.images_path.parent / profile.photo_full
-                if full_path.exists():
-                    full_path.unlink()
+                norm_full = self._normalize_db_path(profile.photo_full)
+                if norm_full:
+                    full_path = settings.images_path.parent / norm_full
+                    if full_path.exists():
+                        full_path.unlink()
             
             # Clear DB fields
             profile.photo_thumb = None
@@ -682,9 +711,11 @@ class CatalogService:
             
             # Delete full photo file
             if profile.photo_full:
-                full_path = settings.images_path.parent / profile.photo_full
-                if full_path.exists():
-                    full_path.unlink()
+                norm_full = self._normalize_db_path(profile.photo_full)
+                if norm_full:
+                    full_path = settings.images_path.parent / norm_full
+                    if full_path.exists():
+                        full_path.unlink()
             
             # Clear DB field
             profile.photo_full = None
@@ -724,9 +755,11 @@ class CatalogService:
             
             # Delete thumbnail file
             if profile.photo_thumb:
-                thumb_path = settings.images_path.parent / profile.photo_thumb
-                if thumb_path.exists():
-                    thumb_path.unlink()
+                norm_thumb = self._normalize_db_path(profile.photo_thumb)
+                if norm_thumb:
+                    thumb_path = settings.images_path.parent / norm_thumb
+                    if thumb_path.exists():
+                        thumb_path.unlink()
             
             # Clear DB field
             profile.photo_thumb = None
