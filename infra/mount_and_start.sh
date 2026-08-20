@@ -4,6 +4,13 @@ set -e
 MOUNT_POINT="/mnt/ktm-disk"
 SHARE_PATH="//172.17.11.7/Оператор" # Укажите актуальный IP/хост
 CREDS_FILE="/etc/ekranchik-credentials"
+MOUNT_EXTRA="nofail,_netdev,x-systemd.automount,x-systemd.idle-timeout=60"
+
+# 0. Устанавливаем клиент CIFS, если его нет
+if ! command -v mount.cifs >/dev/null 2>&1; then
+    echo "Установка cifs-utils (требуется sudo)..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq cifs-utils
+fi
 
 # 1. Проверяем / создаем файл учетных данных
 if [ ! -f "$CREDS_FILE" ] && [ ! -f "${CREDS_FILE}-guest" ]; then
@@ -42,16 +49,17 @@ fi
 # 3. Настройка параметров монтирования в зависимости от авторизации
 if [ -f "${CREDS_FILE}-guest" ]; then
     MOUNT_OPTS="guest,iocharset=utf8,ro,file_mode=0444,dir_mode=0555"
-    FSTAB_LINE="$SHARE_PATH $MOUNT_POINT cifs guest,iocharset=utf8,ro,file_mode=0444,dir_mode=0555,nofail 0 0"
+    FSTAB_LINE="$SHARE_PATH $MOUNT_POINT cifs guest,iocharset=utf8,ro,file_mode=0444,dir_mode=0555,$MOUNT_EXTRA 0 0"
 else
     MOUNT_OPTS="credentials=$CREDS_FILE,iocharset=utf8,ro,file_mode=0444,dir_mode=0555"
-    FSTAB_LINE="$SHARE_PATH $MOUNT_POINT cifs credentials=$CREDS_FILE,iocharset=utf8,ro,file_mode=0444,dir_mode=0555,nofail 0 0"
+    FSTAB_LINE="$SHARE_PATH $MOUNT_POINT cifs credentials=$CREDS_FILE,iocharset=utf8,ro,file_mode=0444,dir_mode=0555,$MOUNT_EXTRA 0 0"
 fi
 
 # 4. Настройка fstab для автоподключения при перезагрузке
-if ! grep -qF "$SHARE_PATH" /etc/fstab; then
+if ! grep -qF "$MOUNT_POINT" /etc/fstab; then
     echo "Добавление сетевого диска в /etc/fstab для автозапуска при загрузке системы..."
     sudo bash -c "echo '$FSTAB_LINE' >> /etc/fstab"
+    sudo systemctl daemon-reload
 fi
 
 # 5. Монтируем диск (если не смонтирован)

@@ -1,19 +1,17 @@
 """
 Excel Service - handles Excel file parsing, caching, and data extraction.
 """
-import os
 import re
 import time
 import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 
 import pandas as pd
 
 from app.core.config import settings
-from app.core.text_utils import normalize_text
 
 logger = logging.getLogger(__name__)
 
@@ -144,26 +142,20 @@ class ExcelService:
             logger.info(f"[CACHE HIT] Using cached data: {len(self._cache)} rows")
             df = self._cache.copy()
         else:
-            # Read Excel file from specific sheet
-            # skiprows=[0, 1] - skip instruction rows
-            # usecols - specific columns matching original app.py
+            # Read Excel file from specific sheet.
+            # Columns are resolved by HEADER NAME (see column_map.py, mirrors
+            # kpz-uchet/vba/ColRef.bas), with a legacy positional fallback.
+            # This survives manual column insertions in the workbook (e.g. a
+            # «Фамилия» column right after «Смена») that would shift positions.
             start_time = time.time()
             try:
-                # Use calamine engine for 4x faster reading (Rust-based)
-                df = pd.read_excel(
-                    path, 
-                    sheet_name=sheet_name, 
-                    skiprows=[0, 1],
-                    usecols=[3, 4, 5, 7, 8, 10, 11, 12, 16, 19],
-                    engine='calamine'
-                )
+                # Two-pass read: first the header row (rows 0-1 are
+                # instructions), then only the resolved columns via usecols so
+                # the calamine engine stays fast.
+                df = self._read_dataframe_by_header(path, sheet_name)
                 read_time = time.time() - start_time
                 logger.info(f"[EXCEL READ] {len(df)} rows in {read_time:.2f}s from {path.name} (calamine)")
-                
-                # Rename columns to match expected format
-                df.columns = ['date', 'number', 'time', 'material_type', 'defect',
-                              'kpz_number', 'client', 'profile', 'color', 'lamels_qty']
-                
+
                 # Remove completely empty rows
                 df = df.dropna(how='all')
                 
@@ -194,7 +186,71 @@ class ExcelService:
                 pass
         
         return df
-    
+
+    def _read_dataframe_by_header(self, path: Path, sheet_name: str) -> pd.DataFrame:
+        """
+        Two-pass read that resolves columns by HEADER NAME (see column_map.py).
+
+        Pass 1: read only the header row (rows 0-1 of the sheet are
+        instructions; the real header is row 2).
+        Pass 2: read only the resolved columns via usecols so the calamine
+        engine stays fast.
+
+        Resolution rule (mirrors kpz-uchet/vba/ColRef.bas):
+        - Headers are matched by normalized name (lowercase, edge whitespace
+          trimmed, interior preserved); the LAST match wins for duplicates.
+        - If at least one field is found by name: use those positions, and
+          fall back to legacy positions for the fields that did not match.
+        - If NO field is found by name: use the legacy positional mapping
+          entirely and log a warning.
+        """
+        from app.services.column_map import resolve_columns
+
+        # Pass 1: header row only (rows 0-1 are instructions, header is row 2)
+        header_df = pd.read_excel(
+            path,
+            sheet_name=sheet_name,
+            header=None,
+            skiprows=[0, 1],
+            nrows=1,
+            engine='calamine',
+        )
+        if header_df.empty:
+            logger.warning(f"[EXCEL COLUMNS] Empty header row in {path.name}")
+            return pd.DataFrame()
+
+        header_row = header_df.iloc[0]
+        resolution = resolve_columns(header_row)
+
+        if not resolution.found_by_name:
+            logger.warning(
+                f"[EXCEL COLUMNS] No columns matched by header name in {path.name}; "
+                "using legacy positional mapping"
+            )
+        elif resolution.missing:
+            logger.warning(
+                f"[EXCEL COLUMNS] Fields not found by name in {path.name}, "
+                f"falling back to legacy positions: {', '.join(sorted(resolution.missing))}"
+            )
+
+        # Build the ordered usecols list and the matching column names.
+        positions = resolution.positions
+        usecols = sorted(set(positions.values()))
+        col_to_field = {idx: field for field, idx in positions.items()}
+        names = [col_to_field[idx] for idx in usecols]
+
+        # Pass 2: data rows only (skip 2 instruction rows + 1 header row)
+        df = pd.read_excel(
+            path,
+            sheet_name=sheet_name,
+            header=None,
+            skiprows=[0, 1, 2],
+            usecols=usecols,
+            engine='calamine',
+        )
+        df.columns = names
+        return df
+
     def parse_profile_with_processing(self, text: str) -> Dict[str, Any]:
         """
         Parse profile text and extract processing information.

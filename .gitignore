@@ -80,6 +80,7 @@ Thumbs.db
 
 # Agent files
 .agents/
+.opencode/
 
 # E2E test configuration (local paths)
 e2e/.env

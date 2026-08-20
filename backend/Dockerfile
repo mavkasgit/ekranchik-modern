@@ -2,9 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (tzdata нужен для корректной работы TZ/time.tzset в контейнере)
 RUN apt-get update && apt-get install -y \
     curl \
+    tzdata \
+    && ln -snf /usr/share/zoneinfo/Europe/Moscow /etc/localtime \
+    && echo Europe/Moscow > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching

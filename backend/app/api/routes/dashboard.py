@@ -632,9 +632,15 @@ async def get_opcua_matched_unload_events(
             )
         )
         
-        # Match events with products: take MOST RECENT entry before exit time.
-        # A hanger is a physical object — it can only be in one place at a time,
-        # so the most recent loaded entry IS the correct match.
+        # Match events with products: take the newest valid row for this hanger
+        # from the Excel file. The Excel file is appended chronologically as
+        # products are loaded into the line, so later rows are the newest
+        # entries. Ordering follows file order rather than timestamp math —
+        # operator data-entry errors (typos in date/time) make timestamps
+        # unreliable, but the file's append-only order is preserved by the
+        # workflow. Among candidates for this hanger, the newest valid (has
+        # time, not used) row wins, provided it was not loaded well after the
+        # unload (sanity guard below).
         matched = []
         for event in events_to_match:
             hanger_num = str(event.get('hanger'))
@@ -645,64 +651,75 @@ async def get_opcua_matched_unload_events(
             exit_seconds = datetime_to_seconds(exit_date_tuple, exit_time_tuple)
             
             product = None
-            best_entry_seconds = None  # Track most recent entry timestamp
-            time_diff_hours = None
             
+            # Iterate candidates newest-first and pick the first valid, unused
+            # row. get_products() already returns records newest-first
+            # (records[::-1] in excel_service.py), so no extra reversal here —
+            # a second reverse would pick the OLDEST row instead.
             for p in candidates:
                 p_key = make_product_key(p)
                 if p_key in used_entries:
                     continue
                 
-                entry_date = str(p.get('date', ''))
                 entry_time = str(p.get('time', ''))
-                
                 # Skip entries without time — hanger not yet loaded into line
                 if not entry_time or entry_time == '—':
                     continue
                 
-                entry_date_tuple = parse_date(entry_date)
+                # Compute gap for the sanity check below and for diagnostics
+                entry_date_tuple = parse_date(str(p.get('date', '')))
                 entry_time_tuple = parse_time(entry_time)
                 entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
                 
-                # Entry must not be too far after exit (max 3 hours allowed for operator input delay)
-                if entry_seconds - exit_seconds > 3 * 3600:
+                # Entry must not be far after exit: a hanger cannot be loaded
+                # more than 3h after it was unloaded (operator input delay
+                # tolerance). Skip such impossible rows; ordering still follows
+                # file order, not time math.
+                if exit_seconds > 0 and entry_seconds - exit_seconds > 3 * 3600:
                     continue
                 
-                # Take the MOST RECENT entry (highest entry_seconds)
-                if best_entry_seconds is None or entry_seconds > best_entry_seconds:
-                    best_entry_seconds = entry_seconds
-                    product = p
-                    time_diff_hours = (exit_seconds - entry_seconds) / 3600
+                product = p
+                break
             
-            # Warning if gap exceeds 6h
+            # Warning if gap is suspicious (diagnostic only — not used for matching)
             warning_message = None
-            if product and time_diff_hours is not None and time_diff_hours > 6:
-                warning_message = f"⚠ Время между входом и выходом: {time_diff_hours:.1f}ч (проверить соответствие)"
+            if product:
+                entry_date_tuple = parse_date(str(product.get('date', '')))
+                entry_time_tuple = parse_time(str(product.get('time', '')))
+                entry_seconds = datetime_to_seconds(entry_date_tuple, entry_time_tuple)
+                time_diff_hours = (exit_seconds - entry_seconds) / 3600
                 
-                # Detailed diagnostic logging
-                logger.warning(
-                    f"[Matching Diagnostic] Hanger {hanger_num} exit at {event.get('date')} {event.get('time')} "
-                    f"matched with an old entry from {product.get('date')} {product.get('time')} (diff: {time_diff_hours:.1f}h). "
-                    f"Total candidates in Excel: {len(candidates)}."
-                )
-                for i, p_cand in enumerate(candidates):
-                    p_key_cand = make_product_key(p_cand)
-                    c_date = p_cand.get('date')
-                    c_time = p_cand.get('time')
-                    status = "OK"
-                    if p_key_cand in used_entries and p_key_cand != make_product_key(product):
-                        status = "Already used in another match"
-                    elif not c_time or c_time == '—':
-                        status = "Skipped (time is empty)"
-                    else:
-                        c_date_tuple = parse_date(c_date)
-                        c_time_tuple = parse_time(c_time)
-                        c_seconds = datetime_to_seconds(c_date_tuple, c_time_tuple)
-                        if c_seconds >= exit_seconds:
-                            status = f"Skipped (entry time {c_date} {c_time} is after or equal to exit time)"
+                if time_diff_hours > 6:
+                    warning_message = f"⚠ Время между входом и выходом: {time_diff_hours:.1f}ч (проверить соответствие)"
+                elif time_diff_hours < 0:
+                    warning_message = f"⚠ Вход позже выхода на {abs(time_diff_hours):.1f}ч (опечатка оператора?)"
+                
+                if warning_message:
+                    # Detailed diagnostic logging
+                    logger.warning(
+                        f"[Matching Diagnostic] Hanger {hanger_num} exit at {event.get('date')} {event.get('time')} "
+                        f"matched with newest valid row: {product.get('date')} {product.get('time')} "
+                        f"(diff: {time_diff_hours:.1f}h). "
+                        f"Total candidates in Excel: {len(candidates)}."
+                    )
+                    p_key_product = make_product_key(product)
+                    for i, p_cand in enumerate(candidates):
+                        p_key_cand = make_product_key(p_cand)
+                        c_date = p_cand.get('date')
+                        c_time = p_cand.get('time')
+                        
+                        if p_key_cand == p_key_product:
+                            status = f"Picked (newest valid row, diff: {time_diff_hours:.1f}h)"
+                        elif p_key_cand in used_entries:
+                            status = "Already used in another match"
+                        elif not c_time or c_time == '—':
+                            status = "Skipped (time is empty)"
                         else:
-                            status = f"Valid entry, diff: {(exit_seconds - c_seconds)/3600:.1f}h"
-                    logger.warning(f"  Candidate {i+1}: Date={c_date}, Time={c_time}, Profile={p_cand.get('profile')}, Client={p_cand.get('client')} -> {status}")
+                            # candidates are newest-first (get_products reverses)
+                            pos_from_end = i + 1
+                            status = f"Not picked (row #{pos_from_end} from bottom)"
+                        
+                        logger.warning(f"  Candidate {i+1}: Date={c_date}, Time={c_time}, Profile={p_cand.get('profile')}, Client={p_cand.get('client')} -> {status}")
             
             if product:
                 used_entries.add(make_product_key(product))

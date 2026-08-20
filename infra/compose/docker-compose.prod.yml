@@ -21,6 +21,7 @@ services:
       - ENVIRONMENT=production
       - DEBUG=false
       - SIMULATION_ENABLED=false
+      - TZ=Europe/Moscow
     expose:
       - "8000"
     volumes:
