@@ -121,6 +121,7 @@ function getColorHex(colorName: string): string {
     'медь': '#CD5C5C',         // 335 uses - more red copper
     'растрав': '#D3D3D3',      // 127 uses
     'rosegold': '#B76E79',     // 126 uses
+    'rosebronze': '#800020',   // rose bronze
   }
 
   // Try exact match with normalized keys

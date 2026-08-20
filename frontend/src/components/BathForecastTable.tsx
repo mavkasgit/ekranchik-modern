@@ -63,6 +63,7 @@ function getColorHex(colorName: string): string {
     'медь': '#CD5C5C',
     'растрав': '#D3D3D3',
     'rosegold': '#B76E79',
+    'rosebronze': '#800020',
   }
 
   // Exact match with normalized key
@@ -90,7 +91,8 @@ function abbreviateColor(colorName: string): string {
     'бронза': 'брз',
     'медь': 'мед',
     'растрав': 'рст',
-    'rosegold': 'роз',
+    'rosegold': 'RG',
+    'rosebronze': 'RB',
   }
 
   // Exact match with normalized key
