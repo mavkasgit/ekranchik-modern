@@ -67,6 +67,7 @@ npm-debug.log*
 
 # Build outputs
 frontend/dist/
+dist-full/
 
 # Kiro (AI development specs and documentation)
 .kiro/

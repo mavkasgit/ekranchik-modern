@@ -33,7 +33,9 @@ class ExcelService:
         filename = "active_excel_sim.json" if settings.SIMULATION_ENABLED else "active_excel.json"
         if static_dir.exists():
             return static_dir / filename
-        return Path(filename)
+        # Full mode (ADR 0002): static нет — хранить выбор в каталоге данных,
+        # чтобы пережил обновление (раньше падал в CWD рядом с кодом).
+        return settings.data_dir_path / filename
 
     def _load_persisted_active_file(self) -> Optional[str]:
         """Load the active file name from persistent JSON file"""

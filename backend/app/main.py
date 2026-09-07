@@ -24,6 +24,7 @@ from app.api.routes import dashboard_router, catalog_router, analysis_router, si
 from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
 from app.services.excel_watcher import excel_watcher
+from app.db.startup import ensure_data_dirs, run_startup_migrations
 from app.services.line_monitor import line_monitor
 from app.services.opcua_service import opcua_service
 from app.services.websocket_manager import websocket_manager
@@ -56,7 +57,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"[STARTUP] Ekranchik Modern v1.0")
     logger.info(f"[STARTUP] Environment: {settings.ENVIRONMENT}")
-    
+
+    # Full mode (ADR 0002): каталог данных + миграции до старта сервисов.
+    ensure_data_dirs()
+    await run_startup_migrations()
     # Start ExcelWatcher
     if settings.excel_path and settings.excel_path.exists():
         excel_watcher.start()
