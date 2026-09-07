@@ -14,7 +14,8 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -137,11 +138,49 @@ async def health_check():
     }
 
 
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "message": "Ekranchik Modern API",
-        "docs": "/docs",
-        "health": "/health"
-    }
+# Full mode (ADR 0002): serve frontend/dist SPA on the same port.
+# Order matters: api (/api) -> ws (/ws) -> static (/static) -> health/docs
+# are registered above and win; SPA mount + fallback only handle the rest.
+# The catch-all is registered BEFORE the "/" mount on purpose: a Mount on "/"
+# matches every path and answers 404 for missing files itself, so a fallback
+# registered after it would never be reached for nested SPA routes.
+_dist_dir = settings.FRONTEND_DIST_PATH
+_index_html = _dist_dir / "index.html" if _dist_dir is not None else None
+# SPA mode only when dist contains index.html; an empty/partial dist (e.g. failed
+# frontend build) keeps the legacy JSON root instead of serving 404s everywhere.
+if _dist_dir is not None and _index_html is not None and _index_html.is_file():
+    _dist_resolved = _dist_dir.resolve()
+    # Prefixes owned by routers/mounts/docs above: never serve index.html for them.
+    _SPA_EXCLUDED_PREFIXES = frozenset({"api", "ws", "static", "health", "docs", "redoc", "openapi.json"})
+
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        """Serve dist files directly, fall back to index.html for SPA routes."""
+        first_segment = full_path.split("/", 1)[0]
+        if first_segment in _SPA_EXCLUDED_PREFIXES:
+            raise HTTPException(status_code=404)
+        if full_path:
+            candidate = (_dist_dir / Path(full_path)).resolve()
+            if _dist_resolved not in candidate.parents:
+                raise HTTPException(status_code=404)
+            if candidate.is_file():
+                return FileResponse(str(candidate))
+        if _index_html.is_file():
+            return FileResponse(str(_index_html))
+        raise HTTPException(status_code=404)
+
+
+    app.mount("/", StaticFiles(directory=str(_dist_dir), html=True), name="spa")
+    logger.info(f"[STARTUP] SPA mounted from: {_dist_dir}")
+else:
+
+
+    @app.get("/")
+    async def root():
+        """Root endpoint"""
+        return {
+            "message": "Ekranchik Modern API",
+            "docs": "/docs",
+            "health": "/health"
+        }

@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Static files
     STATIC_DIR: str = "../static"  # Relative to backend folder
     IMAGES_DIR: str = "../static/images"
+
+    # Frontend SPA (full mode, ADR 0002): FastAPI serves frontend/dist on the same port
+    FRONTEND_DIST_DIR: str = "../frontend/dist"  # Relative to backend folder
     
     # Photo upload
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
@@ -69,6 +72,14 @@ class Settings(BaseSettings):
     def STATIC_PATH(self) -> Path | None:
         """Get static directory path"""
         path = Path(self.STATIC_DIR)
+        if path.exists():
+            return path
+        return None
+
+    @property
+    def FRONTEND_DIST_PATH(self) -> Path | None:
+        """Get frontend dist directory path"""
+        path = Path(self.FRONTEND_DIST_DIR)
         if path.exists():
             return path
         return None
