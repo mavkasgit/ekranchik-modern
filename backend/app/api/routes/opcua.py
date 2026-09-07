@@ -13,70 +13,11 @@ from app.services.opcua_service import opcua_service
 from app.services.line_monitor import line_monitor
 from app.services.excel_service import excel_service
 from app.core.config import settings
+from app.services.matching import normalize_hanger_key, select_latest_candidate
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opcua", tags=["opcua"])
-
-
-def _normalize_hanger_key(value: Any) -> str:
-    if value is None:
-        return ""
-
-    raw = str(value).strip()
-    if not raw:
-        return ""
-
-    try:
-        numeric = float(raw.replace(",", "."))
-        return str(int(numeric))
-    except (ValueError, TypeError):
-        return raw
-
-
-def _parse_excel_date(date_str: str) -> tuple[int, int, int]:
-    if not date_str or date_str == "—":
-        return (0, 0, 0)
-    try:
-        parts = date_str.strip().split(".")
-        if len(parts) != 3:
-            return (0, 0, 0)
-
-        day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
-        if year < 50:
-            year += 2000
-        elif year < 100:
-            year += 1900
-
-        return (year, month, day)
-    except (ValueError, IndexError):
-        return (0, 0, 0)
-
-
-def _parse_excel_time(time_str: str) -> tuple[int, int, int]:
-    if not time_str or time_str == "—":
-        return (0, 0, 0)
-    try:
-        parts = time_str.strip().split(":")
-        hour = int(parts[0]) if len(parts) > 0 else 0
-        minute = int(parts[1]) if len(parts) > 1 else 0
-        second = int(parts[2]) if len(parts) > 2 else 0
-        return (hour, minute, second)
-    except (ValueError, IndexError):
-        return (0, 0, 0)
-
-
-def _excel_datetime_to_seconds(date_tuple: tuple[int, int, int], time_tuple: tuple[int, int, int]) -> float:
-    try:
-        year, month, day = date_tuple
-        hour, minute, second = time_tuple
-
-        if year == 0 or month == 0 or day == 0:
-            return 0.0
-
-        return datetime(year, month, day, hour, minute, second).timestamp()
-    except (ValueError, OverflowError):
-        return 0.0
 
 
 def _normalize_meta_value(value: Any) -> str:
@@ -86,19 +27,14 @@ def _normalize_meta_value(value: Any) -> str:
 
 def _build_latest_hanger_meta() -> Dict[str, Dict[str, str]]:
     """Build latest profile/color by hanger number using Excel date+time comparison.
-    
-    NOTE: This is a synchronous, CPU/IO-heavy operation. 
+
+    NOTE: This is a synchronous, CPU/IO-heavy operation.
     Always call via _get_hanger_meta_async() to avoid blocking the event loop.
 
-    Priority rule:
-    - Entries with time filled (real loaded entries) always win over entries where
-      time is empty (draft/placeholder rows not yet loaded into the line).
-    - Among same-priority entries, the most recent timestamp wins.
+    Selection rule lives in app.services.matching.select_latest_candidate:
+    the newest row with filled time wins; draft rows (no time) are used
+    only when a hanger has no real loaded entry.
     """
-    latest: Dict[str, Dict[str, str]] = {}
-    latest_ts: Dict[str, float] = {}
-    latest_has_time: Dict[str, bool] = {}  # Track if best entry has real time
-
     products = excel_service.get_products(
         limit=3000,
         days=30,
@@ -106,33 +42,23 @@ def _build_latest_hanger_meta() -> Dict[str, Dict[str, str]]:
         loading_only=False,
     )
 
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
     for product in products:
-        hanger_key = _normalize_hanger_key(product.get("number"))
+        hanger_key = normalize_hanger_key(product.get("number"))
         if not hanger_key:
             continue
+        grouped.setdefault(hanger_key, []).append(product)
 
-        raw_time = str(product.get("time", "") or "").strip()
-        entry_has_time = bool(raw_time) and raw_time not in ("—", "nan", "NaT", "None")
-
-        date_tuple = _parse_excel_date(str(product.get("date", "")))
-        time_tuple = _parse_excel_time(raw_time) if entry_has_time else (0, 0, 0)
-        ts = _excel_datetime_to_seconds(date_tuple, time_tuple)
-
-        existing_has_time = latest_has_time.get(hanger_key, False)
-
-        # A draft entry (no time) must not beat a real loaded entry (has time)
-        if existing_has_time and not entry_has_time:
+    latest: Dict[str, Dict[str, str]] = {}
+    for hanger_key, candidates in grouped.items():
+        best = select_latest_candidate(candidates)
+        if best is None:
+            best = select_latest_candidate(candidates, require_time=False)
+        if best is None:
             continue
-
-        # Among same-priority entries take the most recent
-        if entry_has_time == existing_has_time and ts < latest_ts.get(hanger_key, 0.0):
-            continue
-
-        latest_ts[hanger_key] = ts
-        latest_has_time[hanger_key] = entry_has_time
         latest[hanger_key] = {
-            "article": _normalize_meta_value(product.get("profile")),
-            "color": _normalize_meta_value(product.get("color")),
+            "article": _normalize_meta_value(best.get("profile")),
+            "color": _normalize_meta_value(best.get("color")),
         }
 
     return latest
@@ -607,7 +533,7 @@ async def get_line_status():
             out_time = opcua_service.get_value(f"ns=4;s=Bath[{i}].OutTime")
             d_time = opcua_service.get_value(f"ns=4;s=Bath[{i}].dTime")
             pallet_number = int(pallete) if pallete else 0
-            hanger_meta = hanger_meta_by_number.get(_normalize_hanger_key(pallet_number), {})
+            hanger_meta = hanger_meta_by_number.get(normalize_hanger_key(pallet_number), {})
             
             baths.append({
                 "bath_number": i,
