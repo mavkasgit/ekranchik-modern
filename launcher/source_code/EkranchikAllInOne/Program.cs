@@ -1,16 +1,25 @@
-// EkranchikAllInOne — трей-лаунчер полного режима (issue #3, ADR 0002).
+// EkranchikAllInOne — трей-лаунчер полного режима (issue #3, ADR 0002; окно
+// настроек + автозапуск Windows — issue #4).
 //
-// Сценарий: двойной клик → запуск backend (python -m uvicorn) → poll /health →
-// запуск существующего Ekranchik.exe с URL дашборда → трей с «Открыть папку
-// логов» / «Выход» (останавливает сервер и закрывает киоск).
+// Сценарий: двойной клик → окно настроек (Excel, OPC UA, симуляция, монитор,
+// автозапуск) → запуск backend (python -m uvicorn) → poll /health →
+// запуск существующего Ekranchik.exe с URL дашборда → трей с «Настройки» /
+// «Открыть папку логов» / «Выход» (останавливает сервер и закрывает киоск).
+// Флаг --silent (и запись автозапуска HKCU ...\Run с ним): старт в трей без
+// окна, стек поднимается сам.
 //
-// Конфигурирование под #5: JSON %LOCALAPPDATA%/Ekranchik/allinone_config.json
-// + перекрывающие env-переменные EKRANCHIK_* (см. AllInOneConfig.FromEnvironment).
+// Конфигурирование: JSON %LOCALAPPDATA%/Ekranchik/allinone_config.json
+// + перекрывающие env-переменные EKRANCHIK_* (см. AllInOneConfig).
 // В трее НЕТ портов/статусов — только действия.
 //
-// Тестовый крючок для smoke: флаг --auto-exit-after-ready=N (сек) — после
-// успешного запуска киоска ждёт N сек и идёт по ТОМУ ЖЕ коду Shutdown(),
-// что и пункт трея «Выход». Флаг не показывается пользователю.
+// Тестовые крючки для smoke (не показываются пользователю):
+//   --auto-exit-after-ready=N — после успешного запуска киоска ждёт N сек и
+//     идёт по ТОМУ ЖЕ коду Shutdown(), что и пункт трея «Выход»;
+//     подразумевает тихий режим (без окна настроек);
+//   --dump-config — печатает итоговый конфиг (файл + env) в stdout и выходит;
+//   --autostart=on|off [--run-key=<subkey>] — включает/выключает автозапуск
+//     (по умолчанию в настоящем Run; с --run-key — в тестовом подключе
+//     HKCU\<subkey> под тем же именем значения) и выходит.
 
 using System;
 using System.Diagnostics;
@@ -22,6 +31,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace EkranchikAllInOne
 {
@@ -34,19 +44,70 @@ namespace EkranchikAllInOne
             Application.SetCompatibleTextRenderingDefault(false);
 
             int autoExitAfterReady = 0;
+            bool silent = false;
+            bool dumpConfig = false;
+            string? autostartArg = null;
+            string? runKeyArg = null;
             foreach (var arg in args)
             {
-                const string prefix = "--auto-exit-after-ready=";
-                if (arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                    && int.TryParse(arg.Substring(prefix.Length), out int seconds)
+                const string autoPrefix = "--auto-exit-after-ready=";
+                const string autostartPrefix = "--autostart=";
+                const string runKeyPrefix = "--run-key=";
+                if (arg.StartsWith(autoPrefix, StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(arg.Substring(autoPrefix.Length), out int seconds)
                     && seconds > 0)
                 {
                     autoExitAfterReady = seconds;
                 }
+                else if (arg.Equals("--silent", StringComparison.OrdinalIgnoreCase))
+                {
+                    silent = true;
+                }
+                else if (arg.Equals("--dump-config", StringComparison.OrdinalIgnoreCase))
+                {
+                    dumpConfig = true;
+                }
+                else if (arg.StartsWith(autostartPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    autostartArg = arg.Substring(autostartPrefix.Length);
+                }
+                else if (arg.StartsWith(runKeyPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    runKeyArg = arg.Substring(runKeyPrefix.Length);
+                }
+            }
+
+            // Крючок smoke: round-trip автозапуска в тестовом ключе реестра.
+            if (autostartArg != null)
+            {
+                bool enable = autostartArg.Equals("on", StringComparison.OrdinalIgnoreCase)
+                    || autostartArg.Equals("1", StringComparison.OrdinalIgnoreCase)
+                    || autostartArg.Equals("true", StringComparison.OrdinalIgnoreCase);
+                try
+                {
+                    AutoStartManager.Apply(enable, runKeyArg);
+                    Console.WriteLine($"autostart {(enable ? "enabled" : "disabled")} key={AutoStartManager.EffectiveKeyPath(runKeyArg)}");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"autostart failed: {ex.Message}");
+                    return 1;
+                }
             }
 
             var config = AllInOneConfig.Load();
-            using (var context = new AllInOneContext(config, autoExitAfterReady))
+
+            // Крючок smoke: проверка persist пяти настроек (файл + env).
+            if (dumpConfig)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(config,
+                    new JsonSerializerOptions { WriteIndented = false }));
+                return 0;
+            }
+
+            // smoke-хук идёт тем же тихим путём, что и --silent: без окна.
+            using (var context = new AllInOneContext(config, autoExitAfterReady, silent || autoExitAfterReady > 0))
             {
                 Application.Run(context);
                 return context.ExitCode;
@@ -54,7 +115,9 @@ namespace EkranchikAllInOne
         }
     }
 
-    // === Конфигурация (JSON + env-переопределения; расширяется в #5) ===
+    // === Конфигурация (JSON + env-переопределения). Issue #4: пять настроек
+    // окна (путь Excel, адрес OPC UA, симуляция, монитор киоска, автозапуск)
+    // persist-ятся в allinone_config.json между запусками. ===
     sealed class AllInOneConfig
     {
         public string PythonExe { get; set; } = "python";
@@ -68,6 +131,18 @@ namespace EkranchikAllInOne
         public string KioskArgs { get; set; } = "--no-gui \"{url}\"";
         public int ReadyTimeoutSeconds { get; set; } = 90;
 
+        // --- Issue #4: настройки окна (persist между запусками) ---
+        // Сетевой путь к Excel-книге учёта.
+        public string ExcelPath { get; set; } = "//ktm-disk/Оператор/Учет КПЗ 2026.xlsm";
+        // Адрес реального OPC UA сервера.
+        public string OpcuaEndpoint { get; set; } = "opc.tcp://172.17.11.131:4840/";
+        // Тестовые данные (SIMULATION_ENABLED у backend).
+        public bool SimulationEnabled { get; set; } = false;
+        // Индекс монитора для киоска (как monitor в kiosk_config.json).
+        public int KioskMonitor { get; set; } = 0;
+        // Желаемый автозапуск Windows (реестр HKCU ...\Run синхронизируется
+        // при старте и при сохранении окна настроек).
+        public bool AutoStart { get; set; } = false;
         private static readonly string ConfigDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ekranchik");
         private static readonly string ConfigFile = Path.Combine(ConfigDir, "allinone_config.json");
@@ -96,6 +171,15 @@ namespace EkranchikAllInOne
             return config;
         }
 
+        public void Save()
+        {
+            Directory.CreateDirectory(ConfigDir);
+            string tmp = ConfigFile + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(this,
+                new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(tmp, ConfigFile, overwrite: true);
+        }
+
         private void ApplyEnvironmentOverrides()
         {
             string? Env(string name) => Environment.GetEnvironmentVariable(name);
@@ -106,8 +190,39 @@ namespace EkranchikAllInOne
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_KIOSK_EXE"))) KioskExe = Env("EKRANCHIK_KIOSK_EXE")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_KIOSK_ARGS"))) KioskArgs = Env("EKRANCHIK_KIOSK_ARGS")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_URL"))) DashboardUrl = Env("EKRANCHIK_URL")!;
+            if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_EXCEL_PATH"))) ExcelPath = Env("EKRANCHIK_EXCEL_PATH")!;
+            if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_OPCUA_ENDPOINT"))) OpcuaEndpoint = Env("EKRANCHIK_OPCUA_ENDPOINT")!;
+            if (TryParseBool(Env("EKRANCHIK_SIMULATION"), out bool sim)) SimulationEnabled = sim;
+            if (int.TryParse(Env("EKRANCHIK_KIOSK_MONITOR"), out int monitor) && monitor >= 0) KioskMonitor = monitor;
+            if (TryParseBool(Env("EKRANCHIK_AUTOSTART"), out bool autostart)) AutoStart = autostart;
             if (int.TryParse(Env("EKRANCHIK_PORT"), out int port) && port > 0 && port < 65536) Port = port;
             if (int.TryParse(Env("EKRANCHIK_READY_TIMEOUT_S"), out int timeout) && timeout > 0) ReadyTimeoutSeconds = timeout;
+        }
+
+        private static bool TryParseBool(string? value, out bool result)
+        {
+            if (value != null)
+            {
+                string v = value.Trim().ToLowerInvariant();
+                if (v == "1" || v == "true" || v == "yes" || v == "on") { result = true; return true; }
+                if (v == "0" || v == "false" || v == "no" || v == "off") { result = false; return true; }
+            }
+            result = false;
+            return false;
+        }
+
+        // Env для дочернего процесса backend. Backend читает ГОЛЫЕ имена
+        // (pydantic Settings без префикса, голое в приоритете) — их ставим
+        // всегда; EKRANCHIK_*-алиасы — форвард-контракт с #5 (Packager).
+        public void ApplyToBackendEnvironment(System.Collections.Generic.IDictionary<string, string?> env)
+        {
+            string sim = SimulationEnabled ? "true" : "false";
+            env["SIMULATION_ENABLED"] = sim;
+            env["OPCUA_ENDPOINT"] = OpcuaEndpoint;
+            env["EXCEL_REAL_FILE_PATH"] = ExcelPath;
+            env["EKRANCHIK_SIMULATION"] = sim;
+            env["EKRANCHIK_OPCUA_ENDPOINT"] = OpcuaEndpoint;
+            env["EKRANCHIK_EXCEL_PATH"] = ExcelPath;
         }
 
         private void ApplyDefaults()
@@ -134,6 +249,42 @@ namespace EkranchikAllInOne
                 dir = dir.Parent;
             }
             return besideExe;
+        }
+    }
+    // === Автозапуск Windows: HKCU Software\Microsoft\Windows\CurrentVersion\Run.
+    // Имя значения — EkranchikAllInOne (не пересекается с "Ekranchik" киоска).
+    // Команда — "<exe>" --silent: старт в трей без окна, стек поднимается сам.
+    // Снятие галки удаляет запись. runKeyPath != null — тестовый подключ HKCU
+    // (smoke round-trip, настоящий Run не пачкать).
+    static class AutoStartManager
+    {
+        public const string ValueName = "EkranchikAllInOne";
+        public const string RealRunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+        public static string EffectiveKeyPath(string? runKeyPath) =>
+            string.IsNullOrWhiteSpace(runKeyPath) ? RealRunKeyPath : runKeyPath!;
+
+        public static void Apply(bool enable, string? runKeyPath = null)
+        {
+            string keyPath = EffectiveKeyPath(runKeyPath);
+            using (RegistryKey key = Registry.CurrentUser.CreateSubKey(keyPath, true))
+            {
+                if (key == null)
+                    throw new InvalidOperationException($"cannot open HKCU\\{keyPath}");
+                if (enable)
+                    key.SetValue(ValueName, $"\"{Application.ExecutablePath}\" --silent");
+                else
+                    key.DeleteValue(ValueName, throwOnMissingValue: false);
+            }
+        }
+
+        public static bool IsEnabled(string? runKeyPath = null)
+        {
+            string keyPath = EffectiveKeyPath(runKeyPath);
+            using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false))
+            {
+                return key?.GetValue(ValueName) != null;
+            }
         }
     }
 
@@ -209,11 +360,273 @@ namespace EkranchikAllInOne
         }
     }
 
+    // === Окно настроек (issue #4), в стиле киоска: Slate-900/800, Segoe UI. ===
+    // Пять настроек persist-ятся в allinone_config.json: путь Excel, адрес
+    // OPC UA, тестовые данные, монитор киоска, автозапуск Windows.
+    sealed class SettingsForm : Form
+    {
+        private readonly AllInOneConfig _config;
+        private readonly TextBox _txtExcel;
+        private readonly TextBox _txtOpcua;
+        private readonly CheckBox _chkSim;
+        private readonly ComboBox _cmbMonitor;
+        private readonly CheckBox _chkAutostart;
+
+        public SettingsForm(AllInOneConfig config)
+        {
+            _config = config;
+
+            Color bgDark = Color.FromArgb(15, 23, 42);      // #0f172a
+            Color bgCard = Color.FromArgb(30, 41, 59);      // #1e293b
+            Color fgLight = Color.FromArgb(248, 250, 252);  // #f8fafc
+            Color fgMuted = Color.FromArgb(148, 163, 184);  // slate-400
+            Color accentBlue = Color.FromArgb(59, 130, 246); // #3b82f6
+            Color borderGray = Color.FromArgb(51, 65, 85);   // #334155
+
+            this.Text = "Ekranchik — Настройки";
+            this.Size = new Size(540, 560);
+            this.BackColor = bgDark;
+            this.ForeColor = fgLight;
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+            this.StartPosition = FormStartPosition.CenterScreen;
+            this.ShowInTaskbar = true;
+            try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch { }
+
+            var title = new Label
+            {
+                Text = "НАСТРОЙКИ EKRANCHIK",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                Location = new Point(20, 15),
+                Size = new Size(480, 25),
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            this.Controls.Add(title);
+
+            int y = 55;
+            var lblExcel = new Label
+            {
+                Text = "Путь к Excel (сетевой):",
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Location = new Point(40, y),
+                Size = new Size(440, 20),
+                ForeColor = fgMuted
+            };
+            this.Controls.Add(lblExcel);
+            y += 22;
+            _txtExcel = new TextBox
+            {
+                Text = config.ExcelPath,
+                Font = new Font("Segoe UI", 10),
+                BackColor = bgCard,
+                ForeColor = fgLight,
+                Location = new Point(40, y),
+                Size = new Size(350, 28),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            this.Controls.Add(_txtExcel);
+            var btnBrowse = new Button
+            {
+                Text = "Обзор...",
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                BackColor = bgCard,
+                ForeColor = fgLight,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(400, y - 1),
+                Size = new Size(80, 28),
+                Cursor = Cursors.Hand
+            };
+            btnBrowse.FlatAppearance.BorderColor = borderGray;
+            btnBrowse.Click += (s, e) => BrowseExcel();
+            this.Controls.Add(btnBrowse);
+            y += 40;
+
+            var lblOpcua = new Label
+            {
+                Text = "Адрес OPC UA:",
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Location = new Point(40, y),
+                Size = new Size(440, 20),
+                ForeColor = fgMuted
+            };
+            this.Controls.Add(lblOpcua);
+            y += 22;
+            _txtOpcua = new TextBox
+            {
+                Text = config.OpcuaEndpoint,
+                Font = new Font("Segoe UI", 10),
+                BackColor = bgCard,
+                ForeColor = fgLight,
+                Location = new Point(40, y),
+                Size = new Size(440, 28),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            this.Controls.Add(_txtOpcua);
+            y += 44;
+
+            _chkSim = new CheckBox
+            {
+                Text = "Тестовые данные (SIMULATION_ENABLED)",
+                Checked = config.SimulationEnabled,
+                Font = new Font("Segoe UI", 10),
+                Location = new Point(40, y),
+                Size = new Size(440, 26),
+                ForeColor = fgLight
+            };
+            this.Controls.Add(_chkSim);
+            y += 34;
+
+            var lblMonitor = new Label
+            {
+                Text = "Монитор для киоска:",
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Location = new Point(40, y),
+                Size = new Size(440, 20),
+                ForeColor = fgMuted
+            };
+            this.Controls.Add(lblMonitor);
+            y += 22;
+            _cmbMonitor = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = new Font("Segoe UI", 10),
+                BackColor = bgCard,
+                ForeColor = fgLight,
+                Location = new Point(40, y),
+                Size = new Size(440, 28)
+            };
+            var screens = Screen.AllScreens;
+            for (int i = 0; i < screens.Length; i++)
+            {
+                var s = screens[i];
+                string name = s.Primary ? "Основной" : "Дополнительный";
+                _cmbMonitor.Items.Add($"Монитор {i} — {name} ({s.Bounds.Width}x{s.Bounds.Height})");
+            }
+            if (_cmbMonitor.Items.Count == 0)
+                _cmbMonitor.Items.Add("Монитор 0");
+            _cmbMonitor.SelectedIndex = Math.Min(Math.Max(config.KioskMonitor, 0), _cmbMonitor.Items.Count - 1);
+            this.Controls.Add(_cmbMonitor);
+            y += 44;
+
+            _chkAutostart = new CheckBox
+            {
+                Text = "Автозапуск Windows (старт в трей без окна)",
+                Checked = config.AutoStart,
+                Font = new Font("Segoe UI", 10),
+                Location = new Point(40, y),
+                Size = new Size(440, 26),
+                ForeColor = fgLight
+            };
+            this.Controls.Add(_chkAutostart);
+            y += 36;
+
+            var hint = new Label
+            {
+                Text = "Excel, OPC UA и симуляция применяются при следующем запуске (env сервера). " +
+                    "Монитор — при запуске киоска. Автозапуск записывается в реестр сразу.",
+                Font = new Font("Segoe UI", 8.5f),
+                Location = new Point(40, y),
+                Size = new Size(440, 44),
+                ForeColor = fgMuted
+            };
+            this.Controls.Add(hint);
+            y += 52;
+
+            var btnSave = new Button
+            {
+                Text = "Сохранить",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                BackColor = accentBlue,
+                ForeColor = fgLight,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(140, y),
+                Size = new Size(140, 36),
+                Cursor = Cursors.Hand,
+                DialogResult = DialogResult.None
+            };
+            btnSave.FlatAppearance.BorderSize = 0;
+            btnSave.Click += (s, e) => SaveAndClose();
+            this.Controls.Add(btnSave);
+            this.AcceptButton = btnSave;
+
+            var btnCancel = new Button
+            {
+                Text = "Отмена",
+                Font = new Font("Segoe UI", 10),
+                BackColor = bgCard,
+                ForeColor = fgLight,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(300, y),
+                Size = new Size(140, 36),
+                Cursor = Cursors.Hand,
+                DialogResult = DialogResult.Cancel
+            };
+            btnCancel.FlatAppearance.BorderColor = borderGray;
+            this.Controls.Add(btnCancel);
+            this.CancelButton = btnCancel;
+        }
+
+        private void BrowseExcel()
+        {
+            using (var dlg = new OpenFileDialog())
+            {
+                dlg.Title = "Путь к Excel-книге учёта";
+                dlg.Filter = "Excel (*.xlsm;*.xlsx)|*.xlsm;*.xlsx|Все файлы (*.*)|*.*";
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(_txtExcel.Text))
+                    {
+                        string dir = Path.GetDirectoryName(_txtExcel.Text) ?? "";
+                        if (Directory.Exists(dir)) dlg.InitialDirectory = dir;
+                        dlg.FileName = Path.GetFileName(_txtExcel.Text);
+                    }
+                }
+                catch { }
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                    _txtExcel.Text = dlg.FileName;
+            }
+        }
+
+        private void SaveAndClose()
+        {
+            _config.ExcelPath = _txtExcel.Text.Trim();
+            _config.OpcuaEndpoint = _txtOpcua.Text.Trim();
+            _config.SimulationEnabled = _chkSim.Checked;
+            _config.KioskMonitor = Math.Max(_cmbMonitor.SelectedIndex, 0);
+            _config.AutoStart = _chkAutostart.Checked;
+            try
+            {
+                _config.Save();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Не удалось сохранить настройки:\n" + ex.Message,
+                    "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            try
+            {
+                AutoStartManager.Apply(_config.AutoStart);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Настройки сохранены, но автозапуск не применён:\n" + ex.Message,
+                    "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            this.DialogResult = DialogResult.OK;
+            this.Close();
+        }
+    }
+
     // === Контекст приложения: backend → готовность → киоск → трей ===
     sealed class AllInOneContext : ApplicationContext
     {
         private readonly AllInOneConfig _config;
         private readonly int _autoExitAfterReady;
+        private readonly bool _silent;
         private readonly RotatingLogger _appLog;
         private readonly RotatingLogger _backendLog;
         private readonly CancellationTokenSource _cts = new();
@@ -221,18 +634,23 @@ namespace EkranchikAllInOne
         private NotifyIcon? _tray;
         private Process? _backend;
         private Process? _kiosk;
+        private SettingsForm? _settingsForm;
         private bool _shutdownStarted;
 
         public int ExitCode { get; private set; }
 
-        public AllInOneContext(AllInOneConfig config, int autoExitAfterReady)
+        public AllInOneContext(AllInOneConfig config, int autoExitAfterReady, bool silent)
         {
             _config = config;
             _autoExitAfterReady = autoExitAfterReady;
+            _silent = silent;
             _appLog = new RotatingLogger("allinone");
             _backendLog = new RotatingLogger("backend");
             _appLog.Write($"config: python={config.PythonExe} dir={config.BackendDir} " +
                 $"args={config.ResolvedBackendArgs} url={config.ResolvedDashboardUrl} kiosk={config.KioskExe}");
+            _appLog.Write($"settings: excel={config.ExcelPath} opcua={config.OpcuaEndpoint} " +
+                $"sim={config.SimulationEnabled} monitor={config.KioskMonitor} autostart={config.AutoStart}");
+            SyncAutoStart();
 
             try
             {
@@ -244,13 +662,52 @@ namespace EkranchikAllInOne
                 _appLog.Write($"tray unavailable, continuing headless: {ex.Message}");
             }
 
+            if (_silent)
+                _appLog.Write("starting silent (no settings window)");
+            else
+                ShowSettings();
+
             Task.Run(() => StartupSequenceAsync(_cts.Token));
+        }
+
+        // Желаемое состояние автозапуска из конфига → реестр (идемпотентно).
+        private void SyncAutoStart()
+        {
+            try
+            {
+                AutoStartManager.Apply(_config.AutoStart);
+                _appLog.Write($"autostart synced: {(_config.AutoStart ? "enabled" : "disabled")}");
+            }
+            catch (Exception ex)
+            {
+                _appLog.Write($"autostart sync failed: {ex.Message}");
+            }
+        }
+
+        private void ShowSettings()
+        {
+            try
+            {
+                if (_settingsForm != null && !_settingsForm.IsDisposed)
+                {
+                    _settingsForm.Activate();
+                    return;
+                }
+                _settingsForm = new SettingsForm(_config);
+                _settingsForm.FormClosed += (s, e) => { _settingsForm = null; };
+                _settingsForm.Show();
+            }
+            catch (Exception ex)
+            {
+                _appLog.Write($"settings window failed: {ex.Message}");
+            }
         }
 
         // --- Трей: только действия, никаких портов/статусов ---
         private void CreateTray()
         {
             var menu = new ContextMenuStrip();
+            menu.Items.Add(new ToolStripMenuItem("Настройки...", null, (s, e) => ShowSettings()));
             menu.Items.Add(new ToolStripMenuItem("Открыть папку логов", null, (s, e) => OpenLogsFolder()));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem("Выход", null, (s, e) => Shutdown("tray exit")));
@@ -316,6 +773,8 @@ namespace EkranchikAllInOne
                     RedirectStandardError = true,
                     CreateNoWindow = true
                 };
+                // Issue #4: Excel/OPC UA/симуляция из окна настроек → env сервера.
+                _config.ApplyToBackendEnvironment(psi.Environment);
                 var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 proc.OutputDataReceived += (s, e) => { if (e.Data != null) _backendLog.Write("[out] " + e.Data); };
                 proc.ErrorDataReceived += (s, e) => { if (e.Data != null) _backendLog.Write("[err] " + e.Data); };
@@ -398,15 +857,16 @@ namespace EkranchikAllInOne
             }
         }
 
-        // Киоск читает URL из kiosk_config.json — подменяем только поле url,
-        // остальные настройки (монитор, автозапуск, неизвестные ключи) сохраняем
-        // как есть. Безопасность записи:
+        // Киоск читает URL и монитор из kiosk_config.json — подменяем поля url
+        // и monitor (issue #4: монитор из окна настроек), остальные настройки
+        // (автозапуск киоска, неизвестные ключи) сохраняем как есть.
+        // Безопасность записи:
         //   - целый конфиг → копия в kiosk_config.json.bak до изменения;
         //   - битый конфиг → копия в kiosk_config.corrupt-<ts>.bak, затем
         //     минимальный валидный конфиг (настройки уже не спасти, но киоск
         //     стартует, а исходник лежит в бэкапе);
         //   - запись через tmp-файл + move (не бывает полузаписанного конфига).
-        // Восстановление исходного URL — НЕ здесь (в проде URL должен остаться),
+        // Восстановление исходника — НЕ здесь (в проде URL должен остаться),
         // а в smoke-хуке, который подменяет чужой конфиг на время прогона.
         private void PointKioskConfigAtDashboard()
         {
@@ -434,11 +894,13 @@ namespace EkranchikAllInOne
                     }
                 }
                 root["url"] = JsonDocument.Parse($"\"{_config.ResolvedDashboardUrl}\"").RootElement;
+                int monitor = Math.Max(_config.KioskMonitor, 0);
+                root["monitor"] = JsonDocument.Parse(monitor.ToString()).RootElement;
                 string tmp = file + ".tmp";
                 File.WriteAllText(tmp, JsonSerializer.Serialize(root,
                     new JsonSerializerOptions { WriteIndented = true }));
                 File.Move(tmp, file, overwrite: true);
-                _appLog.Write("kiosk_config.json url updated");
+                _appLog.Write($"kiosk_config.json url+monitor updated (monitor={monitor})");
             }
             catch (Exception ex)
             {
@@ -450,12 +912,17 @@ namespace EkranchikAllInOne
         {
             _appLog.Write("FATAL: " + message);
             ExitCode = 1;
-            try
+            // В тихом режиме (--silent/автозапуск) — только лог, без окна:
+            // модалка блокировала бы Shutdown и вешала процесс без видимого UI.
+            if (!_silent)
             {
-                MessageBox.Show(message + "\n\nПодробности — в папке логов Ekranchik.",
-                    "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                try
+                {
+                    MessageBox.Show(message + "\n\nПодробности — в папке логов Ekranchik.",
+                        "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                catch { }
             }
-            catch { }
             Shutdown("fatal");
         }
 
