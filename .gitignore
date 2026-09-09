@@ -108,6 +108,7 @@ launcher.zip
 
 # Inno Setup
 *.iss
+!launcher/launcher.iss
 
 # Launcher build outputs
 launcher/*.pdb
