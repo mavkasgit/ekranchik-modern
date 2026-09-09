@@ -60,12 +60,12 @@ function Join2([string]$a, [string]$b) { Join-Path $a $b }
 
 if (-not (Test-Path $IssPath)) { throw "Не найден $IssPath (база #6 обязательна)." }
 
-# --- Версия: явный параметр, иначе #define из .iss ---
+# --- Версия: единый источник — корневой VERSION (-Version переопределяет) ---
 if ([string]::IsNullOrWhiteSpace($Version)) {
-  $m = Select-String -LiteralPath $IssPath -Pattern '#define MyAppVersion "([^"]+)"' | Select-Object -First 1
-  if ($m) { $Version = $m.Matches[0].Groups[1].Value }
+  $versionFile = Join2 $Root "VERSION"
+  if (Test-Path $versionFile) { $Version = ((Get-Content -LiteralPath $versionFile -Raw).Trim() -split '\s+')[0] }
 }
-if ([string]::IsNullOrWhiteSpace($Version)) { throw "Не удалось определить версию (.iss без #define MyAppVersion и -Version не задан)." }
+if ([string]::IsNullOrWhiteSpace($Version)) { throw "Не удалось определить версию (корневой VERSION отсутствует и -Version не задан)." }
 Write-Host "==> Версия установщика: $Version"
 
 # --- 1. Frontend ---
@@ -102,7 +102,7 @@ if ($BuildKiosk) {
   Write-Host "==> -BuildKiosk: публикую киоск из исходников"
   $tmp = Join2 $LauncherDir "publish-kiosk-tmp"
   if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-  & dotnet publish $KioskProj -c $Configuration -r win-x64 --self-contained "-p:PublishSingleFile=true" -o $tmp
+  & dotnet publish $KioskProj -c $Configuration -r win-x64 --self-contained "-p:PublishSingleFile=true" "-p:Version=$Version" -o $tmp
   if ($LASTEXITCODE -ne 0) { throw "dotnet publish киоска завершился с кодом $LASTEXITCODE." }
   Copy-Item -LiteralPath (Join2 $tmp "Ekranchik.exe") -Destination $LauncherDir -Force
   Copy-Item -LiteralPath (Join2 $tmp "WebView2Loader.dll") -Destination $LauncherDir -Force
@@ -136,7 +136,7 @@ if ($SkipDotnetPublish) {
   Write-Host "==> Публикую AllInOne"
   $tmp = Join2 $LauncherDir "publish-allinone-tmp"
   if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-  & dotnet publish $AllInOneProj -c $Configuration -r win-x64 --self-contained "-p:PublishSingleFile=true" -o $tmp
+  & dotnet publish $AllInOneProj -c $Configuration -r win-x64 --self-contained "-p:PublishSingleFile=true" "-p:Version=$Version" -o $tmp
   if ($LASTEXITCODE -ne 0) { throw "dotnet publish AllInOne завершился с кодом $LASTEXITCODE." }
   Copy-Item -LiteralPath (Join2 $tmp "EkranchikAllInOne.exe") -Destination $LauncherDir -Force
   foreach ($sidecar in @("EkranchikAllInOne.dll", "EkranchikAllInOne.deps.json", "EkranchikAllInOne.runtimeconfig.json")) {

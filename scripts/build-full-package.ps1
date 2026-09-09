@@ -96,6 +96,14 @@ Copy-Item -LiteralPath (Join2 $BackendSrc "app") -Destination (Join2 $BackendDir
 Copy-Item -LiteralPath (Join2 $BackendSrc "alembic") -Destination (Join2 $BackendDir "alembic") -Recurse -Force
 Copy-Item -LiteralPath (Join2 $BackendSrc "alembic.ini") -Destination (Join2 $BackendDir "alembic.ini") -Force
 Copy-Item -LiteralPath (Join2 $BackendSrc "requirements.txt") -Destination (Join2 $BackendDir "requirements.txt") -Force
+Write-Host "==> Кладу VERSION (единый источник версии для рантайма бэкенда)"
+$VersionSrc = Join2 $Root "VERSION"
+if (Test-Path $VersionSrc) {
+  Copy-Item -LiteralPath $VersionSrc -Destination (Join2 $BackendDir "VERSION") -Force
+  Copy-Item -LiteralPath $VersionSrc -Destination (Join-Path $OutDir "VERSION") -Force
+} else {
+  Write-Warning "Корневой VERSION не найден — бэкенд в пакете отдаст фолбэк 'dev'."
+}
 Get-ChildItem -LiteralPath $BackendDir -Recurse -Force -Directory |
   Where-Object { $_.Name -eq "__pycache__" -or $_.Name -eq ".pytest_cache" } |
   Remove-Item -Recurse -Force

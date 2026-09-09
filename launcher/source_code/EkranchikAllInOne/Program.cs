@@ -31,6 +31,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EkranchikShared;
 using Microsoft.Win32;
 
 namespace EkranchikAllInOne
@@ -46,6 +47,7 @@ namespace EkranchikAllInOne
             int autoExitAfterReady = 0;
             bool silent = false;
             bool dumpConfig = false;
+            bool selfTest = false;
             string? autostartArg = null;
             string? runKeyArg = null;
             foreach (var arg in args)
@@ -66,6 +68,10 @@ namespace EkranchikAllInOne
                 else if (arg.Equals("--dump-config", StringComparison.OrdinalIgnoreCase))
                 {
                     dumpConfig = true;
+                }
+                else if (arg.Equals("--self-test", StringComparison.OrdinalIgnoreCase))
+                {
+                    selfTest = true;
                 }
                 else if (arg.StartsWith(autostartPrefix, StringComparison.OrdinalIgnoreCase))
                 {
@@ -94,6 +100,18 @@ namespace EkranchikAllInOne
                     Console.Error.WriteLine($"autostart failed: {ex.Message}");
                     return 1;
                 }
+            }
+
+            // Постоянные кейсы shared-модуля: лог в tmp + exit code, без UI.
+            if (selfTest)
+            {
+                int failures = EkranchikShared.UpdateSelfTest.Run(out string selfTestLog);
+                try
+                {
+                    Console.WriteLine($"self-test: {(failures == 0 ? "ALL OK" : failures + " FAILURES")} log={selfTestLog}");
+                }
+                catch { }
+                return failures == 0 ? 0 : 1;
             }
 
             var config = AllInOneConfig.Load();
@@ -366,15 +384,20 @@ namespace EkranchikAllInOne
     sealed class SettingsForm : Form
     {
         private readonly AllInOneConfig _config;
+        private readonly AllInOneContext _updater;
         private readonly TextBox _txtExcel;
         private readonly TextBox _txtOpcua;
         private readonly CheckBox _chkSim;
         private readonly ComboBox _cmbMonitor;
         private readonly CheckBox _chkAutostart;
+        private readonly Label _lblVersions;
+        private readonly Label _lblUpdateStatus;
+        private readonly Button _btnInstall;
 
-        public SettingsForm(AllInOneConfig config)
+        public SettingsForm(AllInOneConfig config, AllInOneContext updater)
         {
             _config = config;
+            _updater = updater;
 
             Color bgDark = Color.FromArgb(15, 23, 42);      // #0f172a
             Color bgCard = Color.FromArgb(30, 41, 59);      // #1e293b
@@ -384,7 +407,7 @@ namespace EkranchikAllInOne
             Color borderGray = Color.FromArgb(51, 65, 85);   // #334155
 
             this.Text = "Ekranchik — Настройки";
-            this.Size = new Size(540, 560);
+            this.Size = new Size(540, 710);
             this.BackColor = bgDark;
             this.ForeColor = fgLight;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -533,6 +556,85 @@ namespace EkranchikAllInOne
             };
             this.Controls.Add(hint);
             y += 52;
+            var lblVerTitle = new Label
+            {
+                Text = "ВЕРСИИ И ОБНОВЛЕНИЯ",
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Location = new Point(20, y),
+                Size = new Size(480, 22),
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = fgMuted
+            };
+            this.Controls.Add(lblVerTitle);
+            y += 26;
+
+            _lblVersions = new Label
+            {
+                Text = _updater.VersionsText("…"),
+                Font = new Font("Segoe UI", 9),
+                Location = new Point(40, y),
+                Size = new Size(440, 50),
+                ForeColor = fgLight
+            };
+            this.Controls.Add(_lblVersions);
+            y += 54;
+
+            _lblUpdateStatus = new Label
+            {
+                Text = _updater.UpdateStatus,
+                Font = new Font("Segoe UI", 9),
+                Location = new Point(40, y),
+                Size = new Size(440, 22),
+                ForeColor = fgMuted
+            };
+            this.Controls.Add(_lblUpdateStatus);
+            y += 26;
+
+            var btnCheck = new Button
+            {
+                Text = "Проверить обновления",
+                Font = new Font("Segoe UI", 9),
+                BackColor = bgCard,
+                ForeColor = fgLight,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(40, y),
+                Size = new Size(210, 32),
+                Cursor = Cursors.Hand
+            };
+            btnCheck.FlatAppearance.BorderColor = borderGray;
+            btnCheck.Click += async (s, e) =>
+            {
+                btnCheck.Enabled = false;
+                try { await _updater.CheckForUpdatesAsync(manual: true).ConfigureAwait(true); }
+                finally { btnCheck.Enabled = true; }
+                RefreshUpdateLabels();
+                RefreshBackendVersionAsync();
+            };
+            this.Controls.Add(btnCheck);
+
+            _btnInstall = new Button
+            {
+                Text = "Установить",
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                BackColor = accentBlue,
+                ForeColor = fgLight,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(260, y),
+                Size = new Size(220, 32),
+                Cursor = Cursors.Hand,
+                Enabled = _updater.HasPendingUpdate
+            };
+            _btnInstall.FlatAppearance.BorderSize = 0;
+            _btnInstall.Click += async (s, e) =>
+            {
+                _btnInstall.Enabled = false;
+                await _updater.InstallUpdateAsync().ConfigureAwait(true);
+                RefreshUpdateLabels();
+            };
+            this.Controls.Add(_btnInstall);
+            y += 42;
+
+            RefreshBackendVersionAsync();
 
             var btnSave = new Button
             {
@@ -619,6 +721,31 @@ namespace EkranchikAllInOne
             this.DialogResult = DialogResult.OK;
             this.Close();
         }
+
+        // Вызывает контекст, когда фоновая проверка завершилась при открытом окне.
+        public void RefreshFromUpdater()
+        {
+            RefreshUpdateLabels();
+            RefreshBackendVersionAsync();
+        }
+
+        private void RefreshUpdateLabels()
+        {
+            _lblUpdateStatus.Text = _updater.UpdateStatus;
+            _btnInstall.Enabled = _updater.HasPendingUpdate;
+        }
+
+        private async void RefreshBackendVersionAsync()
+        {
+            try
+            {
+                string backend = await _updater.GetBackendVersionAsync().ConfigureAwait(true);
+                if (this.IsDisposed)
+                    return;
+                _lblVersions.Text = _updater.VersionsText(backend);
+            }
+            catch { }
+        }
     }
 
     // === Контекст приложения: backend → готовность → киоск → трей ===
@@ -636,6 +763,12 @@ namespace EkranchikAllInOne
         private Process? _kiosk;
         private SettingsForm? _settingsForm;
         private bool _shutdownStarted;
+        private UpdateInfo? _pendingUpdate;
+        private System.Threading.Timer? _updateTimer;
+        private string _updateStatus = "Нажмите «Проверить обновления».";
+
+        public string UpdateStatus => _updateStatus;
+        public bool HasPendingUpdate => _pendingUpdate != null;
 
         public int ExitCode { get; private set; }
 
@@ -668,6 +801,9 @@ namespace EkranchikAllInOne
                 ShowSettings();
 
             Task.Run(() => StartupSequenceAsync(_cts.Token));
+            _updateTimer = new System.Threading.Timer(
+                _ => { Task.Run(() => CheckForUpdatesAsync(manual: false)); },
+                null, TimeSpan.FromSeconds(30), UpdateChecker.Period);
         }
 
         // Желаемое состояние автозапуска из конфига → реестр (идемпотентно).
@@ -693,7 +829,7 @@ namespace EkranchikAllInOne
                     _settingsForm.Activate();
                     return;
                 }
-                _settingsForm = new SettingsForm(_config);
+                _settingsForm = new SettingsForm(_config, this);
                 _settingsForm.FormClosed += (s, e) => { _settingsForm = null; };
                 _settingsForm.Show();
             }
@@ -709,6 +845,7 @@ namespace EkranchikAllInOne
             var menu = new ContextMenuStrip();
             menu.Items.Add(new ToolStripMenuItem("Настройки...", null, (s, e) => ShowSettings()));
             menu.Items.Add(new ToolStripMenuItem("Открыть папку логов", null, (s, e) => OpenLogsFolder()));
+            menu.Items.Add(new ToolStripMenuItem("Проверить обновления", null, (s, e) => { Task.Run(() => CheckForUpdatesAsync(manual: true)); }));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem("Выход", null, (s, e) => Shutdown("tray exit")));
 
@@ -720,6 +857,7 @@ namespace EkranchikAllInOne
             };
             try { _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
             catch { _tray.Icon = SystemIcons.Application; }
+            _tray.BalloonTipClicked += (s, e) => { Task.Run(() => InstallUpdateAsync()); };
         }
 
         private void OpenLogsFolder()
@@ -933,6 +1071,7 @@ namespace EkranchikAllInOne
             _shutdownStarted = true;
             _appLog.Write($"shutdown ({reason})");
             try { _cts.Cancel(); } catch { }
+            try { _updateTimer?.Dispose(); } catch { }
 
             StopProcess(_kiosk, "kiosk");
             StopProcess(_backend, "backend");
@@ -970,11 +1109,149 @@ namespace EkranchikAllInOne
             catch { /* процесс уже мёртв — цель достигнута */ }
         }
 
+        // === Обновления: канал full-v* + ассет EkranchikSetup.exe ===
+        // Проверка: старт (+30с) + раз в 6ч + пункт трея. Без сети — тихий фейл.
+        public async Task CheckForUpdatesAsync(bool manual)
+        {
+            UpdateInfo? update = await UpdateChecker.CheckForUpdateAsync(
+                AppVersion.Current, UpdateChecker.FullChannelPrefix, "EkranchikSetup.exe").ConfigureAwait(false);
+            if (update == null)
+            {
+                _updateStatus = "У вас последняя версия.";
+                _appLog.Write("update check: no updates");
+                if (manual)
+                    Notify("Ekranchik: у вас последняя версия.");
+            }
+            else
+            {
+                _pendingUpdate = update;
+                _updateStatus = $"Доступна версия {update.Version} (текущая {AppVersion.Current}).";
+                _appLog.Write($"update available: {update.Tag}");
+                Notify($"Доступна версия {update.Version}. Нажмите, чтобы установить.");
+            }
+            RefreshOpenSettings();
+        }
+
+        // Обновление в клик: скачать Setup во tmp → остановить дочерние процессы →
+        // запустить Setup → корректно завершить себя.
+        public async Task InstallUpdateAsync()
+        {
+            UpdateInfo? update = _pendingUpdate;
+            if (update == null)
+                return;
+            _updateStatus = "Скачивание обновления...";
+            RefreshOpenSettings();
+            Notify("Ekranchik: скачивание обновления...");
+            string setupPath;
+            try
+            {
+                setupPath = await UpdateChecker.DownloadAssetAsync(update).ConfigureAwait(false);
+                _appLog.Write($"update downloaded: {setupPath}");
+            }
+            catch (Exception ex)
+            {
+                _updateStatus = "Не удалось скачать обновление.";
+                _appLog.Write($"update download failed: {ex.Message}");
+                Notify("Ekranchik: не удалось скачать обновление.");
+                RefreshOpenSettings();
+                return;
+            }
+            _updateStatus = "Установка обновления...";
+            RefreshOpenSettings();
+            try
+            {
+                StopProcess(_kiosk, "kiosk");
+                StopProcess(_backend, "backend");
+            }
+            catch (Exception ex)
+            {
+                _appLog.Write($"update stop children failed: {ex.Message}");
+            }
+            try
+            {
+                Process.Start(new ProcessStartInfo { FileName = setupPath, UseShellExecute = true });
+                _appLog.Write($"setup launched: {setupPath}");
+            }
+            catch (Exception ex)
+            {
+                _updateStatus = "Не удалось запустить установщик.";
+                _appLog.Write($"setup launch failed: {ex.Message}");
+                Notify("Ekranchik: не удалось запустить установщик.");
+                RefreshOpenSettings();
+                return;
+            }
+            Shutdown("update");
+        }
+
+        // Фоновая находка освежает открытое окно настроек (P3-7).
+        private void RefreshOpenSettings()
+        {
+            try
+            {
+                var form = _settingsForm;
+                if (form != null && !form.IsDisposed && form.IsHandleCreated)
+                    form.BeginInvoke(new Action(() => { if (!form.IsDisposed) form.RefreshFromUpdater(); }));
+            }
+            catch { }
+        }
+
+        private void Notify(string text)
+        {
+            try
+            {
+                if (_tray != null)
+                    _tray.ShowBalloonTip(10000, "Ekranchik", text, ToolTipIcon.Info);
+                else
+                    _appLog.Write("notify: " + text);
+            }
+            catch (Exception ex)
+            {
+                _appLog.Write("notify failed: " + ex.Message);
+            }
+        }
+
+        public string VersionsText(string backendVersion)
+        {
+            return $"All-in-One: {AppVersion.Current}\nBackend: {backendVersion}\nКиоск: {KioskVersionText()}";
+        }
+
+        public string KioskVersionText()
+        {
+            try
+            {
+                string exe = _config.KioskExe;
+                if (File.Exists(exe))
+                {
+                    string? v = FileVersionInfo.GetVersionInfo(exe).ProductVersion;
+                    if (!string.IsNullOrWhiteSpace(v))
+                        return v.Split('+')[0].Trim();
+                }
+            }
+            catch { }
+            return "—";
+        }
+
+        public async Task<string> GetBackendVersionAsync()
+        {
+            try
+            {
+                string url = _config.ResolvedDashboardUrl.TrimEnd('/') + "/api/version";
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                string json = await http.GetStringAsync(url).ConfigureAwait(false);
+                using JsonDocument doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("version", out JsonElement v))
+                    return v.GetString() ?? "—";
+            }
+            catch { }
+            return "—";
+        }
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
                 try { _cts.Dispose(); } catch { }
+                try { _updateTimer?.Dispose(); } catch { }
                 try { _backend?.Dispose(); } catch { }
                 try { _kiosk?.Dispose(); } catch { }
             }

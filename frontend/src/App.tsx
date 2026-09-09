@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
 import { LayoutDashboard, BookOpen, BarChart3, Gauge } from 'lucide-react'
-import { useState, createContext, useContext } from 'react'
+import { useState, createContext, useContext, useEffect } from 'react'
 import { Toaster } from '@/components/ui/toaster'
 import Dashboard from '@/pages/Dashboard'
 import Catalog from '@/pages/Catalog'
@@ -53,6 +53,32 @@ function Navigation() {
     </header>
   )
 }
+function Footer() {
+  const { isFullscreen } = useFullscreen()
+  const [backendVersion, setBackendVersion] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/version')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.version === 'string') setBackendVersion(d.version)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Hide footer in fullscreen
+  if (isFullscreen) return null
+
+  return (
+    <footer className="border-t bg-card">
+      <div className="container mx-auto px-6 h-10 flex items-center justify-end gap-2 text-xs text-muted-foreground">
+        <span>v{__APP_VERSION__}</span>
+        {backendVersion && <span>· API v{backendVersion}</span>}
+      </div>
+    </footer>
+  )
+}
+
 
 function App() {
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -71,6 +97,7 @@ function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
+          <Footer />
         </div>
         <Toaster />
       </BrowserRouter>

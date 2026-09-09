@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.version import get_app_version
 from app.api.routes import dashboard_router, catalog_router, analysis_router, signal_router
 from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
@@ -55,7 +56,7 @@ async def lifespan(app: FastAPI):
     Starts background services: ExcelWatcher, LineMonitor
     """
     # Startup
-    logger.info(f"[STARTUP] Ekranchik Modern v1.0")
+    logger.info(f"[STARTUP] Ekranchik Modern v{get_app_version()}")
     logger.info(f"[STARTUP] Environment: {settings.ENVIRONMENT}")
 
     # Full mode (ADR 0002): каталог данных + миграции до старта сервисов.
@@ -98,7 +99,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Ekranchik Modern API",
     description="Production monitoring system for KTM-2000 factory",
-    version="1.0.0",
+    version=get_app_version(),
     lifespan=lifespan,
 )
 
@@ -133,13 +134,18 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "version": "1.0.0",
+        "version": get_app_version(),
         "services": {
             "excel_watcher": excel_watcher.is_running,
             "line_monitor": line_monitor.is_running,
             "websocket_clients": websocket_manager.connection_count
         }
     }
+
+@app.get("/api/version")
+async def api_version():
+    """Версия приложения из единого источника (VERSION)."""
+    return {"version": get_app_version()}
 
 
 # Full mode (ADR 0002): serve frontend/dist SPA on the same port.

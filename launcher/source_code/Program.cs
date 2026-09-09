@@ -3,13 +3,14 @@ using System.IO;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
+using System.Linq;
 using System.Drawing;
 using System.Text.Json;
 using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using System.ComponentModel;
+using EkranchikShared;
 
 namespace EkranchikKiosk
 {
@@ -21,9 +22,23 @@ namespace EkranchikKiosk
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            // Флаг самопроверки + обычный разбор аргументов.
             bool noGui = false;
             foreach (var arg in args)
             {
+                if (arg.Equals("--self-test", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Постоянные кейсы shared-модуля: stdout (если есть консоль) +
+                    // лог в tmp + exit code, без UI.
+                    int failures = EkranchikShared.UpdateSelfTest.Run(out string logPath);
+                    try
+                    {
+                        Console.WriteLine($"self-test: {(failures == 0 ? "ALL OK" : failures + " FAILURES")} log={logPath}");
+                    }
+                    catch { }
+                    Environment.Exit(failures == 0 ? 0 : 1);
+                    return;
+                }
                 if (arg.Equals("--no-gui", StringComparison.OrdinalIgnoreCase))
                 {
                     noGui = true;
@@ -603,6 +618,8 @@ namespace EkranchikKiosk
         private bool isIdleMode = false;
         private NotifyIcon trayIcon;
         private ToolStripMenuItem idleMenuItem;
+        private Panel? _updateBanner;
+        private System.Threading.Timer? _updateTimer;
 
         public KioskForm(string url, int monitor)
         {
@@ -630,6 +647,7 @@ namespace EkranchikKiosk
             // Перехват клавиш на уровне формы
             this.KeyPreview = true;
             this.KeyDown += KioskForm_KeyDown;
+            StartUpdateChecks();
         }
 
         private void PositionOnMonitor()
@@ -657,6 +675,7 @@ namespace EkranchikKiosk
 
             // Кнопка настроек
             trayMenu.Items.Add(new ToolStripMenuItem("⚙️ Настройки", null, (s, e) => ShowSettings()));
+            trayMenu.Items.Add(new ToolStripMenuItem("🔄 Проверить обновления", null, (s, e) => { Task.Run(() => CheckForUpdatesAsync(manual: true)); }));
 
             trayMenu.Items.Add(new ToolStripMenuItem("Выход", null, (s, e) => CloseApp()));
 
@@ -779,6 +798,7 @@ namespace EkranchikKiosk
 
         private void CloseApp()
         {
+            try { _updateTimer?.Dispose(); } catch { }
             if (trayIcon != null)
             {
                 trayIcon.Visible = false;
@@ -787,6 +807,148 @@ namespace EkranchikKiosk
             webView?.Dispose();
             Application.Exit();
             Environment.Exit(0);
+        }
+
+        // === Проверка обновлений: канал v* + ассет Ekranchik.exe (тихий фейл без сети) ===
+        private void StartUpdateChecks()
+        {
+            Task.Run(() => CheckForUpdatesAsync(manual: false));
+            _updateTimer = new System.Threading.Timer(
+                _ => { Task.Run(() => CheckForUpdatesAsync(manual: false)); },
+                null, UpdateChecker.Period, UpdateChecker.Period);
+        }
+        // Аргументы командной строки для рестарта после замены exe (уже квотированы).
+        private static string RestartArgs
+        {
+            get
+            {
+                try
+                {
+                    var quoted = Environment.GetCommandLineArgs().Skip(1)
+                        .Select(a => a.Contains(' ') || a.Contains('"') ? "\"" + a.Replace("\"", "\"\"") + "\"" : a);
+                    string joined = string.Join(" ", quoted);
+                    return joined.Length == 0 ? "" : " " + joined;
+                }
+                catch
+                {
+                    return "";
+                }
+            }
+        }
+
+
+        private async Task CheckForUpdatesAsync(bool manual)
+        {
+            UpdateInfo? update = await UpdateChecker.CheckForUpdateAsync(
+                AppVersion.Current, UpdateChecker.KioskChannelPrefix, "Ekranchik.exe").ConfigureAwait(false);
+            if (update == null)
+            {
+                if (manual)
+                {
+                    try { this.BeginInvoke(new Action(() => MessageBox.Show(this, "У вас последняя версия.", "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Information))); } catch { }
+                }
+                return;
+            }
+            var pending = update;
+            try { this.BeginInvoke(new Action(() => ShowUpdateBanner(pending))); } catch { }
+        }
+
+        private void ShowUpdateBanner(UpdateInfo update)
+        {
+            if (_updateBanner != null)
+                return;
+            var banner = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 44,
+                BackColor = Color.FromArgb(120, 53, 15)
+            };
+            var lbl = new Label
+            {
+                Text = $"Доступна версия {update.Version} (текущая {AppVersion.Current})",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Padding = new Padding(12, 0, 0, 0)
+            };
+            banner.Controls.Add(lbl);
+            var btn = new Button
+            {
+                Text = "Обновить",
+                Dock = DockStyle.Right,
+                Width = 130,
+                BackColor = Color.FromArgb(59, 130, 246),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            btn.FlatAppearance.BorderSize = 0;
+            btn.Click += async (s, e) =>
+            {
+                btn.Enabled = false;
+                btn.Text = "Скачивание...";
+                // Скачивание и подготовка замены — в фоне, дашборд не висит.
+                string? updater = null;
+                string? error = null;
+                try
+                {
+                    updater = await UpdateChecker.DownloadAndApplyKioskUpdateAsync(
+                        update, Application.ExecutablePath, RestartArgs).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                }
+                // На UI-поток — только UI-действия.
+                try
+                {
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        if (error != null && !this.IsDisposed)
+                        {
+                            btn.Enabled = true;
+                            btn.Text = "Обновить";
+                            MessageBox.Show(this, "Не удалось подготовить обновление (" + error + "). Проверьте сеть и попробуйте позже.",
+                                "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return;
+                        }
+                        // Замена готова (или формы уже нет): updater ждёт выхода PID.
+                        CloseApp();
+                    }));
+                }
+                catch
+                {
+                    if (updater != null)
+                    {
+                        try { CloseApp(); } catch { }
+                    }
+                }
+            };
+            banner.Controls.Add(btn);
+            var dismiss = new Button
+            {
+                Text = "✕",
+                Dock = DockStyle.Right,
+                Width = 44,
+                BackColor = Color.FromArgb(120, 53, 15),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            dismiss.FlatAppearance.BorderSize = 0;
+            dismiss.Click += (s, e) =>
+            {
+                this.Controls.Remove(banner);
+                banner.Dispose();
+                if (ReferenceEquals(_updateBanner, banner))
+                    _updateBanner = null;
+            };
+            banner.Controls.Add(dismiss);
+            _updateBanner = banner;
+            this.Controls.Add(banner);
+            banner.BringToFront();
         }
 
         private void ChangeUrl(string newUrl)

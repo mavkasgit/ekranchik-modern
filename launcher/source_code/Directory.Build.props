@@ -1,0 +1,8 @@
+<Project>
+  <!-- Штамп версии для ВСЕХ сборок, включая ручные: единый источник — корневой VERSION.
+       Явный /p:Version (CI, scripts/build-full-installer.ps1) побеждает. -->
+  <PropertyGroup>
+    <_AppVersionFile>$(MSBuildThisFileDirectory)../../VERSION</_AppVersionFile>
+    <Version Condition="'$(Version)' == '' and Exists('$(_AppVersionFile)')">$([System.IO.File]::ReadAllText('$(_AppVersionFile)').Trim())</Version>
+  </PropertyGroup>
+</Project>

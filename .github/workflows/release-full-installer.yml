@@ -55,6 +55,13 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($v)) { throw 'Пустая версия.' }
           "value=$v" >> $env:GITHUB_OUTPUT
 
+      - name: Guard tag matches VERSION
+        shell: pwsh
+        run: |
+          $file = ((Get-Content VERSION -Raw).Trim() -split '\s+')[0]
+          $tag = '${{ steps.version.outputs.value }}'
+          if ($tag -ne $file) { throw "Тег ($tag) != VERSION ($file). Обновите корневой VERSION." }
+
       - name: Build full installer
         run: >
           powershell -ExecutionPolicy Bypass

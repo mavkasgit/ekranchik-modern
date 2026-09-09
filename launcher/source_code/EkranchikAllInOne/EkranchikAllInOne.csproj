@@ -8,8 +8,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>EkranchikAllInOne</AssemblyName>
     <ApplicationIcon>..\launcher.ico</ApplicationIcon>
-    <Version>1.0.0</Version>
     <Description>Ekranchik All-in-One: backend + kiosk launcher (tray)</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\UpdateChecker.cs" Link="UpdateChecker.cs" />
+  </ItemGroup>
 
 </Project>

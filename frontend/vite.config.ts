@@ -1,8 +1,22 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import fs from 'fs'
 
+// Единый источник версии — корневой VERSION (фолбэк 'dev').
+function readAppVersion(): string {
+  try {
+    const text = fs.readFileSync(path.resolve(__dirname, '../VERSION'), 'utf-8').trim().split(/\s+/)[0]
+    if (text) return text
+  } catch {
+    // фолбэк ниже
+  }
+  return 'dev'
+}
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(readAppVersion()),
+  },
   plugins: [react()],
   resolve: {
     alias: {

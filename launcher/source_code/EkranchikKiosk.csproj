@@ -8,11 +8,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Ekranchik</AssemblyName>
     <ApplicationIcon>launcher.ico</ApplicationIcon>
-    <Version>1.0.3</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4022.49" />
+  </ItemGroup>
+
+  <!-- Вложенный проект AllInOne — не часть киоска: без этого его исходники
+       и obj/ компилируются в Ekranchik.exe (дубли атрибутов сборки). -->
+  <ItemGroup>
+    <Compile Remove="EkranchikAllInOne/**/*.cs" />
   </ItemGroup>
 
 </Project>
