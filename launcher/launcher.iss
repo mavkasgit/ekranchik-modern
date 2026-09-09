@@ -17,7 +17,9 @@
 ;                    как раньше.
 ;   2. AllInOne:     опубликовать self-contained и положить рядом с этим
 ;                    файлом EkranchikAllInOne.exe, например:
-;                    dotnet publish source_code\EkranchikAllInOne\EkranchikAllInOne.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+;                    dotnet publish source_code\EkranchikAllInOne\EkranchikAllInOne.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:Version=$(Get-Content ..\VERSION)"
+;                    (штамп из корневого VERSION; без флага версия подхватится
+;                    сама через source_code\Directory.Build.props).
 ;                    (если публикация НЕ single-file — рядом также кладутся
 ;                    EkranchikAllInOne.dll/.deps.json/.runtimeconfig.json,
 ;                    ниже они подключены с skipifsourcedoesntexist).
@@ -55,6 +57,11 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 DisableDirPage=no
+; Апгрейд-путь: каталог, тип установки (kiosk/full) и задачи наследуются
+; от предыдущей установки с тем же AppId — тип full не сбрасывается молча.
+UsePreviousAppDir=yes
+UsePreviousSetupType=yes
+UsePreviousTasks=yes
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
@@ -118,7 +125,149 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Filename: "{app}\{#MyAppAllInOneExeName}"; Description: "Запустить Ekranchik (полный пакет)"; Flags: nowait postinstall skipifsilent; Components: full
 
 [Code]
+const
+  PrevAppUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{C6D2B1C1-827A-4D3F-B5FE-D372FEBF44C7}_is1';
+
+var
+  PrevVersion: String;
+  PrevSetupType: String;
+
 function IsFullSelected(): Boolean;
 begin
   Result := WizardIsComponentSelected('full');
+end;
+
+{ DisplayVersion предыдущей установки с тем же AppId (HKCU — свой для
+  PrivilegesRequired=lowest; HKLM — на случай старой машинной установки). }
+function GetPrevDisplayVersion(): String;
+var
+  V: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU, PrevAppUninstallKey, 'DisplayVersion', V) then
+    Result := V
+  else if RegQueryStringValue(HKLM, PrevAppUninstallKey, 'DisplayVersion', V) then
+    Result := V;
+end;
+
+function GetPrevSetupType(): String;
+var
+  T: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU, PrevAppUninstallKey, 'Inno Setup: Setup Type', T) then
+    Result := T
+  else if RegQueryStringValue(HKLM, PrevAppUninstallKey, 'Inno Setup: Setup Type', T) then
+    Result := T;
+end;
+
+{ Очередной числовой кусок версии; P сдвигается за разделитель. }
+function NumPart(const S: String; var P: Integer): Integer;
+var
+  N: Integer;
+begin
+  N := 0;
+  while (P <= Length(S)) and (S[P] >= '0') and (S[P] <= '9') do
+  begin
+    N := N * 10 + (Ord(S[P]) - Ord('0'));
+    P := P + 1;
+  end;
+  if (P <= Length(S)) and (S[P] = '.') then
+    P := P + 1;
+  while (P <= Length(S)) and ((S[P] < '0') or (S[P] > '9')) do
+    P := P + 1;
+  Result := N;
+end;
+
+{ -1: A < B; 0: равны; 1: A > B. "1.0.10" > "1.0.3". }
+function CompareVersions(const A, B: String): Integer;
+var
+  PA, PB, NA, NB: Integer;
+begin
+  Result := 0;
+  PA := 1;
+  PB := 1;
+  while (PA <= Length(A)) or (PB <= Length(B)) do
+  begin
+    NA := NumPart(A, PA);
+    NB := NumPart(B, PB);
+    if NA <> NB then
+    begin
+      if NA < NB then
+        Result := -1
+      else
+        Result := 1;
+      Exit;
+    end;
+  end;
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  PrevVersion := GetPrevDisplayVersion();
+  PrevSetupType := GetPrevSetupType();
+  Result := True;
+end;
+
+{ Блок «Обновление» на готовой странице: найденная версия -> новая.
+  Стиль мастера не меняется — только текст сводки. }
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
+  MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+var
+  S: String;
+begin
+  S := '';
+  if MemoDirInfo <> '' then
+    S := S + MemoDirInfo + NewLine + NewLine;
+  if MemoTypeInfo <> '' then
+    S := S + MemoTypeInfo + NewLine + NewLine;
+  if MemoComponentsInfo <> '' then
+    S := S + MemoComponentsInfo + NewLine + NewLine;
+  if MemoGroupInfo <> '' then
+    S := S + MemoGroupInfo + NewLine + NewLine;
+  if MemoTasksInfo <> '' then
+    S := S + MemoTasksInfo + NewLine + NewLine;
+  if PrevVersion <> '' then
+  begin
+    S := S + 'Обновление' + NewLine + Space +
+      'Обнаружена версия ' + PrevVersion +
+      ' -> будет установлена {#MyAppVersion}.';
+    if PrevSetupType <> '' then
+      S := S + NewLine + Space + 'Предыдущий тип установки: ' + PrevSetupType + '.';
+    S := S + NewLine + Space +
+      'Данные и настройки (%LOCALAPPDATA%\Ekranchik) сохраняются.';
+  end
+  else
+    S := S + 'Установка' + NewLine + Space +
+      'Будет установлена версия {#MyAppVersion} (предыдущих установок не найдено).';
+  Result := S;
+end;
+
+{ Даунгрейд/та же версия — только осознанно: предупреждение с подтверждением.
+  Апгрейд идёт без лишних вопросов. }
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Cmp: Integer;
+begin
+  Result := True;
+  if (CurPageID = wpReady) and (PrevVersion <> '') then
+  begin
+    Cmp := CompareVersions(PrevVersion, '{#MyAppVersion}');
+    if Cmp = 0 then
+    begin
+      if MsgBox('Уже установлена версия ' + PrevVersion + '.' + #13#10 +
+        'Продолжить переустановку версии {#MyAppVersion}?',
+        mbConfirmation, MB_YESNO) <> IDYES then
+        Result := False;
+    end
+    else if Cmp > 0 then
+    begin
+      if MsgBox('Обнаружена более новая версия ' + PrevVersion +
+        ', чем устанавливаемая {#MyAppVersion}.' + #13#10 +
+        'Продолжить даунгрейд? Данные и настройки сохраняются, ' +
+        'но новая функциональность будет утрачена.',
+        mbConfirmation, MB_YESNO) <> IDYES then
+        Result := False;
+    end;
+  end;
 end;
