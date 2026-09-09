@@ -120,5 +120,5 @@ Filename: "{app}\{#MyAppAllInOneExeName}"; Description: "Запустить Ekra
 [Code]
 function IsFullSelected(): Boolean;
 begin
-  Result := IsComponentSelected('full');
+  Result := WizardIsComponentSelected('full');
 end;
