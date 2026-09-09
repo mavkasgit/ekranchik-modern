@@ -1,0 +1,69 @@
+# Релиз полного установщика EkranchikSetup.exe (issue #8).
+#
+# СХЕМА ВЕРСИЙ — без конфликтов с релизами киоска:
+#   киоск:             теги v*          + ассет Ekranchik.exe       (ручной процесс, ЭТОТ workflow НЕ трогает)
+#   полный установщик: теги full-v*     + ассет EkranchikSetup.exe  (этот workflow)
+# Триггер ниже — только full-v*, поэтому релиз киоска не ломается и не
+# дублируется. Версия установщика = тег без префикса (full-v1.0.4 -> 1.0.4,
+# переопределяет #define MyAppVersion из launcher.iss через -Version).
+name: Release full installer
+
+on:
+  push:
+    tags:
+      - 'full-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия установщика (например 1.0.4)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Derive version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $v = '${{ github.ref_name }}' -replace '^full-v', ''
+          } else {
+            $v = '${{ inputs.version }}'
+          }
+          if ([string]::IsNullOrWhiteSpace($v)) { throw 'Пустая версия.' }
+          "value=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build full installer
+        run: >
+          powershell -ExecutionPolicy Bypass
+          -File scripts/build-full-installer.ps1
+          -Version ${{ steps.version.outputs.value }}
+          -BuildKiosk
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: launcher/Output/EkranchikSetup.exe
+          name: EkranchikSetup ${{ github.ref_type == 'tag' && github.ref_name || format('full-v{0}', steps.version.outputs.value) }}
