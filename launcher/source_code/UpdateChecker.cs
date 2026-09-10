@@ -181,11 +181,11 @@ namespace EkranchikShared
                     string? version = VersionFromTag(tagEl.GetString(), channelPrefix);
                     if (version == null || SemVer.Compare(version, currentVersion) <= 0)
                         continue;
-                    (string assetUrl, long assetSize) = FindAsset(rel, assetName);
+                    (string assetUrl, long assetSize, string assetActual) = FindAsset(rel, assetName, version);
                     if (assetUrl.Length == 0)
                         continue;
                     string notes = rel.TryGetProperty("body", out JsonElement body) ? body.GetString() ?? "" : "";
-                    var candidate = new UpdateInfo(tagEl.GetString() ?? "", version, assetName, assetUrl, assetSize, notes);
+                    var candidate = new UpdateInfo(tagEl.GetString() ?? "", version, assetActual, assetUrl, assetSize, notes);
                     if (best == null || SemVer.Compare(candidate.Version, best.Version) > 0)
                         best = candidate;
                 }
@@ -197,12 +197,19 @@ namespace EkranchikShared
             }
         }
 
-        private static (string Url, long Size) FindAsset(JsonElement release, string assetName)
+        /// <summary>Поиск ассета: legacy-имя + маска stem-«версия».exe.
+        /// Исключительно: stem в начале + .exe в конце + числовая версия
+        /// в середине (мусор вида notes.txt / .exe.bak / чужой префикс мимо).
+        /// Приоритет — точному совпадению версии из тега.</summary>
+        private static (string Url, long Size, string Name) FindAsset(JsonElement release, string assetName, string version)
         {
             if (!release.TryGetProperty("assets", out JsonElement assets) || assets.ValueKind != JsonValueKind.Array)
-                return ("", 0);
-            string fallbackUrl = "";
-            long fallbackSize = 0;
+                return ("", 0, "");
+            string stem = assetName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                ? assetName.Substring(0, assetName.Length - 4)
+                : assetName;
+            (string u, long s, string n) best = ("", 0, "");
+            int bestRank = int.MaxValue;
             foreach (JsonElement asset in assets.EnumerateArray())
             {
                 if (!asset.TryGetProperty("name", out JsonElement nameEl))
@@ -213,20 +220,55 @@ namespace EkranchikShared
                 string dl = urlEl.GetString() ?? "";
                 if (dl.Length == 0)
                     continue;
+                int rank;
+                if (name.Equals(assetName, StringComparison.OrdinalIgnoreCase))
+                    rank = 1; // legacy-имя
+                else if (IsVersionedAssetName(name, stem, out string embedded))
+                    rank = embedded.Equals(version, StringComparison.OrdinalIgnoreCase) ? 0 : 2;
+                else
+                    continue;
+                if (rank >= bestRank)
+                    continue;
                 long size = 0;
                 if (asset.TryGetProperty("size", out JsonElement sizeEl)
                     && sizeEl.ValueKind == JsonValueKind.Number
-                    && sizeEl.TryGetInt64(out long n))
-                    size = Math.Max(n, 0);
-                if (name.Equals(assetName, StringComparison.OrdinalIgnoreCase))
-                    return (dl, size);
-                if (fallbackUrl.Length == 0 && name.EndsWith(assetName, StringComparison.OrdinalIgnoreCase))
-                {
-                    fallbackUrl = dl;
-                    fallbackSize = size;
-                }
+                    && sizeEl.TryGetInt64(out long num))
+                    size = Math.Max(num, 0);
+                best = (dl, size, name);
+                bestRank = rank;
             }
-            return (fallbackUrl, fallbackSize);
+            return best;
+        }
+
+        private static bool IsVersionedAssetName(string name, string stem, out string embedded)
+        {
+            embedded = "";
+            if (!name.StartsWith(stem + "-", StringComparison.OrdinalIgnoreCase)
+                || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                return false;
+            string mid = name.Substring(stem.Length + 1, name.Length - stem.Length - 1 - 4);
+            if (!IsStrictVersion(mid))
+                return false;
+            embedded = mid;
+            return true;
+        }
+
+        private static bool IsStrictVersion(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+                return false;
+            bool dot = false;
+            bool digit = false;
+            foreach (char c in s)
+            {
+                if (c == '.')
+                    dot = true;
+                else if (c >= '0' && c <= '9')
+                    digit = true;
+                else
+                    return false;
+            }
+            return dot && digit && SemVer.TryParse(s, out _);
         }
 
         /// <summary>Скачать ассет: потоково в tmp, сверка размера из API, атомарный move.</summary>
@@ -344,6 +386,31 @@ namespace EkranchikShared
 
             Check(UpdateChecker.IsChannelTag("v1.0.3", UpdateChecker.KioskChannelPrefix), "kiosk tag v*");
             Check(!UpdateChecker.IsChannelTag("full-v1.0.3", UpdateChecker.KioskChannelPrefix), "full tag not in kiosk channel");
+
+            string renamed = "["
+                + "{\"tag_name\": \"full-v1.0.5\", \"draft\": false, \"prerelease\": false, \"body\": \"renamed\","
+                + " \"assets\": ["
+                + "{\"name\": \"EkranchikSetup-1.0.5.exe\", \"size\": 555,"
+                + " \"browser_download_url\": \"https://dl/new/setup-1.0.5.exe\"},"
+                + "{\"name\": \"EkranchikSetup.exe\", \"size\": 444,"
+                + " \"browser_download_url\": \"https://dl/old/setup.exe\"},"
+                + "{\"name\": \"EkranchikSetup-notes.txt\","
+                + " \"browser_download_url\": \"https://dl/notes.txt\"},"
+                + "{\"name\": \"EkranchikSetup.exe.bak\","
+                + " \"browser_download_url\": \"https://dl/bak\"},"
+                + "{\"name\": \"MyEkranchikSetup.exe\","
+                + " \"browser_download_url\": \"https://dl/evil.exe\"},"
+                + "{\"name\": \"EkranchikAllInOne.exe\","
+                + " \"browser_download_url\": \"https://dl/other.exe\"}]},"
+                + "{\"tag_name\": \"full-v1.0.6\", \"draft\": false, \"prerelease\": false, \"body\": \"garbage only\","
+                + " \"assets\": [{\"name\": \"EkranchikSetup-notes.txt\","
+                + " \"browser_download_url\": \"https://dl/notes.txt\"}]}"
+                + "]";
+            var renamedFound = UpdateChecker.FindNewer(renamed, "1.0.3", UpdateChecker.FullChannelPrefix, "EkranchikSetup.exe");
+            Check(renamedFound != null && renamedFound.Version == "1.0.5", "versioned asset name matched");
+            Check(renamedFound != null && renamedFound.AssetUrl == "https://dl/new/setup-1.0.5.exe", "tag-version match preferred over legacy name");
+            Check(renamedFound != null && renamedFound.AssetName == "EkranchikSetup-1.0.5.exe", "actual asset name kept");
+            Check(renamedFound != null && renamedFound.AssetSize == 555, "versioned asset size kept");
             Check(UpdateChecker.IsChannelTag("full-v1.0.3", UpdateChecker.FullChannelPrefix), "full tag full-v*");
             Check(!UpdateChecker.IsChannelTag("v1.0.3", UpdateChecker.FullChannelPrefix), "kiosk tag not in full channel");
             Check(!UpdateChecker.IsChannelTag("latest", UpdateChecker.KioskChannelPrefix), "non-version tag rejected");

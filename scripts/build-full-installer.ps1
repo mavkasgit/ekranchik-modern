@@ -192,7 +192,7 @@ if ($SkipIscc) {
   Write-Host "==> Компилирую установщик ($Iscc)"
   & $Iscc "/DMyAppVersion=$Version" $IssPath
   if ($LASTEXITCODE -ne 0) { throw "ISCC завершился с кодом $LASTEXITCODE." }
-  $setup = Join2 $LauncherDir "Output/EkranchikSetup.exe"
+  $setup = Join2 $LauncherDir "Output/EkranchikSetup-$Version.exe"
   if (-not (Test-Path $setup)) { throw "ISCC отработал, но $setup не создан." }
   Write-Host "==> Готово: $setup"
 }
