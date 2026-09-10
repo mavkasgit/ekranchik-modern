@@ -131,6 +131,7 @@ const
 var
   PrevVersion: String;
   PrevSetupType: String;
+  PrevDetected: Boolean;
 
 function IsFullSelected(): Boolean;
 begin
@@ -159,6 +160,20 @@ begin
     Result := T
   else if RegQueryStringValue(HKLM, PrevAppUninstallKey, 'Inno Setup: Setup Type', T) then
     Result := T;
+end;
+
+{ Признак предыдущей установки без записи в реестре: каталог по умолчанию
+  уже несёт exe или настройки Ekranchik (портативный/дев-запуск, ключ
+  Uninstall отсутствует или снесён). }
+function HasPrevSettings(): Boolean;
+var
+  Dir: String;
+begin
+  Dir := ExpandConstant('{localappdata}\{#MyAppName}');
+  Result :=
+    FileExists(Dir + '\{#MyAppExeName}') or
+    FileExists(Dir + '\kiosk_config.json') or
+    FileExists(Dir + '\allinone_config.json');
 end;
 
 { Очередной числовой кусок версии; P сдвигается за разделитель. }
@@ -206,20 +221,23 @@ function InitializeSetup(): Boolean;
 begin
   PrevVersion := GetPrevDisplayVersion();
   PrevSetupType := GetPrevSetupType();
+  PrevDetected := (PrevVersion <> '') or HasPrevSettings();
   Result := True;
 end;
 
-{ Апгрейд: пропускаем выбор папки — каталог наследуется UsePreviousAppDir,
-  заодно умирает системный промпт про существующую папку.
-  Чистая установка: страница на месте, без изменений. }
+{ Признаки предыдущей установки: запись в реестре по AppId или данные
+  Ekranchik в каталоге по умолчанию. Пропускаем выбор папки — каталог
+  наследуется UsePreviousAppDir, заодно умирает системный промпт про
+  существующую папку. Чистая установка: страница на месте, без изменений. }
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
-  if (PageID = wpSelectDir) and (PrevVersion <> '') then
+  if (PageID = wpSelectDir) and PrevDetected then
     Result := True;
 end;
 
-{ Апгрейд: явное «Обновление Ekranchik X -> Y» в заголовке и приветствии.
+{ Апгрейд: явное «Обновление Ekranchik» в заголовке и приветствии; версия
+  X -> Y — когда известна из реестра, данные-без-версии — без номера.
   Чистая установка: тексты мастера не трогаем. }
 procedure InitializeWizard();
 begin
@@ -229,10 +247,18 @@ begin
     WizardForm.WelcomeLabel1.Caption := 'Вас приветствует обновление Ekranchik';
     WizardForm.WelcomeLabel2.Caption := 'Обнаружена установленная версия ' + PrevVersion + '.' + #13#10 +
       'Будет установлена версия {#MyAppVersion}. Данные и настройки сохраняются.';
+  end
+  else if PrevDetected then
+  begin
+    WizardForm.Caption := 'Обновление Ekranchik';
+    WizardForm.WelcomeLabel1.Caption := 'Вас приветствует обновление Ekranchik';
+    WizardForm.WelcomeLabel2.Caption := 'Обнаружены настройки и данные предыдущей установки.' + #13#10 +
+      'Будет установлена версия {#MyAppVersion}. Данные и настройки сохраняются.';
   end;
 end;
 
-{ Блок «Обновление» на готовой странице: найденная версия -> новая.
+{ Блок «Обновление» на готовой странице: найденная версия -> новая;
+  данные без записи в реестре — без номера версии.
   Стиль мастера не меняется — только текст сводки. }
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
   MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
@@ -250,11 +276,13 @@ begin
     S := S + MemoGroupInfo + NewLine + NewLine;
   if MemoTasksInfo <> '' then
     S := S + MemoTasksInfo + NewLine + NewLine;
-  if PrevVersion <> '' then
+  if PrevDetected then
   begin
-    S := S + 'Обновление' + NewLine + Space +
-      'Обнаружена версия ' + PrevVersion +
-      ' -> будет установлена {#MyAppVersion}.';
+    S := S + 'Обновление' + NewLine + Space;
+    if PrevVersion <> '' then
+      S := S + 'Обнаружена версия ' + PrevVersion + ' -> будет установлена {#MyAppVersion}.'
+    else
+      S := S + 'Обнаружены настройки и данные предыдущей установки.';
     if PrevSetupType <> '' then
       S := S + NewLine + Space + 'Предыдущий тип установки: ' + PrevSetupType + '.';
     S := S + NewLine + Space +
