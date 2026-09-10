@@ -209,6 +209,29 @@ begin
   Result := True;
 end;
 
+{ Апгрейд: пропускаем выбор папки — каталог наследуется UsePreviousAppDir,
+  заодно умирает системный промпт про существующую папку.
+  Чистая установка: страница на месте, без изменений. }
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if (PageID = wpSelectDir) and (PrevVersion <> '') then
+    Result := True;
+end;
+
+{ Апгрейд: явное «Обновление Ekranchik X -> Y» в заголовке и приветствии.
+  Чистая установка: тексты мастера не трогаем. }
+procedure InitializeWizard();
+begin
+  if PrevVersion <> '' then
+  begin
+    WizardForm.Caption := 'Обновление Ekranchik ' + PrevVersion + ' -> {#MyAppVersion}';
+    WizardForm.WelcomeLabel1.Caption := 'Вас приветствует обновление Ekranchik';
+    WizardForm.WelcomeLabel2.Caption := 'Обнаружена установленная версия ' + PrevVersion + '.' + #13#10 +
+      'Будет установлена версия {#MyAppVersion}. Данные и настройки сохраняются.';
+  end;
+end;
+
 { Блок «Обновление» на готовой странице: найденная версия -> новая.
   Стиль мастера не меняется — только текст сводки. }
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
