@@ -1,12 +1,14 @@
-; EkranchikSetup — один установщик, два типа установки (issue #6).
+; EkranchikSetup — один установщик, два типа установки (issue #6, #9).
 ;
-;   «Только киоск» — состав байт-в-байт как раньше (секция [Files] с
-;     Components: kiosk повторяет эталонный установщик киоска).
-;   «Полный пакет» — киоск + AllInOne + embedded Python + backend + frontend/dist.
+;   «Только киоск» — состав байт-в-байт как раньше: экран отдельным
+;     процессом (Ekranchik.exe + WebView2 + конфиги).
+;   «Полный пакет» — ОДНО приложение EkranchikAllInOne.exe: сервер, экран
+;     киоска, трей и настройки в одном процессе (issue #9)
+;     + embedded Python + backend + frontend/dist.
 ;
-; Повторный запуск меняет тип: доустановка докачивает компонент full,
-; удаление типа (full -> kiosk) стирает файлы компонента full секцией
-; [InstallDelete]. Каталог данных и живые настройки
+; Повторный запуск меняет тип: переход full -> kiosk стирает файлы
+; компонента full, переход kiosk -> full стирает отдельный киоск exe —
+; секцией [InstallDelete]. Каталог данных и живые настройки
 ; (%LOCALAPPDATA%\Ekranchik: data/, *.json, logs/) установкой, обновлением
 ; и удалением компонентов НЕ затрагиваются — они нигде ниже не перечислены.
 ;
@@ -68,30 +70,33 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Types]
 Name: "kiosk"; Description: "Только киоск (как раньше)"
-Name: "full"; Description: "Полный пакет: киоск + сервер + Python + веб-интерфейс"
+Name: "full"; Description: "Полный пакет: одно приложение — сервер + киоск + Python + веб-интерфейс"
 Name: "custom"; Description: "Выборочная установка"; Flags: iscustom
 
 [Components]
-Name: "kiosk"; Description: "Киоск Ekranchik (обязательный компонент)"; Types: kiosk full custom; Flags: fixed
-Name: "full"; Description: "Сервер, embedded Python и веб-интерфейс"; Types: full
+Name: "runtime"; Description: "Общие файлы (WebView2, конфиг, иконки)"; Types: kiosk full custom; Flags: fixed
+Name: "kioskapp"; Description: "Киоск Ekranchik (только экран, отдельный exe)"; Types: kiosk
+Name: "full"; Description: "Сервер, embedded Python и веб-интерфейс + экран в одном приложении"; Types: full
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; --- Компонент «kiosk»: состав эталона, ничего не убрано и не добавлено. ---
+; --- Компонент «runtime»: общие файлы обоих режимов. ---
 ; kiosk_config.json ставится только на чистую установку (onlyifdoesntexist):
 ; установщик одновременно кладёт seed по умолчанию и НЕ затирает живые
 ; настройки пользователя при обновлении/переустановке/смене типа.
-Source: "Ekranchik.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
-Source: "WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
-Source: "runtimes\*"; DestDir: "{app}\runtimes"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: kiosk
-Source: "idle_clock.html"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
-Source: "kiosk_config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Components: kiosk
-Source: "ktm_colored.png"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
-Source: "launcher.ico"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
-; --- Компонент «full»: раскладка рядом с exe (контракт ADR 0002/issue #5). ---
-; AllInOne ищет backend/ рядом с собой, киоск — Ekranchik.exe рядом с собой.
+Source: "WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: runtime
+Source: "runtimes\*"; DestDir: "{app}\runtimes"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: runtime
+Source: "idle_clock.html"; DestDir: "{app}"; Flags: ignoreversion; Components: runtime
+Source: "kiosk_config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Components: runtime
+Source: "ktm_colored.png"; DestDir: "{app}"; Flags: ignoreversion; Components: runtime
+Source: "launcher.ico"; DestDir: "{app}"; Flags: ignoreversion; Components: runtime
+; --- Компонент «kioskapp»: самостоятельный киоск-процесс («Только киоск»). ---
+Source: "Ekranchik.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: kioskapp
+; --- Компонент «full»: ОДНО приложение — merged exe с экраном киоска
+; внутри (issue #9), плюс раскладка рядом (контракт ADR 0002/issue #5):
+; AllInOne ищет backend/ рядом с собой. ---
 Source: "{#MyAppAllInOneExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: full
 Source: "EkranchikAllInOne.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: full
 Source: "EkranchikAllInOne.deps.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: full
@@ -101,9 +106,11 @@ Source: "..\dist-full\dist\*"; DestDir: "{app}\dist"; Flags: ignoreversion recur
 Source: "..\dist-full\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: full
 
 [InstallDelete]
-; Смена типа full -> kiosk (и выборочная без full): стереть файлы компонента
-; full. data/, *.json, logs/ здесь намеренно отсутствуют — данные и настройки
-; переживают удаление компонентов. На чистой установке удалять нечего (no-op).
+; Смена типа full -> kiosk (и выборочная без full): стереть merged exe и
+; серверную раскладку. Переход kiosk -> full: отдельный киоск-процесс
+; больше не ставится — его место занимает merged exe (issue #9).
+; data/, *.json, logs/ здесь намеренно отсутствуют — данные и настройки
+; переживают удаление компонентов. На чистой установке удалять нечего.
 Type: files; Name: "{app}\{#MyAppAllInOneExeName}"; Check: not IsFullSelected
 Type: files; Name: "{app}\EkranchikAllInOne.dll"; Check: not IsFullSelected
 Type: files; Name: "{app}\EkranchikAllInOne.deps.json"; Check: not IsFullSelected
@@ -111,18 +118,27 @@ Type: files; Name: "{app}\EkranchikAllInOne.runtimeconfig.json"; Check: not IsFu
 Type: filesandordirs; Name: "{app}\backend"; Check: not IsFullSelected
 Type: filesandordirs; Name: "{app}\dist"; Check: not IsFullSelected
 Type: filesandordirs; Name: "{app}\python"; Check: not IsFullSelected
-Type: files; Name: "{group}\{#MyAppName} Полный пакет.lnk"; Check: not IsFullSelected
-Type: files; Name: "{userdesktop}\{#MyAppName} Полный пакет.lnk"; Check: not IsFullSelected
+Type: files; Name: "{group}\{#MyAppName} Полный пакет.lnk"
+Type: files; Name: "{userdesktop}\{#MyAppName} Полный пакет.lnk"
+; Старая десктоп-иконка «Ekranchik» указывала на киоск exe — на full она
+; пересоздаётся [Icons] только при отмеченной задаче, а старый exe удаляется
+; выше: битую иконку стираем до возможной пересоздания.
+Type: files; Name: "{userdesktop}\{#MyAppName}.lnk"; Check: IsFullSelected
+Type: files; Name: "{app}\{#MyAppExeName}"; Check: IsFullSelected
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Components: kiosk
-Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Tasks: desktopicon; Components: kiosk
-Name: "{group}\{#MyAppName} Полный пакет"; Filename: "{app}\{#MyAppAllInOneExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Components: full
-Name: "{userdesktop}\{#MyAppName} Полный пакет"; Filename: "{app}\{#MyAppAllInOneExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Tasks: desktopicon; Components: full
+; Полный режим: единственный ярлык ведёт на merged exe (issue #9) — одно
+; приложение под именем «Ekranchik».
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppAllInOneExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Components: full
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppAllInOneExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Tasks: desktopicon; Components: full
+; Киоск-режим: ярлык на киоск exe, когда полный не выбран (Check — против
+; дубля имени в выборочной установке с обоими компонентами).
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Components: kioskapp; Check: not IsFullSelected
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Tasks: desktopicon; Components: kioskapp; Check: not IsFullSelected
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent; Check: not IsFullSelected
-Filename: "{app}\{#MyAppAllInOneExeName}"; Description: "Запустить Ekranchik (полный пакет)"; Flags: nowait postinstall skipifsilent; Components: full
+Filename: "{app}\{#MyAppAllInOneExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent; Components: full
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent; Components: kioskapp; Check: not IsFullSelected
 
 [Code]
 const

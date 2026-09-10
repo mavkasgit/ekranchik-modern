@@ -132,6 +132,11 @@ def main() -> int:
     saved_run = _ps("(Get-ItemPropertyValue "
                     f"-Path '{REAL_RUN}' -Name 'EkranchikAllInOne' -ErrorAction SilentlyContinue)")
     saved_run_value = (saved_run.stdout or "").strip() or None
+    # Миграция (issue #9) удаляет киоск-значение Ekranchik из Run —
+    # бэкапим его тоже, чтобы прогон не пачкал чужое состояние.
+    saved_kiosk_run = _ps("(Get-ItemPropertyValue "
+                          f"-Path '{REAL_RUN}' -Name 'Ekranchik' -ErrorAction SilentlyContinue)")
+    saved_kiosk_run_value = (saved_kiosk_run.stdout or "").strip() or None
 
     TEST_KEY = r"Software\EkranchikAllInOneSmokeTest\Run"
     port = free_port()
@@ -188,6 +193,11 @@ def main() -> int:
             ok &= check("env overrides file (opcua)", dumped2.get("OpcuaEndpoint") == "opc.tcp://192.0.2.20:4840/",
                         f"got={dumped2.get('OpcuaEndpoint')!r}")
 
+        # Изоляция прогона: дневной лог копится между запусками (в т.ч.
+        # чужими) — все ассерты ниже смотрят только секцию от этого смещения.
+        logs_dir = Path(os.environ["LOCALAPPDATA"]) / "Ekranchik" / "logs"
+        _today = logs_dir / time.strftime("allinone-%Y%m%d.log")
+        pre_log_size = _today.stat().st_size if _today.exists() else 0
         print(f"== run (port {port}) ==")
         # --silent явно: старт в трей без окна, стек поднимается сам.
         proc = subprocess.Popen([str(EXE), "--silent", "--auto-exit-after-ready=3"], env=env)
@@ -207,7 +217,8 @@ def main() -> int:
         ok &= check("backend log exists", bool(backends))
         ok &= check("allinone log exists", bool(apps))
         backend_log = backends[-1].read_text(encoding="utf-8", errors="replace") if backends else ""
-        app_log = apps[-1].read_text(encoding="utf-8", errors="replace") if apps else ""
+        app_log = (apps[-1].read_bytes()[pre_log_size:].decode("utf-8", errors="replace")
+                   if apps else "")
         ok &= check("backend stub produced output", "stub backend listening" in backend_log)
         ok &= check("backend started", "backend started pid=" in app_log)
         ok &= check("readiness via /health", "backend ready" in app_log)
@@ -328,6 +339,15 @@ def main() -> int:
                     f"-Value '{saved_run_value}')")
         except Exception as ex:
             print(f"[WARN] real Run restore failed: {ex}")
+        try:
+            if saved_kiosk_run_value is None:
+                _ps(f"(Remove-ItemProperty -Path '{REAL_RUN}' -Name 'Ekranchik' "
+                    "-Force -ErrorAction SilentlyContinue)")
+            else:
+                _ps(f"(Set-ItemProperty -Path '{REAL_RUN}' -Name 'Ekranchik' "
+                    f"-Value '{saved_kiosk_run_value}')")
+        except Exception as ex:
+            print(f"[WARN] kiosk Run restore failed: {ex}")
         try:
             _ps("Remove-Item -Path 'HKCU:\\Software\\EkranchikAllInOneSmokeTest' "
                 "-Recurse -Force -ErrorAction SilentlyContinue")

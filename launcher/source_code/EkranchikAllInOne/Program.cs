@@ -43,6 +43,15 @@ namespace EkranchikAllInOne
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            // Падение UI-потока больше не роняет весь стек (issue #9):
+            // лог + корректная остановка сервера и трея. Режим ставится ДО
+            // создания скрытых контролов синхронизации.
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += (s, e) => AllInOneContext.ReportUiCrash(e.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => AllInOneContext.ReportCrash(e.ExceptionObject);
+            // Контекст синхронизации UI-потока: окно киоска создаётся только
+            // на Main-потоке (issue #9).
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
 
             int autoExitAfterReady = 0;
             bool silent = false;
@@ -91,8 +100,8 @@ namespace EkranchikAllInOne
                     || autostartArg.Equals("true", StringComparison.OrdinalIgnoreCase);
                 try
                 {
-                    AutoStartManager.Apply(enable, runKeyArg);
-                    Console.WriteLine($"autostart {(enable ? "enabled" : "disabled")} key={AutoStartManager.EffectiveKeyPath(runKeyArg)}");
+                    WindowsAutoStart.Apply(enable, WindowsAutoStart.AllInOneValueName, WindowsAutoStart.AllInOneArgsSuffix, runKeyArg);
+                    Console.WriteLine($"autostart {(enable ? "enabled" : "disabled")} key={WindowsAutoStart.EffectiveKeyPath(runKeyArg)}");
                     return 0;
                 }
                 catch (Exception ex)
@@ -145,6 +154,9 @@ namespace EkranchikAllInOne
         public int Port { get; set; } = 8083;
         public string DashboardUrl { get; set; } = "";
         public string KioskExe { get; set; } = "";
+        // Крючок smoke/дев: киоск запускается внешним процессом, а не окном
+        // в этом же процессе. Ставится только env EKRANCHIK_KIOSK_EXE.
+        public bool UseExternalKiosk { get; private set; } = false;
         // Полная строка аргументов киоска; {url} подставляется автоматически.
         public string KioskArgs { get; set; } = "--no-gui \"{url}\"";
         public int ReadyTimeoutSeconds { get; set; } = 90;
@@ -205,7 +217,11 @@ namespace EkranchikAllInOne
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_PYTHON"))) PythonExe = Env("EKRANCHIK_PYTHON")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_BACKEND_ARGS"))) BackendArgs = Env("EKRANCHIK_BACKEND_ARGS")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_BACKEND_DIR"))) BackendDir = Env("EKRANCHIK_BACKEND_DIR")!;
-            if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_KIOSK_EXE"))) KioskExe = Env("EKRANCHIK_KIOSK_EXE")!;
+            if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_KIOSK_EXE")))
+            {
+                KioskExe = Env("EKRANCHIK_KIOSK_EXE")!;
+                UseExternalKiosk = true;
+            }
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_KIOSK_ARGS"))) KioskArgs = Env("EKRANCHIK_KIOSK_ARGS")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_URL"))) DashboardUrl = Env("EKRANCHIK_URL")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_EXCEL_PATH"))) ExcelPath = Env("EKRANCHIK_EXCEL_PATH")!;
@@ -267,42 +283,6 @@ namespace EkranchikAllInOne
                 dir = dir.Parent;
             }
             return besideExe;
-        }
-    }
-    // === Автозапуск Windows: HKCU Software\Microsoft\Windows\CurrentVersion\Run.
-    // Имя значения — EkranchikAllInOne (не пересекается с "Ekranchik" киоска).
-    // Команда — "<exe>" --silent: старт в трей без окна, стек поднимается сам.
-    // Снятие галки удаляет запись. runKeyPath != null — тестовый подключ HKCU
-    // (smoke round-trip, настоящий Run не пачкать).
-    static class AutoStartManager
-    {
-        public const string ValueName = "EkranchikAllInOne";
-        public const string RealRunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-
-        public static string EffectiveKeyPath(string? runKeyPath) =>
-            string.IsNullOrWhiteSpace(runKeyPath) ? RealRunKeyPath : runKeyPath!;
-
-        public static void Apply(bool enable, string? runKeyPath = null)
-        {
-            string keyPath = EffectiveKeyPath(runKeyPath);
-            using (RegistryKey key = Registry.CurrentUser.CreateSubKey(keyPath, true))
-            {
-                if (key == null)
-                    throw new InvalidOperationException($"cannot open HKCU\\{keyPath}");
-                if (enable)
-                    key.SetValue(ValueName, $"\"{Application.ExecutablePath}\" --silent");
-                else
-                    key.DeleteValue(ValueName, throwOnMissingValue: false);
-            }
-        }
-
-        public static bool IsEnabled(string? runKeyPath = null)
-        {
-            string keyPath = EffectiveKeyPath(runKeyPath);
-            using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false))
-            {
-                return key?.GetValue(ValueName) != null;
-            }
         }
     }
 
@@ -378,378 +358,48 @@ namespace EkranchikAllInOne
         }
     }
 
-    // === Окно настроек (issue #4), в стиле киоска: Slate-900/800, Segoe UI. ===
-    // Пять настроек persist-ятся в allinone_config.json: путь Excel, адрес
-    // OPC UA, тестовые данные, монитор киоска, автозапуск Windows.
-    sealed class SettingsForm : Form
+    // === Модель настроек полного режима для единого окна (issue #9):
+    // обёртка AllInOneConfig. URL-поле скрыто (URL — всегда локальный
+    // сервер), серверная секция видна. ===
+    sealed class AllInOneSettingsModel : ISettingsModel
     {
         private readonly AllInOneConfig _config;
-        private readonly AllInOneContext _updater;
-        private readonly TextBox _txtExcel;
-        private readonly TextBox _txtOpcua;
-        private readonly CheckBox _chkSim;
-        private readonly ComboBox _cmbMonitor;
-        private readonly CheckBox _chkAutostart;
-        private readonly Label _lblVersions;
-        private readonly Label _lblUpdateStatus;
-        private readonly Button _btnInstall;
 
-        public SettingsForm(AllInOneConfig config, AllInOneContext updater)
+        public AllInOneSettingsModel(AllInOneConfig config)
         {
             _config = config;
-            _updater = updater;
-
-            Color bgDark = Color.FromArgb(15, 23, 42);      // #0f172a
-            Color bgCard = Color.FromArgb(30, 41, 59);      // #1e293b
-            Color fgLight = Color.FromArgb(248, 250, 252);  // #f8fafc
-            Color fgMuted = Color.FromArgb(148, 163, 184);  // slate-400
-            Color accentBlue = Color.FromArgb(59, 130, 246); // #3b82f6
-            Color borderGray = Color.FromArgb(51, 65, 85);   // #334155
-
-            this.Text = "Ekranchik — Настройки";
-            this.Size = new Size(540, 710);
-            this.BackColor = bgDark;
-            this.ForeColor = fgLight;
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
-            this.MinimizeBox = false;
-            this.StartPosition = FormStartPosition.CenterScreen;
-            this.ShowInTaskbar = true;
-            try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
-            catch { }
-
-            var title = new Label
-            {
-                Text = "НАСТРОЙКИ EKRANCHIK",
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                Location = new Point(20, 15),
-                Size = new Size(480, 25),
-                TextAlign = ContentAlignment.MiddleCenter
-            };
-            this.Controls.Add(title);
-
-            int y = 55;
-            var lblExcel = new Label
-            {
-                Text = "Путь к Excel (сетевой):",
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Location = new Point(40, y),
-                Size = new Size(440, 20),
-                ForeColor = fgMuted
-            };
-            this.Controls.Add(lblExcel);
-            y += 22;
-            _txtExcel = new TextBox
-            {
-                Text = config.ExcelPath,
-                Font = new Font("Segoe UI", 10),
-                BackColor = bgCard,
-                ForeColor = fgLight,
-                Location = new Point(40, y),
-                Size = new Size(350, 28),
-                BorderStyle = BorderStyle.FixedSingle
-            };
-            this.Controls.Add(_txtExcel);
-            var btnBrowse = new Button
-            {
-                Text = "Обзор...",
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                BackColor = bgCard,
-                ForeColor = fgLight,
-                FlatStyle = FlatStyle.Flat,
-                Location = new Point(400, y - 1),
-                Size = new Size(80, 28),
-                Cursor = Cursors.Hand
-            };
-            btnBrowse.FlatAppearance.BorderColor = borderGray;
-            btnBrowse.Click += (s, e) => BrowseExcel();
-            this.Controls.Add(btnBrowse);
-            y += 40;
-
-            var lblOpcua = new Label
-            {
-                Text = "Адрес OPC UA:",
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Location = new Point(40, y),
-                Size = new Size(440, 20),
-                ForeColor = fgMuted
-            };
-            this.Controls.Add(lblOpcua);
-            y += 22;
-            _txtOpcua = new TextBox
-            {
-                Text = config.OpcuaEndpoint,
-                Font = new Font("Segoe UI", 10),
-                BackColor = bgCard,
-                ForeColor = fgLight,
-                Location = new Point(40, y),
-                Size = new Size(440, 28),
-                BorderStyle = BorderStyle.FixedSingle
-            };
-            this.Controls.Add(_txtOpcua);
-            y += 44;
-
-            _chkSim = new CheckBox
-            {
-                Text = "Тестовые данные (SIMULATION_ENABLED)",
-                Checked = config.SimulationEnabled,
-                Font = new Font("Segoe UI", 10),
-                Location = new Point(40, y),
-                Size = new Size(440, 26),
-                ForeColor = fgLight
-            };
-            this.Controls.Add(_chkSim);
-            y += 34;
-
-            var lblMonitor = new Label
-            {
-                Text = "Монитор для киоска:",
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Location = new Point(40, y),
-                Size = new Size(440, 20),
-                ForeColor = fgMuted
-            };
-            this.Controls.Add(lblMonitor);
-            y += 22;
-            _cmbMonitor = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font("Segoe UI", 10),
-                BackColor = bgCard,
-                ForeColor = fgLight,
-                Location = new Point(40, y),
-                Size = new Size(440, 28)
-            };
-            var screens = Screen.AllScreens;
-            for (int i = 0; i < screens.Length; i++)
-            {
-                var s = screens[i];
-                string name = s.Primary ? "Основной" : "Дополнительный";
-                _cmbMonitor.Items.Add($"Монитор {i} — {name} ({s.Bounds.Width}x{s.Bounds.Height})");
-            }
-            if (_cmbMonitor.Items.Count == 0)
-                _cmbMonitor.Items.Add("Монитор 0");
-            _cmbMonitor.SelectedIndex = Math.Min(Math.Max(config.KioskMonitor, 0), _cmbMonitor.Items.Count - 1);
-            this.Controls.Add(_cmbMonitor);
-            y += 44;
-
-            _chkAutostart = new CheckBox
-            {
-                Text = "Автозапуск Windows (старт в трей без окна)",
-                Checked = config.AutoStart,
-                Font = new Font("Segoe UI", 10),
-                Location = new Point(40, y),
-                Size = new Size(440, 26),
-                ForeColor = fgLight
-            };
-            this.Controls.Add(_chkAutostart);
-            y += 36;
-
-            var hint = new Label
-            {
-                Text = "Excel, OPC UA и симуляция применяются при следующем запуске (env сервера). " +
-                    "Монитор — при запуске киоска. Автозапуск записывается в реестр сразу.",
-                Font = new Font("Segoe UI", 8.5f),
-                Location = new Point(40, y),
-                Size = new Size(440, 44),
-                ForeColor = fgMuted
-            };
-            this.Controls.Add(hint);
-            y += 52;
-            var lblVerTitle = new Label
-            {
-                Text = "ВЕРСИИ И ОБНОВЛЕНИЯ",
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Location = new Point(20, y),
-                Size = new Size(480, 22),
-                TextAlign = ContentAlignment.MiddleCenter,
-                ForeColor = fgMuted
-            };
-            this.Controls.Add(lblVerTitle);
-            y += 26;
-
-            _lblVersions = new Label
-            {
-                Text = _updater.VersionsText("…"),
-                Font = new Font("Segoe UI", 9),
-                Location = new Point(40, y),
-                Size = new Size(440, 50),
-                ForeColor = fgLight
-            };
-            this.Controls.Add(_lblVersions);
-            y += 54;
-
-            _lblUpdateStatus = new Label
-            {
-                Text = _updater.UpdateStatus,
-                Font = new Font("Segoe UI", 9),
-                Location = new Point(40, y),
-                Size = new Size(440, 22),
-                ForeColor = fgMuted
-            };
-            this.Controls.Add(_lblUpdateStatus);
-            y += 26;
-
-            var btnCheck = new Button
-            {
-                Text = "Проверить обновления",
-                Font = new Font("Segoe UI", 9),
-                BackColor = bgCard,
-                ForeColor = fgLight,
-                FlatStyle = FlatStyle.Flat,
-                Location = new Point(40, y),
-                Size = new Size(210, 32),
-                Cursor = Cursors.Hand
-            };
-            btnCheck.FlatAppearance.BorderColor = borderGray;
-            btnCheck.Click += async (s, e) =>
-            {
-                btnCheck.Enabled = false;
-                try { await _updater.CheckForUpdatesAsync(manual: true).ConfigureAwait(true); }
-                finally { btnCheck.Enabled = true; }
-                RefreshUpdateLabels();
-                RefreshBackendVersionAsync();
-            };
-            this.Controls.Add(btnCheck);
-
-            _btnInstall = new Button
-            {
-                Text = "Установить",
-                Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                BackColor = accentBlue,
-                ForeColor = fgLight,
-                FlatStyle = FlatStyle.Flat,
-                Location = new Point(260, y),
-                Size = new Size(220, 32),
-                Cursor = Cursors.Hand,
-                Enabled = _updater.HasPendingUpdate
-            };
-            _btnInstall.FlatAppearance.BorderSize = 0;
-            _btnInstall.Click += async (s, e) =>
-            {
-                _btnInstall.Enabled = false;
-                await _updater.InstallUpdateAsync().ConfigureAwait(true);
-                RefreshUpdateLabels();
-            };
-            this.Controls.Add(_btnInstall);
-            y += 42;
-
-            RefreshBackendVersionAsync();
-
-            var btnSave = new Button
-            {
-                Text = "Сохранить",
-                Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                BackColor = accentBlue,
-                ForeColor = fgLight,
-                FlatStyle = FlatStyle.Flat,
-                Location = new Point(140, y),
-                Size = new Size(140, 36),
-                Cursor = Cursors.Hand,
-                DialogResult = DialogResult.None
-            };
-            btnSave.FlatAppearance.BorderSize = 0;
-            btnSave.Click += (s, e) => SaveAndClose();
-            this.Controls.Add(btnSave);
-            this.AcceptButton = btnSave;
-
-            var btnCancel = new Button
-            {
-                Text = "Отмена",
-                Font = new Font("Segoe UI", 10),
-                BackColor = bgCard,
-                ForeColor = fgLight,
-                FlatStyle = FlatStyle.Flat,
-                Location = new Point(300, y),
-                Size = new Size(140, 36),
-                Cursor = Cursors.Hand,
-                DialogResult = DialogResult.Cancel
-            };
-            btnCancel.FlatAppearance.BorderColor = borderGray;
-            this.Controls.Add(btnCancel);
-            this.CancelButton = btnCancel;
         }
 
-        private void BrowseExcel()
-        {
-            using (var dlg = new OpenFileDialog())
-            {
-                dlg.Title = "Путь к Excel-книге учёта";
-                dlg.Filter = "Excel (*.xlsm;*.xlsx)|*.xlsm;*.xlsx|Все файлы (*.*)|*.*";
-                try
-                {
-                    if (!string.IsNullOrWhiteSpace(_txtExcel.Text))
-                    {
-                        string dir = Path.GetDirectoryName(_txtExcel.Text) ?? "";
-                        if (Directory.Exists(dir)) dlg.InitialDirectory = dir;
-                        dlg.FileName = Path.GetFileName(_txtExcel.Text);
-                    }
-                }
-                catch { }
-                if (dlg.ShowDialog(this) == DialogResult.OK)
-                    _txtExcel.Text = dlg.FileName;
-            }
-        }
+        public string? Url => null;
+        public string? ExcelPath => _config.ExcelPath;
+        public string? OpcuaEndpoint => _config.OpcuaEndpoint;
+        public bool Simulation => _config.SimulationEnabled;
+        public int MonitorIndex => _config.KioskMonitor;
+        public bool WindowsAutostart => _config.AutoStart;
+        public bool AutoLaunchOnSecondMonitor => false;
 
-        private void SaveAndClose()
+        public void Save(string? url, string? excelPath, string? opcua, bool simulation,
+                         int monitorIndex, bool windowsAutostart, bool autoLaunchOnSecondMonitor)
         {
-            _config.ExcelPath = _txtExcel.Text.Trim();
-            _config.OpcuaEndpoint = _txtOpcua.Text.Trim();
-            _config.SimulationEnabled = _chkSim.Checked;
-            _config.KioskMonitor = Math.Max(_cmbMonitor.SelectedIndex, 0);
-            _config.AutoStart = _chkAutostart.Checked;
+            _config.ExcelPath = excelPath ?? _config.ExcelPath;
+            _config.OpcuaEndpoint = opcua ?? _config.OpcuaEndpoint;
+            _config.SimulationEnabled = simulation;
+            _config.KioskMonitor = Math.Max(monitorIndex, 0);
+            _config.AutoStart = windowsAutostart;
             try
             {
                 _config.Save();
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Не удалось сохранить настройки:\n" + ex.Message,
-                    "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                throw new InvalidOperationException("не удалось записать allinone_config.json: " + ex.Message, ex);
             }
-            try
-            {
-                AutoStartManager.Apply(_config.AutoStart);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, "Настройки сохранены, но автозапуск не применён:\n" + ex.Message,
-                    "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            this.DialogResult = DialogResult.OK;
-            this.Close();
-        }
-
-        // Вызывает контекст, когда фоновая проверка завершилась при открытом окне.
-        public void RefreshFromUpdater()
-        {
-            RefreshUpdateLabels();
-            RefreshBackendVersionAsync();
-        }
-
-        private void RefreshUpdateLabels()
-        {
-            _lblUpdateStatus.Text = _updater.UpdateStatus;
-            _btnInstall.Enabled = _updater.HasPendingUpdate;
-        }
-
-        private async void RefreshBackendVersionAsync()
-        {
-            try
-            {
-                string backend = await _updater.GetBackendVersionAsync().ConfigureAwait(true);
-                if (this.IsDisposed)
-                    return;
-                _lblVersions.Text = _updater.VersionsText(backend);
-            }
-            catch { }
+            WindowsAutoStart.Apply(_config.AutoStart, WindowsAutoStart.AllInOneValueName, WindowsAutoStart.AllInOneArgsSuffix);
         }
     }
 
     // === Контекст приложения: backend → готовность → киоск → трей ===
-    sealed class AllInOneContext : ApplicationContext
+    sealed class AllInOneContext : ApplicationContext, IKioskHost, ISettingsHost
     {
         private readonly AllInOneConfig _config;
         private readonly int _autoExitAfterReady;
@@ -757,10 +407,17 @@ namespace EkranchikAllInOne
         private readonly RotatingLogger _appLog;
         private readonly RotatingLogger _backendLog;
         private readonly CancellationTokenSource _cts = new();
+        // UI-поток: Main ставит WindowsFormsSynchronizationContext, контекст
+        // захватывается на UI-потоке; окно киоска создаётся только через Post.
+        private readonly SynchronizationContext? _ui;
 
         private NotifyIcon? _tray;
+        private ToolStripMenuItem? _idleItem;
         private Process? _backend;
         private Process? _kiosk;
+        // Киоск в этом же процессе (issue #9); _kiosk остаётся для крючка
+        // smoke (внешний процесс).
+        private KioskForm? _kioskForm;
         private SettingsForm? _settingsForm;
         private bool _shutdownStarted;
         private UpdateInfo? _pendingUpdate;
@@ -779,11 +436,26 @@ namespace EkranchikAllInOne
             _silent = silent;
             _appLog = new RotatingLogger("allinone");
             _backendLog = new RotatingLogger("backend");
+            Current = this;
+            _ui = SynchronizationContext.Current;
+            if (_ui == null)
+                _appLog.Write("WARN: no UI SynchronizationContext — kiosk window will not start");
             _appLog.Write($"config: python={config.PythonExe} dir={config.BackendDir} " +
                 $"args={config.ResolvedBackendArgs} url={config.ResolvedDashboardUrl} kiosk={config.KioskExe}");
             _appLog.Write($"settings: excel={config.ExcelPath} opcua={config.OpcuaEndpoint} " +
                 $"sim={config.SimulationEnabled} monitor={config.KioskMonitor} autostart={config.AutoStart}");
             SyncAutoStart();
+            // Миграция (issue #9): старое киоск-значение автозапуска больше
+            // не нужно — полный режим стартует одним приложением.
+            try
+            {
+                WindowsAutoStart.DeleteValue(WindowsAutoStart.KioskValueName);
+                _appLog.Write("migration: legacy kiosk autostart value removed");
+            }
+            catch (Exception ex)
+            {
+                _appLog.Write($"migration failed: {ex.Message}");
+            }
 
             try
             {
@@ -811,7 +483,7 @@ namespace EkranchikAllInOne
         {
             try
             {
-                AutoStartManager.Apply(_config.AutoStart);
+                WindowsAutoStart.Apply(_config.AutoStart, WindowsAutoStart.AllInOneValueName, WindowsAutoStart.AllInOneArgsSuffix);
                 _appLog.Write($"autostart synced: {(_config.AutoStart ? "enabled" : "disabled")}");
             }
             catch (Exception ex)
@@ -829,7 +501,7 @@ namespace EkranchikAllInOne
                     _settingsForm.Activate();
                     return;
                 }
-                _settingsForm = new SettingsForm(_config, this);
+                _settingsForm = new SettingsForm(new AllInOneSettingsModel(_config), this);
                 _settingsForm.FormClosed += (s, e) => { _settingsForm = null; };
                 _settingsForm.Show();
             }
@@ -839,13 +511,15 @@ namespace EkranchikAllInOne
             }
         }
 
-        // --- Трей: только действия, никаких портов/статусов ---
+        // --- Трей: меню киоска как было (issue #9), никаких портов/статусов ---
         private void CreateTray()
         {
             var menu = new ContextMenuStrip();
-            menu.Items.Add(new ToolStripMenuItem("Настройки...", null, (s, e) => ShowSettings()));
-            menu.Items.Add(new ToolStripMenuItem("Открыть папку логов", null, (s, e) => OpenLogsFolder()));
-            menu.Items.Add(new ToolStripMenuItem("Проверить обновления", null, (s, e) => { Task.Run(() => CheckForUpdatesAsync(manual: true)); }));
+            menu.Items.Add(new ToolStripMenuItem("Переключить монитор", null, (s, e) => _kioskForm?.SwitchMonitor()));
+            _idleItem = new ToolStripMenuItem("🕐 Режим простоя", null, (s, e) => _kioskForm?.ToggleIdleScreen());
+            menu.Items.Add(_idleItem);
+            menu.Items.Add(new ToolStripMenuItem("⚙️ Настройки", null, (s, e) => ShowSettings()));
+            menu.Items.Add(new ToolStripMenuItem("🔄 Проверить обновления", null, (s, e) => { Task.Run(() => CheckForUpdatesAsync(manual: true)); }));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem("Выход", null, (s, e) => Shutdown("tray exit")));
 
@@ -857,10 +531,15 @@ namespace EkranchikAllInOne
             };
             try { _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
             catch { _tray.Icon = SystemIcons.Application; }
+            // Клик по иконке — вернуть спрятанный экран (issue #9).
+            _tray.MouseClick += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Left) ShowKioskWindow();
+            };
             _tray.BalloonTipClicked += (s, e) => { Task.Run(() => InstallUpdateAsync()); };
         }
 
-        private void OpenLogsFolder()
+        public void OpenLogsFolder()
         {
             try
             {
@@ -970,29 +649,52 @@ namespace EkranchikAllInOne
 
         private void StartKiosk()
         {
-            try
+            // Крючок smoke/дев: киоск — внешний процесс.
+            if (_config.UseExternalKiosk)
             {
-                if (!File.Exists(_config.KioskExe))
+                try
                 {
-                    _appLog.Write($"kiosk exe not found, skipping: {_config.KioskExe}");
-                    return; // Сервер уже работает — отсутствие киоска не фатально.
+                    if (!File.Exists(_config.KioskExe))
+                    {
+                        _appLog.Write($"kiosk exe not found, skipping: {_config.KioskExe}");
+                        return; // Сервер уже работает — отсутствие киоска не фатально.
+                    }
+                    PointKioskConfigAtDashboard();
+                    // URL позиционным аргументом (киоск берёт URL из конфига,
+                    // лишние аргументы игнорирует) + --no-gui против окна настроек.
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = _config.KioskExe,
+                        Arguments = _config.ResolvedKioskArgs,
+                        UseShellExecute = false
+                    };
+                    _kiosk = Process.Start(psi);
+                    ProcessJob.Assign(_kiosk);
+                    _appLog.Write($"kiosk started pid={_kiosk?.Id}");
                 }
-                PointKioskConfigAtDashboard();
-                // URL позиционным аргументом (киоск берёт URL из конфига, лишние
-                // аргументы игнорирует) + --no-gui против окна настроек.
-                var psi = new ProcessStartInfo
+                catch (Exception ex)
                 {
-                    FileName = _config.KioskExe,
-                    Arguments = _config.ResolvedKioskArgs,
-                    UseShellExecute = false
-                };
-                _kiosk = Process.Start(psi);
-                _appLog.Write($"kiosk started pid={_kiosk?.Id}");
+                    _appLog.Write($"kiosk start failed (backend keeps running): {ex.Message}");
+                }
+                return;
             }
-            catch (Exception ex)
+
+            // Полный режим (issue #9): экран киоска живёт в этом же процессе —
+            // одно приложение, одна иконка в трее.
+            PointKioskConfigAtDashboard();
+            _ui?.Post(_ =>
             {
-                _appLog.Write($"kiosk start failed (backend keeps running): {ex.Message}");
-            }
+                try
+                {
+                    _kioskForm = new KioskForm(_config.ResolvedDashboardUrl, Math.Max(_config.KioskMonitor, 0), this);
+                    _kioskForm.Show();
+                    _appLog.Write("kiosk window shown (in-process)");
+                }
+                catch (Exception ex)
+                {
+                    _appLog.Write($"kiosk window failed (backend keeps running): {ex.Message}");
+                }
+            }, null);
         }
 
         // Киоск читает URL и монитор из kiosk_config.json — подменяем поля url
@@ -1064,6 +766,13 @@ namespace EkranchikAllInOne
             Shutdown("fatal");
         }
 
+        // Гасим встроенный экран на UI-потоке (issue #9): и при «Выход»,
+        // и перед запуском установщика обновления.
+        private void DisposeKioskForm()
+        {
+            try { _ui?.Post(_ => { try { _kioskForm?.Dispose(); } catch { } _kioskForm = null; }, null); } catch { }
+        }
+
         // --- Остановка: один путь и для трея «Выход», и для smoke-хука ---
         private void Shutdown(string reason)
         {
@@ -1075,6 +784,9 @@ namespace EkranchikAllInOne
 
             StopProcess(_kiosk, "kiosk");
             StopProcess(_backend, "backend");
+            // Встроенный экран живёт в этом процессе — закрываем форму
+            // (внешний киоск — через StopProcess выше).
+            DisposeKioskForm();
 
             try
             {
@@ -1162,6 +874,8 @@ namespace EkranchikAllInOne
             {
                 StopProcess(_kiosk, "kiosk");
                 StopProcess(_backend, "backend");
+                // Встроенный экран гасим до запуска установщика (issue #9).
+                DisposeKioskForm();
             }
             catch (Exception ex)
             {
@@ -1212,24 +926,9 @@ namespace EkranchikAllInOne
 
         public string VersionsText(string backendVersion)
         {
-            return $"All-in-One: {AppVersion.Current}\nBackend: {backendVersion}\nКиоск: {KioskVersionText()}";
+            return $"All-in-One: {AppVersion.Current}\nBackend: {backendVersion}";
         }
 
-        public string KioskVersionText()
-        {
-            try
-            {
-                string exe = _config.KioskExe;
-                if (File.Exists(exe))
-                {
-                    string? v = FileVersionInfo.GetVersionInfo(exe).ProductVersion;
-                    if (!string.IsNullOrWhiteSpace(v))
-                        return v.Split('+')[0].Trim();
-                }
-            }
-            catch { }
-            return "—";
-        }
 
         public async Task<string> GetBackendVersionAsync()
         {
@@ -1246,6 +945,88 @@ namespace EkranchikAllInOne
             return "—";
         }
 
+        // === IKioskHost (issue #9): экран прячется в трей, пункт простоя
+        // обновляется на UI-потоке. ===
+        void IKioskHost.OnKioskCloseRequested()
+        {
+            _appLog.Write("kiosk close requested -> hide to tray");
+            _ui?.Post(_ =>
+            {
+                try { if (_kioskForm is { IsDisposed: false }) _kioskForm.Hide(); } catch { }
+            }, null);
+        }
+
+        void IKioskHost.OnIdleModeChanged(bool idle)
+        {
+            _appLog.Write($"idle mode: {idle}");
+            _ui?.Post(_ =>
+            {
+                try { if (_idleItem != null) _idleItem.Text = idle ? "💻 Вернуться к работе" : "🕐 Режим простоя"; } catch { }
+            }, null);
+        }
+
+        // Клик по иконке трея / кнопка «Показать экран» (issue #9).
+        public void ShowKioskWindow()
+        {
+            if (_kioskForm == null || _kioskForm.IsDisposed)
+            {
+                _appLog.Write("show kiosk: window not created yet (backend not ready)");
+                return;
+            }
+            _ui?.Post(_ =>
+            {
+                try
+                {
+                    if (_kioskForm is { IsDisposed: false })
+                    {
+                        _kioskForm.Show();
+                        if (_kioskForm.WindowState == FormWindowState.Minimized)
+                            _kioskForm.WindowState = FormWindowState.Normal;
+                        _kioskForm.Activate();
+                    }
+                }
+                catch (Exception ex) { _appLog.Write($"show kiosk failed: {ex.Message}"); }
+            }, null);
+        }
+
+        // Крэш-хендлеры (issue #9): падение UI-потока больше не роняет стек
+        // молча — лог + корректная остановка (Job Object чистит бэкенд).
+        private static AllInOneContext? Current;
+        public static void ReportUiCrash(Exception ex)
+        {
+            Current?.CrashStop("ui thread exception: " + ex.Message);
+        }
+
+        public static void ReportCrash(object? unhandled)
+        {
+            if (unhandled is Exception ex)
+                Current?.CrashStop("appdomain exception: " + ex.Message);
+        }
+
+        private void CrashStop(string what)
+        {
+            if (_shutdownStarted) return;
+            _appLog.Write("FATAL: " + what);
+            ExitCode = 1;
+            Shutdown("crash");
+        }
+        // Окно настроек сохранило (issue #9): монитор сразу к живому экрану,
+        // kiosk_config.json актуализируем для будущего перехода «только киоск».
+        public void OnSettingsSaved()
+        {
+            PointKioskConfigAtDashboard();
+            int monitor = Math.Max(_config.KioskMonitor, 0);
+            _ui?.Post(_ =>
+            {
+                try
+                {
+                    if (_kioskForm is { IsDisposed: false })
+                        _kioskForm.ApplyMonitor(monitor);
+                }
+                catch (Exception ex) { _appLog.Write($"apply monitor failed: {ex.Message}"); }
+            }, null);
+        }
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
@@ -1256,6 +1037,67 @@ namespace EkranchikAllInOne
                 try { _kiosk?.Dispose(); } catch { }
             }
             base.Dispose(disposing);
+        }
+    }
+    // === Job Object (issue #9): дочерние процессы (python-бэкенд, внешний
+    // киоск в крючке smoke) умирают вместе с приложением даже при аварийной
+    // смерти процесса. Ошибка Job Object не фатальна: StopProcess в
+    // Shutdown работает как раньше. ===
+    static class ProcessJob
+    {
+        private static IntPtr _handle = IntPtr.Zero;
+        private static readonly object _lock = new();
+        private const int JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+        private const int JobObjectBasicLimitInformation = 4;
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr CreateJobObjectW(IntPtr lpJobAttributes, string? lpName);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, ref JOBOBJECT_BASIC_LIMIT_INFORMATION info, int cbSize);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+
+        public static void Assign(Process? proc)
+        {
+            if (proc == null) return;
+            try
+            {
+                lock (_lock)
+                {
+                    if (_handle == IntPtr.Zero)
+                    {
+                        _handle = CreateJobObjectW(IntPtr.Zero, null);
+                        if (_handle == IntPtr.Zero) return;
+                        var info = new JOBOBJECT_BASIC_LIMIT_INFORMATION
+                        {
+                            LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                        };
+                        if (!SetInformationJobObject(_handle, JobObjectBasicLimitInformation, ref info,
+                            System.Runtime.InteropServices.Marshal.SizeOf<JOBOBJECT_BASIC_LIMIT_INFORMATION>()))
+                        {
+                            return;
+                        }
+                    }
+                    AssignProcessToJobObject(_handle, proc.Handle);
+                }
+            }
+            catch { /* без Job-объекта живём как раньше */ }
         }
     }
 }
