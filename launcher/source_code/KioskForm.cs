@@ -128,8 +128,10 @@ namespace EkranchikShared
         }
     }
 
-    // === Киоск: полноэкранное WebView2-окно дашборда на выделенном мониторе. ===
-    public class KioskForm : Form
+    // === Киоск: полноэкранное WebView2-окно дашборда на выделенном мониторе.
+    // Самостоятельный киоск — ещё и IUpdateHost: проверка/установка обновлений
+    // теперь в окне настроек (пункт трея убран), баннер на дашборде остался. ===
+    public class KioskForm : Form, IUpdateHost
     {
         private readonly IKioskHost? _host;
         private readonly bool _hosted;
@@ -141,6 +143,8 @@ namespace EkranchikShared
         private ToolStripMenuItem? idleMenuItem;
         private Panel? _updateBanner;
         private System.Threading.Timer? _updateTimer;
+        private UpdateInfo? _pendingUpdate;
+        private string _updateStatus = "Нажмите «Проверить обновления».";
 
         public KioskForm(string url, int monitor, IKioskHost? host = null)
         {
@@ -204,7 +208,6 @@ namespace EkranchikShared
 
             // Кнопка настроек
             trayMenu.Items.Add(new ToolStripMenuItem("⚙️ Настройки", null, (s, e) => ShowSettings()));
-            trayMenu.Items.Add(new ToolStripMenuItem("🔄 Проверить обновления", null, (s, e) => { Task.Run(() => CheckForUpdatesAsync(manual: true)); }));
 
             trayMenu.Items.Add(new ToolStripMenuItem("Выход", null, (s, e) => CloseApp()));
 
@@ -401,20 +404,47 @@ namespace EkranchikShared
         }
 
 
-        private async Task CheckForUpdatesAsync(bool manual)
+        public string UpdateStatus => _updateStatus;
+        public bool HasPendingUpdate => _pendingUpdate != null;
+
+        public async Task CheckForUpdatesAsync(bool manual)
         {
             UpdateInfo? update = await UpdateChecker.CheckForUpdateAsync(
                 AppVersion.Current, UpdateChecker.KioskChannelPrefix, "Ekranchik.exe").ConfigureAwait(false);
             if (update == null)
             {
-                if (manual)
-                {
-                    try { this.BeginInvoke(new Action(() => MessageBox.Show(this, "У вас последняя версия.", "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Information))); } catch { }
-                }
+                _pendingUpdate = null;
+                _updateStatus = "У вас последняя версия.";
                 return;
             }
+            _pendingUpdate = update;
+            _updateStatus = $"Доступна версия {update.Version} (текущая {AppVersion.Current}).";
             var pending = update;
             try { this.BeginInvoke(new Action(() => ShowUpdateBanner(pending))); } catch { }
+        }
+
+        // Установка из окна настроек: та же замена exe, что и из баннера.
+        public async Task InstallUpdateAsync()
+        {
+            UpdateInfo? update = _pendingUpdate;
+            if (update == null) return;
+            _updateStatus = "Скачивание обновления...";
+            try
+            {
+                await UpdateChecker.DownloadAndApplyKioskUpdateAsync(
+                    update, Application.ExecutablePath, RestartArgs).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _updateStatus = "Не удалось подготовить обновление (" + ex.Message + ").";
+                try
+                {
+                    this.BeginInvoke(new Action(() => MessageBox.Show(
+                        "Не удалось подготовить обновление (" + ex.Message + "). Проверьте сеть и попробуйте позже.",
+                        "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Warning)));
+                }
+                catch { }
+            }
         }
 
         private void ShowUpdateBanner(UpdateInfo update)
@@ -531,11 +561,11 @@ namespace EkranchikShared
         }
 
         // Единое окно настроек в киоск-варианте (issue #9): URL, монитор,
-        // автозапуск. Сохранённое применяется к живому экрану на лету.
+        // автозапуск, обновления. Сохранённое применяется к живому экрану.
         private void ShowSettings()
         {
             this.Invoke(new Action(() => {
-                using (var settings = new SettingsForm(new KioskSettingsModel(), host: null))
+                using (var settings = new SettingsForm(new KioskSettingsModel(), host: null, updates: this))
                 {
                     settings.StartPosition = FormStartPosition.CenterScreen;
                     settings.TopMost = true;

@@ -24,17 +24,22 @@ namespace EkranchikShared
                   int monitorIndex, bool windowsAutostart, bool autoLaunchOnSecondMonitor);
     }
 
-    // === Хост единого окна настроек (только полный режим): обновления и
-    // действия полного режима. Киоск-вариант передаёт null — из окна
-    // убираются «Показать экран», «Открыть папку логов» и секция «Версии и
-    // обновления» (у киоска обновления живут в трее и баннере). ===
-    public interface ISettingsHost
+    // === Обновления: общий контракт полного режима и киоска (проверить /
+    // установить в окне настроек). ===
+    public interface IUpdateHost
     {
-        string VersionsText(string backendVersion);
         string UpdateStatus { get; }
         bool HasPendingUpdate { get; }
         Task CheckForUpdatesAsync(bool manual);
         Task InstallUpdateAsync();
+    }
+
+    // === Хост единого окна настроек (только полный режим): версии и действия
+    // полного режима. Киоск-вариант передаёт null — из окна убираются
+    // «Показать экран», «Открыть папку логов» и блок версий. ===
+    public interface ISettingsHost : IUpdateHost
+    {
+        string VersionsText(string backendVersion);
         Task<string> GetBackendVersionAsync();
         void ShowKioskWindow();
         void OpenLogsFolder();
@@ -83,23 +88,25 @@ namespace EkranchikShared
         private readonly CheckBox _chkAutostart;
         private readonly CheckBox? _chkAutoLaunch;
         private readonly Label? _lblVersions;
+        private readonly IUpdateHost? _updates;
         private readonly Label? _lblUpdateStatus;
         private readonly Button? _btnInstall;
 
-        public SettingsForm(ISettingsModel model, ISettingsHost? host)
+        public SettingsForm(ISettingsModel model, ISettingsHost? host, IUpdateHost? updates = null)
         {
             _model = model;
             _host = host;
-
+            // Обновления: хост полного режима сам IUpdateHost; киоск передаёт
+            // себя отдельным аргументом (host == null).
+            _updates = updates ?? (IUpdateHost?)host;
             Color bgDark = Color.FromArgb(15, 23, 42);      // #0f172a
             Color bgCard = Color.FromArgb(30, 41, 59);      // #1e293b
             Color fgLight = Color.FromArgb(248, 250, 252);  // #f8fafc
             Color fgMuted = Color.FromArgb(148, 163, 184);  // slate-400
             Color accentBlue = Color.FromArgb(59, 130, 246); // #3b82f6
             Color borderGray = Color.FromArgb(51, 65, 85);   // #334155
-
+            this.Size = host != null ? new Size(540, 800) : new Size(540, _updates != null ? 560 : 430);
             this.Text = "Ekranchik — Настройки";
-            this.Size = host != null ? new Size(540, 800) : new Size(540, 430);
             this.BackColor = bgDark;
             this.ForeColor = fgLight;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -306,12 +313,14 @@ namespace EkranchikShared
             this.Controls.Add(hint);
             y += 52;
 
-            // --- Версии, обновления и действия полного режима ---
-            if (host != null)
+            // --- Версии, обновления и действия полного режима. Секция
+            // обновлений общая (появилась и в киоске — раньше была только в
+            // трее); версии и действия — только полный режим. ---
+            if (_updates != null)
             {
                 var lblVerTitle = new Label
                 {
-                    Text = "ВЕРСИИ И ОБНОВЛЕНИЯ",
+                    Text = host != null ? "ВЕРСИИ И ОБНОВЛЕНИЯ" : "ОБНОВЛЕНИЕ",
                     Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
                     Location = new Point(20, y),
                     Size = new Size(480, 22),
@@ -321,21 +330,24 @@ namespace EkranchikShared
                 this.Controls.Add(lblVerTitle);
                 y += 26;
 
-                var lblVersions = new Label
+                if (host != null)
                 {
-                    Text = host.VersionsText("…"),
-                    Font = new Font("Segoe UI", 9),
-                    Location = new Point(40, y),
-                    Size = new Size(440, 50),
-                    ForeColor = fgLight
-                };
-                _lblVersions = lblVersions;
-                this.Controls.Add(lblVersions);
-                y += 54;
+                    var lblVersions = new Label
+                    {
+                        Text = host.VersionsText("…"),
+                        Font = new Font("Segoe UI", 9),
+                        Location = new Point(40, y),
+                        Size = new Size(440, 50),
+                        ForeColor = fgLight
+                    };
+                    _lblVersions = lblVersions;
+                    this.Controls.Add(lblVersions);
+                    y += 54;
+                }
 
                 var lblUpdateStatus = new Label
                 {
-                    Text = host.UpdateStatus,
+                    Text = _updates.UpdateStatus,
                     Font = new Font("Segoe UI", 9),
                     Location = new Point(40, y),
                     Size = new Size(440, 22),
@@ -360,7 +372,7 @@ namespace EkranchikShared
                 btnCheck.Click += async (s, e) =>
                 {
                     btnCheck.Enabled = false;
-                    try { await host.CheckForUpdatesAsync(manual: true).ConfigureAwait(true); }
+                    try { await _updates.CheckForUpdatesAsync(manual: true).ConfigureAwait(true); }
                     finally { btnCheck.Enabled = true; }
                     RefreshUpdateLabels();
                     RefreshBackendVersionAsync();
@@ -377,49 +389,52 @@ namespace EkranchikShared
                     Location = new Point(260, y),
                     Size = new Size(220, 32),
                     Cursor = Cursors.Hand,
-                    Enabled = host.HasPendingUpdate
+                    Enabled = _updates.HasPendingUpdate
                 };
                 btnInstall.FlatAppearance.BorderSize = 0;
                 btnInstall.Click += async (s, e) =>
                 {
                     btnInstall.Enabled = false;
-                    await host.InstallUpdateAsync().ConfigureAwait(true);
+                    await _updates.InstallUpdateAsync().ConfigureAwait(true);
                     RefreshUpdateLabels();
                 };
                 _btnInstall = btnInstall;
                 this.Controls.Add(btnInstall);
                 y += 42;
 
-                var btnShow = new Button
+                if (host != null)
                 {
-                    Text = "Показать экран",
-                    Font = new Font("Segoe UI", 9),
-                    BackColor = bgCard,
-                    ForeColor = fgLight,
-                    FlatStyle = FlatStyle.Flat,
-                    Location = new Point(40, y),
-                    Size = new Size(210, 32),
-                    Cursor = Cursors.Hand
-                };
-                btnShow.FlatAppearance.BorderColor = borderGray;
-                btnShow.Click += (s, e) => host.ShowKioskWindow();
-                this.Controls.Add(btnShow);
+                    var btnShow = new Button
+                    {
+                        Text = "Показать экран",
+                        Font = new Font("Segoe UI", 9),
+                        BackColor = bgCard,
+                        ForeColor = fgLight,
+                        FlatStyle = FlatStyle.Flat,
+                        Location = new Point(40, y),
+                        Size = new Size(210, 32),
+                        Cursor = Cursors.Hand
+                    };
+                    btnShow.FlatAppearance.BorderColor = borderGray;
+                    btnShow.Click += (s, e) => host.ShowKioskWindow();
+                    this.Controls.Add(btnShow);
 
-                var btnLogs = new Button
-                {
-                    Text = "Открыть папку логов",
-                    Font = new Font("Segoe UI", 9),
-                    BackColor = bgCard,
-                    ForeColor = fgLight,
-                    FlatStyle = FlatStyle.Flat,
-                    Location = new Point(260, y),
-                    Size = new Size(220, 32),
-                    Cursor = Cursors.Hand
-                };
-                btnLogs.FlatAppearance.BorderColor = borderGray;
-                btnLogs.Click += (s, e) => host.OpenLogsFolder();
-                this.Controls.Add(btnLogs);
-                y += 42;
+                    var btnLogs = new Button
+                    {
+                        Text = "Открыть папку логов",
+                        Font = new Font("Segoe UI", 9),
+                        BackColor = bgCard,
+                        ForeColor = fgLight,
+                        FlatStyle = FlatStyle.Flat,
+                        Location = new Point(260, y),
+                        Size = new Size(220, 32),
+                        Cursor = Cursors.Hand
+                    };
+                    btnLogs.FlatAppearance.BorderColor = borderGray;
+                    btnLogs.Click += (s, e) => host.OpenLogsFolder();
+                    this.Controls.Add(btnLogs);
+                    y += 42;
+                }
 
                 RefreshBackendVersionAsync();
             }
@@ -509,17 +524,18 @@ namespace EkranchikShared
         // Вызывает хост, когда фоновая проверка завершилась при открытом окне.
         public void RefreshFromUpdater()
         {
-            if (_host == null) return;
+            if (_updates == null) return;
             RefreshUpdateLabels();
             RefreshBackendVersionAsync();
         }
 
         private void RefreshUpdateLabels()
         {
-            if (_host == null || _lblUpdateStatus == null || _btnInstall == null) return;
-            _lblUpdateStatus.Text = _host.UpdateStatus;
-            _btnInstall.Enabled = _host.HasPendingUpdate;
+            if (_updates == null || _lblUpdateStatus == null || _btnInstall == null) return;
+            _lblUpdateStatus.Text = _updates.UpdateStatus;
+            _btnInstall.Enabled = _updates.HasPendingUpdate;
         }
+
 
         private async void RefreshBackendVersionAsync()
         {
