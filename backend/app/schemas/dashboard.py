@@ -16,10 +16,7 @@ class HangerData(BaseModel):
     time: str = Field(..., description="Time string")
     client: str = Field(default="—", description="Client name")
     profile: str = Field(default="—", description="Profile name(s)")
-    canonical_name: Optional[str] = None
     profiles_info: List[ProfileInfo] = Field(default_factory=list)
-    profile_photo_thumb: Optional[str] = None
-    profile_photo_full: Optional[str] = None
     color: str = Field(default="—", description="Color")
     lamels_qty: Union[int, str] = Field(default=0, description="Lamels quantity")
     kpz_number: str = Field(default="—", description="KPZ number")
@@ -60,11 +57,9 @@ class DashboardResponse(BaseModel):
     """Response for dashboard API"""
     success: bool = True
     products: List[HangerData] = Field(default_factory=list)
-    unloading_products: List[HangerData] = Field(default_factory=list)
     total: int = 0
     total_all: int = 0
     days_filter: Optional[int] = None
-    dual_mode: bool = False
     error: Optional[str] = None
 
 

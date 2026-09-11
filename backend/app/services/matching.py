@@ -14,6 +14,8 @@ them in file order as a fallback. Already matched rows are tracked via
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.services.hanger_row import HangerRow
+
 # A hanger cannot be loaded more than 3h after it was unloaded
 # (operator input delay tolerance). Rows past this bound are impossible
 # matches and are skipped, ranking still follows date, not time math.
@@ -84,25 +86,25 @@ def normalize_hanger_key(value: Any) -> str:
         return raw
 
 
-def has_entry_time(product: Dict[str, Any]) -> bool:
+def has_entry_time(product: HangerRow) -> bool:
     """True when the row is a real loaded entry (time cell is filled)."""
-    raw = str(product.get("time", "") or "").strip()
+    raw = str(product.time or "").strip()
     return raw not in _EMPTY_TIME_TOKENS
 
 
-def product_entry_seconds(product: Dict[str, Any]) -> float:
+def product_entry_seconds(product: HangerRow) -> float:
     """Ranking key of an Excel row: entry epoch seconds, 0.0 if unusable."""
     if not has_entry_time(product):
         return 0.0
     return excel_datetime_to_seconds(
-        parse_excel_date(str(product.get("date", ""))),
-        parse_excel_time(str(product.get("time", ""))),
+        parse_excel_date(str(product.date)),
+        parse_excel_time(str(product.time)),
     )
 
 
-def make_product_key(product: Dict[str, Any]) -> str:
+def make_product_key(product: HangerRow) -> str:
     """Unique key of an Excel row to track already matched entries."""
-    return f"{product.get('date', '')}|{product.get('time', '')}|{product.get('number', '')}"
+    return f"{product.date}|{product.time}|{product.number}"
 
 
 def event_exit_seconds(event: Dict[str, Any]) -> float:
@@ -114,11 +116,11 @@ def event_exit_seconds(event: Dict[str, Any]) -> float:
 
 
 def select_latest_candidate(
-    candidates: List[Dict[str, Any]],
+    candidates: List[HangerRow],
     exit_seconds: Optional[float] = None,
     used_keys: Optional[set] = None,
     require_time: bool = True,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[HangerRow]:
     """Pick the newest valid row: entry time <= exit + 3h tolerance.
 
     Ranking is by parsed date desc; unparseable rows keep file order
@@ -143,8 +145,8 @@ def select_latest_candidate(
 
 def match_unload_events(
     events: List[Dict[str, Any]],
-    products_by_hanger: Dict[str, List[Dict[str, Any]]],
-) -> List[Tuple[Dict[str, Any], Optional[Dict[str, Any]]]]:
+    products_by_hanger: Dict[str, List[HangerRow]],
+) -> List[Tuple[Dict[str, Any], Optional[HangerRow]]]:
     """Greedily match unload events to Excel rows, newest exit first.
 
     Newest-first order guarantees chronological distribution when a hanger

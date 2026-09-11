@@ -6,12 +6,11 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional, List, Tuple
 
 from PIL import Image
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Profile
@@ -19,6 +18,7 @@ from app.db.session import get_session
 from app.schemas.profile import ProfileCreate, ProfileUpdate, ProfileResponse, ProfileSearchResult
 from app.core.text_utils import normalize_text, safe_filename
 from app.core.config import settings
+from app.services.profile_name import parse_profile
 
 
 class CatalogService:
@@ -29,8 +29,8 @@ class CatalogService:
     - Profile search with Latin/Cyrillic normalization
     - CRUD operations for profiles
     - Photo management
-    - Analysis queries (profiles without photos)
     """
+    
     def _normalize_db_path(self, path: Optional[str]) -> Optional[str]:
         """
         Normalize image path from DB to be relative to static directory without leading slashes.
@@ -380,47 +380,6 @@ class CatalogService:
         else:
             async with get_session() as sess:
                 await _increment(sess)
-    
-    async def get_profiles_without_photos(
-        self,
-        limit: int = 100,
-        session: Optional[AsyncSession] = None
-    ) -> List[ProfileResponse]:
-        """
-        Get profiles that don't have photos, sorted by usage frequency.
-        
-        Used for the analysis page to identify missing documentation.
-        
-        Args:
-            limit: Maximum number of results
-            session: Optional database session
-        
-        Returns:
-            List of profiles without photos, sorted by usage_count descending
-        """
-        async def _get(sess: AsyncSession) -> List[ProfileResponse]:
-            stmt = (
-                select(Profile)
-                .where(
-                    or_(
-                        Profile.photo_thumb.is_(None),
-                        Profile.photo_thumb == '',
-                        Profile.photo_full.is_(None),
-                        Profile.photo_full == ''
-                    )
-                )
-                .order_by(Profile.usage_count.desc())
-                .limit(limit)
-            )
-            result = await sess.execute(stmt)
-            profiles = result.scalars().all()
-            return [ProfileResponse.model_validate(p) for p in profiles]
-        
-        if session:
-            return await _get(session)
-        else:
-            async with get_session() as sess:
-                return await _get(sess)
     
     async def get_all_profiles(
         self,
@@ -774,21 +733,6 @@ class CatalogService:
             async with get_session() as sess:
                 return await _delete(sess)
     
-    def _calculate_similarity(self, s1: str, s2: str) -> float:
-        """
-        Calculate similarity ratio between two strings using SequenceMatcher.
-        
-        Args:
-            s1: First string
-            s2: Second string
-        
-        Returns:
-            Similarity ratio between 0.0 and 1.0
-        """
-        if not s1 or not s2:
-            return 0.0
-        return SequenceMatcher(None, s1.lower(), s2.lower()).ratio()
-    
     async def delete_profile(
         self,
         profile_id: int,
@@ -833,89 +777,6 @@ class CatalogService:
             async with get_session() as sess:
                 return await _delete(sess)
 
-    async def search_duplicates(
-        self,
-        query: str,
-        threshold: float = 0.6,
-        limit: int = 20,
-        session: Optional[AsyncSession] = None
-    ) -> List[ProfileSearchResult]:
-        """
-        Find profiles with similar names using fuzzy matching.
-        
-        Uses SequenceMatcher for similarity scoring. Results are ordered
-        by similarity score (highest first).
-        
-        Args:
-            query: Search query
-            threshold: Minimum similarity score (0.0 to 1.0)
-            limit: Maximum number of results
-            session: Optional database session
-        
-        Returns:
-            List of profiles with similarity scores above threshold
-        """
-        if not query or not query.strip():
-            return []
-        
-        normalized_query = normalize_text(query)
-        
-        async def _search(sess: AsyncSession) -> List[ProfileSearchResult]:
-            stmt = select(Profile).limit(1000)
-            result = await sess.execute(stmt)
-            profiles = result.scalars().all()
-            
-            matches = []
-            for profile in profiles:
-                normalized_name = normalize_text(profile.name)
-                similarity = self._calculate_similarity(normalized_query, normalized_name)
-                
-                if similarity >= threshold:
-                    matches.append((profile, similarity))
-            
-            # Sort by similarity descending
-            matches.sort(key=lambda x: -x[1])
-            
-            # Convert to response schema
-            results = []
-            for profile, similarity in matches[:limit]:
-                result = ProfileSearchResult.model_validate(profile)
-                result.similarity = round(similarity, 3)
-                results.append(result)
-            
-            return results
-        
-        if session:
-            return await _search(session)
-        else:
-            async with get_session() as sess:
-                return await _search(sess)
-
-
-    def _extract_profile_name(self, text: str) -> str:
-        """
-        Extract clean profile name by removing processing keywords.
-        
-        "СРП228 окно" → "СРП228"
-        "юп-3233 греб + сверло" → "юп-3233"
-        """
-        import re
-        if not text:
-            return ""
-        
-        text = str(text).strip()
-        
-        # Remove processing keywords
-        for keyword in ['окно', 'греб', 'гребенка', 'сверло', 'фреза', 'паз']:
-            pattern = r'\b' + re.escape(keyword) + r'\b'
-            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-        
-        # Clean up
-        text = re.sub(r'\s+', ' ', text).strip()
-        text = text.rstrip('+,;').strip()
-        
-        return text
-    
     def _extract_digits(self, text: str) -> str:
         """Extract all digits from text."""
         import re
@@ -1009,8 +870,8 @@ class CatalogService:
                 if not name or name == '—':
                     continue
                 
-                # Extract clean name (remove "окно", "греб", etc.)
-                clean_name = self._extract_profile_name(name)
+                # Чистое имя — единый разбор (app.services.profile_name)
+                clean_name = parse_profile(name).name
                 if not clean_name:
                     continue
                 

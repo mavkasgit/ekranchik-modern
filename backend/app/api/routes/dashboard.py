@@ -1,11 +1,10 @@
 """
 Dashboard API routes.
 """
-import re
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel
@@ -15,6 +14,8 @@ logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.services.excel_service import excel_service
 from app.services.catalog_service import catalog_service
+from app.services.hanger_row import EMPTY, HangerRow, to_hanger_data
+from app.services.profile_name import split_profiles
 from app.services.matching import (
     event_exit_seconds,
     make_product_key,
@@ -23,7 +24,6 @@ from app.services.matching import (
 )
 from app.schemas.dashboard import (
     DashboardResponse,
-    HangerData,
     FileStatus,
     MatchedUnloadEvent,
     ExcelFileListResponse,
@@ -34,39 +34,32 @@ from app.schemas.profile import ProfileInfo
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-# Processing keywords to extract from profile names
-PROCESSING_KEYWORDS = ['окно', 'греб', 'гребенка', 'сверло', 'фреза', 'паз']
+
+def _collect_profile_names(products: list[HangerRow]) -> list[str]:
+    """Чистые имена Профилей всех строк — для пакетного поиска фото."""
+    names: list[str] = []
+    for product in products:
+        for parsed in split_profiles(product.profile):
+            if parsed.name not in names:
+                names.append(parsed.name)
+    return names
 
 
-def parse_profile_name(name: str) -> Tuple[str, List[str]]:
-    """
-    Parse profile name and extract processing keywords.
-    
-    "СРП228 окно" → ("СРП228", ["окно"])
-    "юп-3233 греб + сверло" → ("юп-3233", ["греб", "сверло"])
-    """
-    if not name:
-        return "", []
-    
-    found_processing = []
-    clean_name = name
-    
-    for keyword in PROCESSING_KEYWORDS:
-        pattern = r'\b' + re.escape(keyword) + r'\b'
-        if re.search(pattern, clean_name, re.IGNORECASE):
-            # Normalize "гребенка" to "греб"
-            if keyword == 'гребенка':
-                found_processing.append('греб')
-            else:
-                found_processing.append(keyword)
-            # Remove keyword from name
-            clean_name = re.sub(pattern, '', clean_name, flags=re.IGNORECASE)
-    
-    # Clean up the name
-    clean_name = re.sub(r'\s+', ' ', clean_name).strip()
-    clean_name = clean_name.rstrip('+,;').strip()
-    
-    return clean_name, found_processing
+def _build_profiles_info(profile_text, photos_map: dict) -> list[ProfileInfo]:
+    """Профили строки с фото и обработками — один маппинг на оба пути дашборда."""
+    info: list[ProfileInfo] = []
+    for parsed in split_profiles(profile_text):
+        photo = photos_map.get(parsed.name, {})
+        info.append(ProfileInfo(
+            name=parsed.raw,
+            canonical_name=photo.get('name') or parsed.name,
+            has_photo=bool(photo.get('thumb')),
+            photo_thumb=photo.get('thumb'),
+            photo_full=photo.get('full'),
+            processing=parsed.processing,
+            updated_at=photo.get('updated_at'),
+        ))
+    return info
 
 
 @router.get("", response_model=DashboardResponse)
@@ -83,68 +76,21 @@ async def get_dashboard(
     try:
         products = excel_service.get_products(limit=limit, days=days, loading_only=loading_only)
 
-        # Collect all unique profile names for batch lookup
-        profile_names = set()
-        for product in products:
-            profile = str(product.get('profile', ''))
-            if profile and profile != '—':
-                # Handle multiple profiles separated by + or /
-                for p in re.split(r'[+/]', profile):
-                    p = p.strip()
-                    if p:
-                        profile_names.add(p)
+        profile_names = _collect_profile_names(products)
         
         # Batch lookup photos from catalog
         photos_map = {}
         try:
-            photos_map = await catalog_service.get_profiles_photos_batch(list(profile_names))
+            photos_map = await catalog_service.get_profiles_photos_batch(profile_names)
         except Exception as e:
             logger.warning(f"[DASHBOARD API] Could not load photos from catalog: {e}")
             # Continue without photos
         
         # Convert to HangerData format with photos
-        hanger_data = []
-        for i, product in enumerate(products):
-            profile_str = str(product.get('profile', product.get('Профиль', '—')))
-            
-            # Build profiles_info with photos and processing keywords
-            profiles_info = []
-            if profile_str and profile_str != '—':
-                for p in re.split(r'[+/]', profile_str):
-                    p = p.strip()
-                    if p:
-                        # Extract processing keywords from profile name
-                        clean_name, processing = parse_profile_name(p)
-                        
-                        # Look up photo by original name first, then clean name
-                        photo_info = photos_map.get(p, {})
-                        if not photo_info and clean_name != p:
-                            photo_info = photos_map.get(clean_name, {})
-                        
-                        profiles_info.append(ProfileInfo(
-                            name=p,
-                            canonical_name=photo_info.get('name', clean_name or p),
-                            has_photo=bool(photo_info.get('thumb')),
-                            photo_thumb=photo_info.get('thumb'),
-                            photo_full=photo_info.get('full'),
-                            processing=processing,
-                            updated_at=photo_info.get('updated_at')
-                        ))
-            
-            hanger = HangerData(
-                number=str(product.get('number', product.get('№', i + 1))),
-                date=str(product.get('date', product.get('Дата', ''))),
-                time=str(product.get('time', product.get('Время', ''))),
-                client=str(product.get('client', product.get('Клиент', '—'))),
-                profile=profile_str,
-                profiles_info=profiles_info,
-                color=str(product.get('color', product.get('Цвет', '—'))),
-                lamels_qty=product.get('lamels_qty', product.get('Кол-во ламелей', 0)),
-                kpz_number=str(product.get('kpz_number', product.get('КПЗ', '—'))),
-                material_type=str(product.get('material_type', product.get('Тип материала', '—'))),
-                is_defect=product.get('is_defect', False)
-            )
-            hanger_data.append(hanger)
+        hanger_data = [
+            to_hanger_data(product, _build_profiles_info(product.profile, photos_map))
+            for product in products
+        ]
 
         return DashboardResponse(
             success=True,
@@ -541,25 +487,16 @@ async def get_opcua_matched_unload_events(
         products = excel_service.get_products(limit=1000, days=30, from_end=True, loading_only=False)
         
         # Build lookup by hanger number - store ALL products for each hanger
-        products_by_hanger: dict[str, list] = {}
+        products_by_hanger: dict[str, list[HangerRow]] = {}
         for p in products:
-            num = str(p.get('number', ''))
+            num = str(p.number)
             if num:
                 if num not in products_by_hanger:
                     products_by_hanger[num] = []
                 products_by_hanger[num].append(p)
         
         # Get photos for profiles
-        profile_names = set()
-        for p in products:
-            profile = str(p.get('profile', ''))
-            if profile and profile != '—':
-                for name in re.split(r'[+/]', profile):
-                    name = name.strip()
-                    if name:
-                        profile_names.add(name)
-        
-        photos_map = await catalog_service.get_profiles_photos_batch(list(profile_names))
+        photos_map = await catalog_service.get_profiles_photos_batch(_collect_profile_names(products))
         
         # Shared matching rule (app.services.matching): the newest Excel row
         # with entry time <= exit + 3h wins; candidates rank by parsed date
@@ -589,66 +526,48 @@ async def get_opcua_matched_unload_events(
                     # Detailed diagnostic logging
                     logger.warning(
                         f"[Matching Diagnostic] Hanger {hanger_num} exit at {event.get('date')} {event.get('time')} "
-                        f"matched with newest valid row: {product.get('date')} {product.get('time')} "
+                        f"matched with newest valid row: {product.date} {product.time} "
                         f"(diff: {time_diff_hours:.1f}h). "
                         f"Total candidates in Excel: {len(candidates)}."
                     )
                     p_key_product = make_product_key(product)
                     for i, p_cand in enumerate(candidates):
                         p_key_cand = make_product_key(p_cand)
-                        c_date = p_cand.get('date')
-                        c_time = p_cand.get('time')
+                        c_date = p_cand.date
+                        c_time = p_cand.time
                         
                         if p_key_cand == p_key_product:
                             status = f"Picked (newest valid row, diff: {time_diff_hours:.1f}h)"
                         elif p_key_cand in used_entries:
                             status = "Already used in another match"
-                        elif not c_time or c_time == '—':
+                        elif not c_time or c_time == EMPTY:
                             status = "Skipped (time is empty)"
                         else:
                             # candidates are newest-first (get_products reverses)
                             pos_from_end = i + 1
                             status = f"Not picked (row #{pos_from_end} from bottom)"
                         
-                        logger.warning(f"  Candidate {i+1}: Date={c_date}, Time={c_time}, Profile={p_cand.get('profile')}, Client={p_cand.get('client')} -> {status}")
+                        logger.warning(f"  Candidate {i+1}: Date={c_date}, Time={c_time}, Profile={p_cand.profile}, Client={p_cand.client} -> {status}")
             
 
             
-            profiles_info = []
-            if product:
-                profile_str = str(product.get('profile', ''))
-                if profile_str and profile_str != '—':
-                    for prof_name in re.split(r'[+/]', profile_str):
-                        prof_name = prof_name.strip()
-                        if prof_name:
-                            clean_name, processing = parse_profile_name(prof_name)
-                            photo_info = photos_map.get(prof_name, {})
-                            if not photo_info and clean_name != prof_name:
-                                photo_info = photos_map.get(clean_name, {})
-                            
-                            profiles_info.append(ProfileInfo(
-                                name=prof_name,
-                                canonical_name=photo_info.get('name', clean_name or prof_name),
-                                has_photo=bool(photo_info.get('thumb')),
-                                photo_thumb=photo_info.get('thumb'),
-                                photo_full=photo_info.get('full'),
-                                processing=processing,
-                                updated_at=photo_info.get('updated_at')
-                            ))
+            profiles_info = _build_profiles_info(
+                product.profile if product else '', photos_map
+            )
             
             matched.append(MatchedUnloadEvent(
                 exit_date=event.get("date") or datetime.now().strftime("%d.%m.%Y"),
                 exit_time=event.get("time"),
                 hanger=int(hanger_num),
-                entry_date=str(product.get('date', '')) if product else None,
-                entry_time=str(product.get('time', '')) if product else None,
-                client=str(product.get('client', '—')) if product else '—',
-                profile=str(product.get('profile', '—')) if product else '—',
+                entry_date=str(product.date) if product else None,
+                entry_time=str(product.time) if product else None,
+                client=str(product.client) if product else EMPTY,
+                profile=str(product.profile) if product else EMPTY,
                 profiles_info=profiles_info,
-                color=str(product.get('color', '—')) if product else '—',
-                lamels_qty=product.get('lamels_qty', 0) if product else 0,
-                kpz_number=str(product.get('kpz_number', '—')) if product else '—',
-                material_type=str(product.get('material_type', '—')) if product else '—',
+                color=str(product.color) if product else EMPTY,
+                lamels_qty=product.lamels_qty if product else 0,
+                kpz_number=str(product.kpz_number) if product else EMPTY,
+                material_type=str(product.material_type) if product else EMPTY,
                 time_warning=warning_message,  # Add warning if time exceeds limit
                 # Forecast info - will be populated below
                 current_bath=None,

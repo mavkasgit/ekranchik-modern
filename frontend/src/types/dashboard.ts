@@ -38,11 +38,9 @@ export interface HangerData {
 export interface DashboardResponse {
   success: boolean
   products: HangerData[]
-  unloading_products: HangerData[]
   total: number
   total_all: number
   days_filter?: number
-  dual_mode: boolean
   error?: string
 }
 

@@ -6,6 +6,7 @@ Contract under test (app.services.matching):
 - a row more than 3h after the exit is skipped;
 - rows with unparseable dates fall back to file order.
 """
+from app.services.hanger_row import HangerRow
 from app.services.matching import (
     event_exit_seconds,
     match_unload_events,
@@ -16,17 +17,18 @@ DATE = "07.09.2026"
 
 
 def _row(number, time, profile, date=DATE):
-    return {
-        "number": str(number),
-        "date": date,
-        "time": time,
-        "profile": profile,
-        "client": "Клиент",
-        "color": "RAL9016",
-        "lamels_qty": 1,
-        "kpz_number": "1",
-        "material_type": "Ал",
-    }
+    return HangerRow(
+        number=str(number),
+        date=date,
+        time=time,
+        profile=profile,
+        client="Клиент",
+        color="RAL9016",
+        lamels_qty=1,
+        kpz_number="1",
+        material_type="Ал",
+        is_defect=False,
+    )
 
 
 def _event(hanger, time, date=DATE):
@@ -45,7 +47,7 @@ def test_two_events_same_hanger_distributed_chronologically():
 
     pairs = match_unload_events(events, products)
 
-    by_exit = {e["time"]: (p["profile"] if p else None) for e, p in pairs}
+    by_exit = {e["time"]: (p.profile if p else None) for e, p in pairs}
     assert by_exit["14:00:00"] == "Профиль-новый"
     assert by_exit["12:00:00"] == "Профиль-старый"
 
@@ -62,7 +64,7 @@ def test_old_row_not_matched_when_current_exists():
     )
 
     assert product is not None
-    assert product["profile"] == "Профиль-актуальный"
+    assert product.profile == "Профиль-актуальный"
 
 
 def test_entry_more_than_3h_after_exit_is_skipped():
@@ -77,7 +79,7 @@ def test_entry_more_than_3h_after_exit_is_skipped():
     )
 
     assert product is not None
-    assert product["profile"] == "Профиль-верный"
+    assert product.profile == "Профиль-верный"
 
 
 def test_unparseable_dates_fallback_to_file_order():
@@ -92,4 +94,4 @@ def test_unparseable_dates_fallback_to_file_order():
     )
 
     assert product is not None
-    assert product["profile"] == "Профиль-первый-в-файле"
+    assert product.profile == "Профиль-первый-в-файле"

@@ -13,6 +13,7 @@ from app.services.opcua_service import opcua_service
 from app.services.line_monitor import line_monitor
 from app.services.excel_service import excel_service
 from app.core.config import settings
+from app.services.hanger_row import HangerRow
 from app.services.matching import normalize_hanger_key, select_latest_candidate
 
 logger = logging.getLogger(__name__)
@@ -42,9 +43,9 @@ def _build_latest_hanger_meta() -> Dict[str, Dict[str, str]]:
         loading_only=False,
     )
 
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    grouped: Dict[str, List[HangerRow]] = {}
     for product in products:
-        hanger_key = normalize_hanger_key(product.get("number"))
+        hanger_key = normalize_hanger_key(product.number)
         if not hanger_key:
             continue
         grouped.setdefault(hanger_key, []).append(product)
@@ -57,8 +58,8 @@ def _build_latest_hanger_meta() -> Dict[str, Dict[str, str]]:
         if best is None:
             continue
         latest[hanger_key] = {
-            "article": _normalize_meta_value(best.get("profile")),
-            "color": _normalize_meta_value(best.get("color")),
+            "article": _normalize_meta_value(best.profile),
+            "color": _normalize_meta_value(best.color),
         }
 
     return latest

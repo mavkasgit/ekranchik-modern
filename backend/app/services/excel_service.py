@@ -1,7 +1,6 @@
 """
 Excel Service - handles Excel file parsing, caching, and data extraction.
 """
-import re
 import time
 import json
 import logging
@@ -12,6 +11,7 @@ from typing import Optional, List, Dict, Any
 import pandas as pd
 
 from app.core.config import settings
+from app.services.hanger_row import EMPTY, HangerRow
 
 logger = logging.getLogger(__name__)
 
@@ -253,84 +253,6 @@ class ExcelService:
         df.columns = names
         return df
 
-    def parse_profile_with_processing(self, text: str) -> Dict[str, Any]:
-        """
-        Parse profile text and extract processing information.
-        
-        Extracts:
-        - Base profile name
-        - Processing types (окно, греб, сверло, etc.)
-        
-        Args:
-            text: Raw profile text from Excel
-        
-        Returns:
-            Dict with 'name', 'canonical_name', 'processing' list
-        """
-        if not text or pd.isna(text):
-            return {'name': '', 'canonical_name': '', 'processing': []}
-        
-        text = str(text).strip()
-        processing = []
-        
-        # Common processing patterns
-        patterns = [
-            (r'\bокно\b', 'окно'),
-            (r'\bгреб\b', 'греб'),
-            (r'\bсверло\b', 'сверло'),
-            (r'\bфреза\b', 'фреза'),
-            (r'\bпаз\b', 'паз'),
-            (r'\bотв\b', 'отверстие'),
-        ]
-        
-        text_lower = text.lower()
-        for pattern, proc_name in patterns:
-            if re.search(pattern, text_lower):
-                processing.append(proc_name)
-        
-        # Extract canonical name (remove processing markers)
-        canonical = text
-        for pattern, _ in patterns:
-            canonical = re.sub(pattern, '', canonical, flags=re.IGNORECASE)
-        canonical = re.sub(r'\s+', ' ', canonical).strip()
-        canonical = re.sub(r'[+\-*/]+$', '', canonical).strip()
-        
-        return {
-            'name': text,
-            'canonical_name': canonical,
-            'processing': processing
-        }
-    
-    def split_profiles(self, text: str) -> List[Dict[str, Any]]:
-        """
-        Split combined profile text into individual profiles.
-        
-        Handles formats like:
-        - "Profile1 + Profile2"
-        - "Profile1 / Profile2"
-        
-        Args:
-            text: Combined profile text
-        
-        Returns:
-            List of parsed profile dicts
-        """
-        if not text or pd.isna(text):
-            return []
-        
-        text = str(text).strip()
-        
-        # Split by profile separators
-        parts = re.split(r'[+/]', text)
-        
-        profiles = []
-        for part in parts:
-            part = part.strip()
-            if part:
-                profiles.append(self.parse_profile_with_processing(part))
-        
-        return profiles if profiles else [self.parse_profile_with_processing(text)]
-
     def get_products(
         self,
         limit: int = 100,
@@ -338,7 +260,7 @@ class ExcelService:
         filters: Optional[Dict[str, Any]] = None,
         from_end: bool = True,
         loading_only: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> List[HangerRow]:
         """
         Get products from Excel with optional filtering.
         
@@ -375,7 +297,7 @@ class ExcelService:
         # This ensures sidebar gets a mix of loading and completed rows
         if not loading_only:
             def _is_empty_val(v):
-                return pd.isna(v) or str(v).strip() in ('', '—', 'nan', 'NaT')
+                return pd.isna(v) or str(v).strip() in ('', EMPTY, 'nan', 'NaT')
             
             mask = ~(df.apply(lambda row: _is_empty_val(row.get('profile')) 
                               and _is_empty_val(row.get('material_type'))
@@ -402,15 +324,15 @@ class ExcelService:
                 records = records[-limit:]
             return records[::-1]
     
-    def _process_dataframe(self, df: pd.DataFrame, loading_only: bool = False) -> List[Dict[str, Any]]:
+    def _process_dataframe(self, df: pd.DataFrame, loading_only: bool = False) -> List[HangerRow]:
         """
-        Process DataFrame and return list of formatted product dicts.
+        Process DataFrame and return rows in the declared HangerRow form.
         Handles date/time formatting and lamels parsing.
         
         Args:
             loading_only: If True, only include loading rows (date+material filled, time empty)
         """
-        products = []
+        products: List[HangerRow] = []
         
         # Filter by date - last 2 weeks for loading_only mode
         if loading_only and 'date' in df.columns:
@@ -432,9 +354,9 @@ class ExcelService:
             number_val = row.get('number')
             profile_val = row.get('profile')
             
-            # Skip completely empty rows (all key fields are '—' or empty)
+            # Skip rows whose key fields are all empty
             def _is_empty(v):
-                return pd.isna(v) or str(v).strip() in ('', '—', 'nan', 'NaT')
+                return pd.isna(v) or str(v).strip() in ('', EMPTY, 'nan', 'NaT')
             
             if _is_empty(number_val) and _is_empty(profile_val) and _is_empty(material_type):
                 continue
@@ -445,10 +367,10 @@ class ExcelService:
                 if pd.isna(date_val) or not date_val:
                     continue
                 # Material type must be filled
-                if pd.isna(material_type) or not material_type or str(material_type).strip() in ('', '—'):
+                if pd.isna(material_type) or not material_type or str(material_type).strip() in ('', EMPTY):
                     continue
                 # Time must be EMPTY (this indicates a loading row, not unloading)
-                if pd.notna(time_val) and str(time_val).strip() not in ('', '—', 'nan', 'NaT'):
+                if pd.notna(time_val) and str(time_val).strip() not in ('', EMPTY, 'nan', 'NaT'):
                     continue
             
             # Handle lamels (can be "30+30" or number)
@@ -462,7 +384,7 @@ class ExcelService:
                 lamels_display = 0
             
             # Format time (remove seconds)
-            time_str = '—'
+            time_str = EMPTY
             time_val = row.get('time')
             if pd.notna(time_val):
                 if hasattr(time_val, 'strftime'):
@@ -476,7 +398,7 @@ class ExcelService:
                         time_str = time_val_str
             
             # Format date
-            date_str = '—'
+            date_str = EMPTY
             date_val = row.get('date')
             if pd.notna(date_val):
                 try:
@@ -487,9 +409,9 @@ class ExcelService:
                 except Exception:
                     date_str = str(date_val)
             
-            profile_name = row.get('profile', '—')
+            profile_name = row.get('profile', EMPTY)
             if pd.isna(profile_name) or not profile_name:
-                profile_name = '—'
+                profile_name = EMPTY
             
             # Check for defect (брак)
             defect_val = row.get('defect')
@@ -506,111 +428,24 @@ class ExcelService:
                 except (ValueError, TypeError):
                     number_display = str(number_val)
             else:
-                number_display = '—'
+                number_display = EMPTY
             
-            products.append({
-                'number': number_display,
-                'date': date_str,
-                'time': time_str,
-                'client': row.get('client') if pd.notna(row.get('client')) else '—',
-                'profile': str(profile_name).strip(),
-                'color': row.get('color') if pd.notna(row.get('color')) else '—',
-                'lamels_qty': lamels_display,
-                'kpz_number': row.get('kpz_number') if pd.notna(row.get('kpz_number')) else '—',
-                'material_type': row.get('material_type') if pd.notna(row.get('material_type')) else '—',
-                'is_defect': is_defect,
-            })
+            products.append(HangerRow(
+                number=number_display,
+                date=date_str,
+                time=time_str,
+                client=row.get('client') if pd.notna(row.get('client')) else EMPTY,
+                profile=str(profile_name).strip(),
+                color=row.get('color') if pd.notna(row.get('color')) else EMPTY,
+                lamels_qty=lamels_display,
+                kpz_number=row.get('kpz_number') if pd.notna(row.get('kpz_number')) else EMPTY,
+                material_type=row.get('material_type') if pd.notna(row.get('material_type')) else EMPTY,
+                is_defect=is_defect,
+            ))
         
         logger.info(f"[FILTER] Final products after all filters: {len(products)}")
         return products
     
-    def get_recent_profiles(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """
-        Get recent profile records.
-        
-        Args:
-            limit: Maximum number of records (default 50)
-        
-        Returns:
-            List of recent records with profile info
-        """
-        df = self.get_dataframe(full_dataset=True)
-        if df.empty:
-            return []
-        
-        # Sort by date descending if date column exists
-        date_col = 'date' if 'date' in df.columns else 'Дата' if 'Дата' in df.columns else None
-        if date_col:
-            try:
-                df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-                df = df.sort_values(date_col, ascending=False)
-            except Exception:
-                pass
-        
-        # Limit results
-        df = df.head(limit)
-        
-        return df.to_dict('records')
-    
-    def get_recent_missing_profiles(
-        self,
-        limit: int = 50,
-        profile_checker: Optional[callable] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get recent unique profiles that don't have photos.
-        
-        Args:
-            limit: Maximum number of unique profiles
-            profile_checker: Optional function to check if profile has photo
-        
-        Returns:
-            List of unique profiles without photos
-        """
-        df = self.get_dataframe(full_dataset=True)
-        if df.empty:
-            return []
-        
-        # Find profile column
-        profile_col = None
-        for col in ['profile', 'Профиль', 'профиль', 'Profile']:
-            if col in df.columns:
-                profile_col = col
-                break
-        
-        if not profile_col:
-            return []
-        
-        # Sort by date descending
-        date_col = 'date' if 'date' in df.columns else 'Дата' if 'Дата' in df.columns else None
-        if date_col:
-            try:
-                df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-                df = df.sort_values(date_col, ascending=False)
-            except Exception:
-                pass
-        
-        # Get unique profiles
-        seen = set()
-        results = []
-        
-        for _, row in df.iterrows():
-            profile_name = str(row.get(profile_col, '')).strip()
-            if not profile_name or profile_name in seen:
-                continue
-            
-            # Check if profile has photo (if checker provided)
-            if profile_checker and profile_checker(profile_name):
-                continue
-            
-            seen.add(profile_name)
-            results.append(row.to_dict())
-            
-            if len(results) >= limit:
-                break
-        
-        return results
-
     def update_simulation_mode(self) -> None:
         """Обновляет активный файл и сбрасывает кэш при смене режима симуляции."""
         self._active_file_name = self._load_persisted_active_file()
