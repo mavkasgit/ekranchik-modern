@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.version import get_app_version
-from app.api.routes import dashboard_router, catalog_router, analysis_router, signal_router
+from app.api.routes import dashboard_router, catalog_router, signal_router
 from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
 from app.services.excel_watcher import excel_watcher
@@ -115,7 +115,6 @@ app.add_middleware(
 # Include API routers
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(catalog_router, prefix="/api")
-app.include_router(analysis_router, prefix="/api")
 app.include_router(signal_router, prefix="/api")
 app.include_router(opcua_router, prefix="/api")
 app.include_router(websocket_router)

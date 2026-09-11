@@ -1,10 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { LayoutDashboard, BookOpen, BarChart3, Gauge } from 'lucide-react'
+import { LayoutDashboard, BookOpen, Gauge } from 'lucide-react'
 import { useState, createContext, useContext, useEffect } from 'react'
 import { Toaster } from '@/components/ui/toaster'
 import Dashboard from '@/pages/Dashboard'
 import Catalog from '@/pages/Catalog'
-import Analysis from '@/pages/Analysis'
 import { OPCUAPage } from '@/pages/OPCUAPage'
 import { useRealtimeBridge } from '@/hooks/useRealtime'
 
@@ -22,7 +21,6 @@ function Navigation() {
   const links = [
     { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
     { to: '/catalog', icon: BookOpen, label: 'Каталог' },
-    { to: '/analysis', icon: BarChart3, label: 'Анализ' },
     { to: '/opcua', icon: Gauge, label: 'OPC UA' },
   ]
 
@@ -94,7 +92,6 @@ function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/catalog" element={<Catalog />} />
-              <Route path="/analysis" element={<Analysis />} />
               <Route path="/opcua" element={<OPCUAPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

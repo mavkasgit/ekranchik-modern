@@ -65,11 +65,4 @@ class ProfileSearchResult(ProfileResponse):
     match_priority: Optional[int] = None
 
 
-class ProfileMissing(BaseModel):
-    """Profile without photo for analysis page"""
-    profile: str
-    date: str
-    number: str
-    has_photo: bool = False
-    row_number: Optional[int] = None
-    count: Optional[int] = None
+
