@@ -36,8 +36,6 @@ class FakeSocket implements RealtimeSocket {
   }
 }
 
-const lines = (message: WebSocketMessage): string => `${message.type}:${message.timestamp}`
-
 interface TestClock {
   connection: RealtimeConnection
   lastDelay: () => number
@@ -103,7 +101,7 @@ describe('RealtimeConnection', () => {
     const seen: string[] = []
     connection.subscribe(() => seen.push(connection.getState().status))
     const received: string[] = []
-    connection.setMessageHandler((incoming) => received.push(lines(incoming)))
+    connection.setMessageHandler((incoming) => received.push(`${incoming.type}:${incoming.timestamp}`))
 
     const release = connection.acquire()
     FakeSocket.opened[0].serverOpen()

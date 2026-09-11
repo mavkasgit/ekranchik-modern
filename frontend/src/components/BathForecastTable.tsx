@@ -37,7 +37,7 @@ function pickMetaValue(primary: string | null | undefined, fallback: string | nu
   return normalizeMetaValue(fallback)
 }
 
-/** Ванны прогноза (30–33) и точка выгрузки (34) из состояния линии. */
+/** Ванны прогноза (30–33) и контрольная ванна (34) из состояния линии. */
 function buildBathForecast(
   lineStatus: LineStatus | undefined,
   lastKnownHangerByBath: Map<number, number>,
@@ -46,7 +46,7 @@ function buildBathForecast(
 
   for (const bath of lineStatus?.baths ?? []) {
     const isForecastBath = [30, 31, 32, 33].includes(bath.bath_number)
-    const isUnloadBath = bath.bath_number === 34
+    const isControlBath = bath.bath_number === 34
     const inTime = bath.in_time || 0
     const outTime = bath.out_time || 0
 
@@ -54,13 +54,13 @@ function buildBathForecast(
     if (rawPalletNumber > 0) {
       lastKnownHangerByBath.set(bath.bath_number, rawPalletNumber)
     }
-    if (isUnloadBath && inTime <= 0 && rawPalletNumber <= 0) {
+    if (isControlBath && inTime <= 0 && rawPalletNumber <= 0) {
       lastKnownHangerByBath.delete(34)
     }
 
     const fallbackPalletNumber = lastKnownHangerByBath.get(bath.bath_number) || 0
     const palletNumber = rawPalletNumber > 0 ? rawPalletNumber : fallbackPalletNumber
-    const hasUnloadSignal = isUnloadBath && (inTime > 0 || rawPalletNumber > 0 || fallbackPalletNumber > 0)
+    const hasUnloadSignal = isControlBath && (inTime > 0 || rawPalletNumber > 0 || fallbackPalletNumber > 0)
 
     if ((isForecastBath && rawPalletNumber > 0) || hasUnloadSignal) {
       forecast.set(bath.bath_number, {
@@ -144,19 +144,26 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
   )
 }
 
+/** Общие поля карточки ванны: подпись подвеса, профиль, аббревиатура цвета, стиль ячейки. */
+function bathCardFields(item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber) {
+  const meta = hangerMetaByNumber[hangerKey(item.hangerNumber)]
+  const profile = pickMetaValue(item.article, meta?.profile)
+  const color = pickMetaValue(item.color, meta?.color)
+
+  return {
+    hangerLabel: item.hangerNumber > 0 ? `№${item.hangerNumber}` : '№—',
+    profileDigits: profileText(profile),
+    colorAbbr: colorAbbreviation(color),
+    fillStyle: colorCellStyle(colorHex(color)),
+  }
+}
+
 function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber }) {
   const minutes = Math.floor(item.remainingTime / 60)
   const seconds = item.remainingTime % 60
   const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
 
-  const meta = hangerMetaByNumber[hangerKey(item.hangerNumber)]
-  const profile = pickMetaValue(item.article, meta?.profile)
-  const color = pickMetaValue(item.color, meta?.color)
-  const hex = colorHex(color)
-  const colorAbbr = colorAbbreviation(color)
-  const profileDigits = profileText(profile)
-  const hangerLabel = item.hangerNumber > 0 ? `№${item.hangerNumber}` : '№—'
-  const fillStyle = colorCellStyle(hex)
+  const { hangerLabel, profileDigits, colorAbbr, fillStyle } = bathCardFields(item, hangerMetaByNumber)
 
   let timeColor = 'text-green-600'
   if (item.remainingTime < 60) {
@@ -184,14 +191,7 @@ function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hanger
 }
 
 function UnloadCard({ item, hangerMetaByNumber, isCompact, unloadTimeStr }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber, isCompact: boolean, unloadTimeStr: string }) {
-  const meta = hangerMetaByNumber[hangerKey(item.hangerNumber)]
-  const profile = pickMetaValue(item.article, meta?.profile)
-  const color = pickMetaValue(item.color, meta?.color)
-  const hex = colorHex(color)
-  const colorAbbr = colorAbbreviation(color)
-  const profileDigits = profileText(profile)
-  const hangerLabel = item.hangerNumber > 0 ? `№${item.hangerNumber}` : '№—'
-  const fillStyle = colorCellStyle(hex)
+  const { hangerLabel, profileDigits, colorAbbr, fillStyle } = bathCardFields(item, hangerMetaByNumber)
 
   return (
     <div className="flex items-center gap-1 px-1 py-0 border-l border-r border-slate-200 dark:border-slate-800 shrink-0">

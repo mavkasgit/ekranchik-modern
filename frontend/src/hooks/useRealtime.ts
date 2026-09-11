@@ -28,7 +28,11 @@ export function useRealtimeEvent(
     handlerRef.current = handler
   }, [handler])
 
+  // Сообщение, пришедшее до монтирования, не должно срабатывать как событие
+  const seenRef = useRef(lastMessage)
   useEffect(() => {
+    if (lastMessage === seenRef.current) return
+    seenRef.current = lastMessage
     if (lastMessage?.type === type) handlerRef.current(lastMessage)
   }, [lastMessage, type])
 }
