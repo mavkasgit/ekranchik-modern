@@ -55,6 +55,7 @@ import {
 } from '@/hooks/useCatalog'
 import type { Profile, ProfileCreate } from '@/types/profile'
 import { api } from '@/api/client'
+import { photoUrl } from '@/lib/domain/photo'
 
 type ViewMode = 'grid' | 'table'
 type SortField = 'name' | 'updated_at' | 'has_photo'
@@ -64,14 +65,6 @@ const STORAGE_KEYS = {
   viewMode: 'catalog_view_mode',
   sortField: 'catalog_sort_field',
   sortDirection: 'catalog_sort_direction',
-}
-
-function getPhotoUrl(path: string | null, cacheBuster?: string | number): string | null {
-  if (!path) return null
-  const base = path.startsWith('/') ? path : `/static/${path}`
-  // Use both updated_at and current timestamp to bust browser cache
-  const bust = cacheBuster ? `${cacheBuster}_${Date.now()}` : Date.now()
-  return `${base}?v=${bust}`
 }
 
 function ProfileCard({ 
@@ -87,7 +80,7 @@ function ProfileCard({
   onDelete: (profile: Profile) => void
   isMobile: boolean
 }) {
-  const photoUrl = getPhotoUrl(profile.photo_thumb, profile.updated_at)
+  const photoSrc = photoUrl(profile.photo_thumb, profile.updated_at)
 
   if (isMobile) {
     // Mobile layout - image on full height
@@ -97,8 +90,8 @@ function ProfileCard({
           <div className="flex h-32">
             {/* Image - full height */}
             <div className="w-32 h-32 bg-muted flex items-center justify-center overflow-hidden flex-shrink-0">
-              {photoUrl ? (
-                <img src={photoUrl} alt={profile.name} className="w-full h-full object-contain" />
+              {photoSrc ? (
+                <img src={photoSrc} alt={profile.name} className="w-full h-full object-contain" />
               ) : (
                 <Image className="w-8 h-8 text-muted-foreground" />
               )}
@@ -130,8 +123,8 @@ function ProfileCard({
       <CardContent className="p-4" onClick={() => onSelect(profile)}>
         <div className="flex gap-4">
           <div className="w-20 h-20 bg-muted rounded-md flex items-center justify-center overflow-hidden flex-shrink-0">
-            {photoUrl ? (
-              <img src={photoUrl} alt={profile.name} className="max-w-full max-h-full object-contain" />
+            {photoSrc ? (
+              <img src={photoSrc} alt={profile.name} className="max-w-full max-h-full object-contain" />
             ) : (
               <Image className="w-8 h-8 text-muted-foreground" />
             )}
@@ -216,8 +209,8 @@ function ProfileDialog({
         length: profile.length,
         notes: profile.notes,
       })
-      const photoUrl = getPhotoUrl(profile.photo_full, profile.updated_at) || getPhotoUrl(profile.photo_thumb, profile.updated_at)
-      setPreviewUrl(photoUrl)
+      const previewSrc = photoUrl(profile.photo_full, profile.updated_at) || photoUrl(profile.photo_thumb, profile.updated_at)
+      setPreviewUrl(previewSrc)
     } else {
       setFormData({ name: '', quantity_per_hanger: null, length: null, notes: null })
       setPreviewUrl(null)
@@ -1623,7 +1616,7 @@ export default function Catalog() {
                   <TableCell>
                     <div className="w-10 h-10 bg-muted rounded flex items-center justify-center overflow-hidden">
                       {profile.photo_thumb ? (
-                        <img src={getPhotoUrl(profile.photo_thumb, profile.updated_at)!} alt="" className="w-full h-full object-cover" />
+                        <img src={photoUrl(profile.photo_thumb, profile.updated_at)!} alt="" className="w-full h-full object-cover" />
                       ) : (
                         <Image className="w-4 h-4 text-muted-foreground" />
                       )}

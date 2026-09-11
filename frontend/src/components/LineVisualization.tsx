@@ -1,36 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, AlertCircle, Wifi, WifiOff } from 'lucide-react'
-import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { useLineStatus } from '@/hooks/useLineStatus'
+import { useRealtimeConnection, useRealtimeEvent } from '@/hooks/useRealtime'
+import { lineApi } from '@/api/line'
+import { formatDuration, formatLocalized } from '@/lib/domain/time'
 import { WS_UPDATE_INTERVAL_SEC } from '@/config/intervals'
-
-interface BathData {
-  bath_number: number
-  in_use: boolean
-  free?: boolean
-  pallete: number
-  in_time: number
-  out_time: number
-  d_time?: number
-}
-
-interface LineData {
-  baths: BathData[]
-  power_supply?: {
-    current: number
-    voltage: number
-    continuous_run_time?: number
-  }
-  timestamp: string
-  opcua_connected?: boolean
-  active_hangers?: number
-}
-
-interface CycleEvent {
-  timestamp: string
-  pallete: number
-  total_time: number
-  baths_visited: number[]
-}
+import type { BathStatus, CompletedCycle } from '@/types/line'
 
 // Bath layout configuration - baths 3-34 (excluding 1-2 and 35-39)
 const BATH_LAYOUT = {
@@ -43,94 +18,43 @@ const BATH_LAYOUT = {
 }
 
 export function LineVisualization() {
-  const [lineData, setLineData] = useState<LineData | null>(null)
-  const [cycles, setCycles] = useState<CycleEvent[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // WebSocket для реалтайм обновлений
-  const { isConnected } = useRealtimeData({
-    onMessage: (msg) => {
-      if (msg.type === 'line_update' && msg.payload) {
-        const payload = msg.payload as {
-          baths?: BathData[]
-          timestamp?: string
-          opcua_connected?: boolean
-          active_hangers?: number
-        }
-        // Обновляем данные из WebSocket
-        setLineData({
-          baths: payload.baths || [],
-          timestamp: payload.timestamp || new Date().toISOString(),
-          opcua_connected: payload.opcua_connected,
-          active_hangers: payload.active_hangers,
-        })
-        setError(null)
-      } else if (msg.type === 'unload_event') {
-        // Обновляем циклы при выгрузке
-        fetchCycles()
-      }
-    }
-  })
-
-  const fetchLineData = useCallback(async () => {
-    setLoading(true)
-    try {
-      const response = await fetch('/api/opcua/line/status')
-      if (!response.ok) throw new Error('Failed to fetch line data')
-      const data = await response.json()
-      setLineData(data)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const { data: lineData, isFetching, error: lineError, refetch } = useLineStatus()
+  const [cycles, setCycles] = useState<CompletedCycle[]>([])
+  const { isConnected } = useRealtimeConnection()
 
   const fetchCycles = useCallback(async () => {
     try {
-      const response = await fetch('/api/opcua/line/cycles?limit=10')
-      if (response.ok) {
-        const data = await response.json()
-        setCycles(data.cycles || [])
-      }
+      setCycles(await lineApi.getCycles(10))
     } catch {
-      // Ignore cycle fetch errors
+      // Ошибка загрузки циклов не мешает показу линии
     }
   }, [])
 
-  // Начальная загрузка
+  // Начальная загрузка циклов; дальше — по событию выгрузки
   useEffect(() => {
-    fetchLineData()
-    fetchCycles()
-  }, [fetchLineData, fetchCycles])
+    void fetchCycles()
+  }, [fetchCycles])
 
-  const getBathData = (bathNumber: number): BathData | undefined => {
+  useRealtimeEvent('unload_event', fetchCycles)
+
+  const getBathData = (bathNumber: number): BathStatus | undefined => {
     return lineData?.baths.find(b => b.bath_number === bathNumber)
   }
 
-  const getBathColor = (bath: BathData | undefined, bathNumber: number): string => {
+  const getBathColor = (bath: BathStatus | undefined, bathNumber: number): string => {
     if (!bath) return 'bg-gray-200'
-    
+
     // Control point (exit) - special color
     if (bathNumber === BATH_LAYOUT.controlPoint) {
       return bath.in_use ? 'bg-orange-500' : 'bg-orange-200'
     }
-    
+
     // Simple: occupied or free
     if (bath.in_use) {
       return 'bg-green-500'
     }
-    
-    return 'bg-gray-200'
-  }
 
-  const formatTime = (seconds: number): string => {
-    if (!seconds) return '0:00'
-    const mins = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    return `${mins}:${secs.toString().padStart(2, '0')}`
+    return 'bg-gray-200'
   }
 
   const BathCell = ({ bathNumber }: { bathNumber: number }) => {
@@ -174,7 +98,7 @@ export function LineVisualization() {
         {/* Время под ванной */}
         {bath?.in_use && (
           <div className="text-[9px] text-gray-600 mt-1 text-center font-mono">
-            {formatTime(bath.in_time)}/{formatTime(bath.out_time)}
+            {formatDuration(bath.in_time)}/{formatDuration(bath.out_time)}
           </div>
         )}
       </div>
@@ -205,19 +129,19 @@ export function LineVisualization() {
             </span>
           </div>
           <button
-            onClick={fetchLineData}
-            disabled={loading}
+            onClick={() => void refetch()}
+            disabled={isFetching}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
-      {error && (
+      {lineError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-center gap-3">
           <AlertCircle className="w-5 h-5 text-red-600" />
-          <span className="text-red-700">{error}</span>
+          <span className="text-red-700">{lineError.message}</span>
         </div>
       )}
 
@@ -240,7 +164,7 @@ export function LineVisualization() {
         <div className="bg-orange-50 rounded-lg p-4">
           <div className="text-sm text-orange-600 font-medium">Last Update</div>
           <div className="text-lg font-mono text-orange-900">
-            {lineData?.timestamp ? new Date(lineData.timestamp).toLocaleTimeString() : '—'}
+            {formatLocalized(lineData?.timestamp)}
           </div>
         </div>
       </div>
@@ -304,13 +228,13 @@ export function LineVisualization() {
                 {cycles.slice(0, 5).map((cycle, idx) => (
                   <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-3 text-gray-700">
-                      {new Date(cycle.timestamp).toLocaleTimeString()}
+                      {formatLocalized(cycle.timestamp)}
                     </td>
                     <td className="py-3 px-3 font-mono font-semibold text-gray-900">
                       P{cycle.pallete}
                     </td>
                     <td className="py-3 px-3 text-gray-700">
-                      {formatTime(cycle.total_time)}
+                      {formatDuration(cycle.total_time)}
                     </td>
                     <td className="py-3 px-3 text-xs text-gray-600 font-mono">
                       {cycle.baths_visited.join(' → ')}

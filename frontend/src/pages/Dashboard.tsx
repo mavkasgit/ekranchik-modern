@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
   Image, Maximize2, Minimize2, X, AlertTriangle, Inbox, Clock
@@ -35,7 +36,13 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
-import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { useRealtimeConnection } from '@/hooks/useRealtime'
+import { DASHBOARD_KEY } from '@/lib/queryKeys'
+import { colorHex } from '@/lib/domain/color'
+import { hangerKey } from '@/lib/domain/hanger'
+import { photoUrl } from '@/lib/domain/photo'
+import { profileText } from '@/lib/domain/profile'
+import { formatClock, formatLocalized } from '@/lib/domain/time'
 import { BathForecast } from '@/components/BathForecastTable'
 import { dashboardApi } from '@/api/dashboard'
 import type { HangerData, ProfileInfo } from '@/types/dashboard'
@@ -82,14 +89,6 @@ function saveFilters(filters: Filters) {
   localStorage.setItem(FILTERS_KEY, JSON.stringify(filters))
 }
 
-// Format time without seconds (HH:MM:SS -> HH:MM)
-function formatTime(time: string | undefined): string {
-  if (!time) return '—'
-  const parts = time.split(':')
-  if (parts.length >= 2) return `${parts[0]}:${parts[1]}`
-  return time
-}
-
 // Format date with year 2026 (DD.MM.YY -> DD.MM.2026)
 function formatDate(date: string | undefined): string {
   if (!date) return '—'
@@ -100,43 +99,6 @@ function formatDate(date: string | undefined): string {
     return `${parts[0]}.${parts[1]}.${year}`
   }
   return date
-}
-
-// Color mapping - top 15 most used colors
-function normalizeColorName(colorName: string): string {
-  return colorName.toLowerCase().replace(/[\s\-_]/g, '')
-}
-
-function getColorHex(colorName: string): string {
-  const name = normalizeColorName(colorName)
-
-  const colorMap: Record<string, string> = {
-    // Top colors by usage
-    'серебро': '#C0C0C0',      // 16147 uses
-    'черный': '#1C1C1C',       // 8323 uses
-    'золото': '#FFD700',       // 1758 uses
-    'шампань': '#F7E7CE',      // 1605 uses
-    'титан': '#878681',        // 1498 uses
-    'бронза': '#8B5A2B',       // 360 uses - darker bronze
-    'медь': '#CD5C5C',         // 335 uses - more red copper
-    'растрав': '#D3D3D3',      // 127 uses
-    'rosegold': '#B76E79',     // 126 uses
-    'rosebronze': '#800020',   // rose bronze
-  }
-
-  // Try exact match with normalized keys
-  for (const [key, value] of Object.entries(colorMap)) {
-    if (normalizeColorName(key) === name) return value
-  }
-
-  // Try partial match
-  for (const [key, value] of Object.entries(colorMap)) {
-    const normKey = normalizeColorName(key)
-    if (name.includes(normKey) || normKey.includes(name)) return value
-  }
-
-  // Default gray for unknown
-  return '#9CA3AF'
 }
 
 // Profile data type from catalog
@@ -401,16 +363,6 @@ function PhotoModal({
   )
 }
 
-// Helper to build photo URL (paths in DB already include /static/)
-function getPhotoUrl(path: string | null | undefined, cacheBuster?: string | number): string | null {
-  if (!path) return null
-  // Paths in DB can be like "/static/images/..." or "images/..."
-  const base = path.startsWith('/') ? path : `/static/${path}`
-  // Use both updated_at and current timestamp to bust browser cache
-  const bust = cacheBuster ? `${cacheBuster}_${Date.now()}` : Date.now()
-  return `${base}?v=${bust}`
-}
-
 // Photo cell - wrapping layout, max 700px width, photos wrap to new rows
 function PhotoCell({
   hanger,
@@ -443,7 +395,7 @@ function PhotoCell({
     </div>
   )
 
-  const thumbUrl = getPhotoUrl(hanger.profile_photo_thumb)
+  const thumbUrl = photoUrl(hanger.profile_photo_thumb)
   if (thumbUrl) {
     return (
       <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: '800px' }}>
@@ -453,7 +405,7 @@ function PhotoCell({
             alt={hanger.profile}
             className="w-auto h-auto max-h-[40px] max-w-[90px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
             onClick={() => onPhotoClick(
-              getPhotoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || '',
+              photoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || '',
               hanger.profile
             )}
           />
@@ -484,8 +436,8 @@ function ProfilePhoto({
   onPhotoClick: (url: string, name: string) => void
   hideText?: boolean
 }) {
-  const thumbUrl = getPhotoUrl(profile.photo_thumb, profile.updated_at)
-  const fullUrl = getPhotoUrl(profile.photo_full || profile.photo_thumb, profile.updated_at)
+  const thumbUrl = photoUrl(profile.photo_thumb, profile.updated_at)
+  const fullUrl = photoUrl(profile.photo_full || profile.photo_thumb, profile.updated_at)
   const hasPhoto = profile.has_photo && thumbUrl
 
   return (
@@ -539,7 +491,7 @@ function StatusBar({
 }) {
   const { data: fileStatus } = useFileStatus()
   const { data: opcuaStatus } = useOPCUAStatus()
-  const { isConnected, lastMessage } = useRealtimeData()
+  const { isConnected, lastMessage } = useRealtimeConnection()
 
   const fileIsOpen = fileStatus?.is_open
   const statusColor = fileStatus?.error
@@ -640,7 +592,7 @@ function StatusBar({
               <span>OPC UA: {opcuaStatus?.is_open ? 'OK' : 'Откл'}</span>
               {opcuaStatus?.last_modified && (
                 <span className="text-muted-foreground text-xs">
-                  ({new Date(opcuaStatus.last_modified).toLocaleTimeString('ru')})
+                  ({formatLocalized(opcuaStatus.last_modified)})
                 </span>
               )}
             </div>
@@ -656,7 +608,7 @@ function StatusBar({
               <span>WS: {isConnected ? 'Онлайн' : 'Офлайн'}</span>
               {lastMessage?.timestamp && (
                 <span className="text-muted-foreground text-xs">
-                  ({new Date(lastMessage.timestamp).toLocaleTimeString('ru')})
+                  ({formatLocalized(lastMessage.timestamp)})
                 </span>
               )}
             </div>
@@ -665,14 +617,6 @@ function StatusBar({
       </CardContent>
     </Card>
   )
-}
-
-function extractProfileText(profile: string): string {
-  if (!profile) return '—';
-  const normalized = profile
-    .replace(/\s+/g, '')
-    .replace(/[^0-9()+*xхX×\/.,;]/g, '')
-  return normalized || '—'
 }
 
 const isSticks = (hanger: HangerData) => {
@@ -704,7 +648,7 @@ function ClockInline() {
   }, [])
 
   return (
-    <span>{time.toLocaleTimeString('ru-RU')}</span>
+    <span>{formatLocalized(time, 'ru-RU')}</span>
   )
 }
 
@@ -800,8 +744,8 @@ function DataTable({
                     }}
                   >
                     <div className="flex flex-col">
-                      <span className="text-blue-600">{formatTime(hanger.entry_time)}</span>
-                      <span className="text-green-600">{formatTime(hanger.exit_time)}</span>
+                      <span className="text-blue-600">{formatClock(hanger.entry_time)}</span>
+                      <span className="text-green-600">{formatClock(hanger.exit_time)}</span>
                     </div>
                   </div>
                 </>
@@ -910,7 +854,7 @@ function DataTable({
                   <span className="text-sm leading-tight text-center break-words">{hanger.color}</span>
                   <div
                     className="w-full h-1.5 rounded-full mt-0.5"
-                    style={{ backgroundColor: getColorHex(hanger.color), minWidth: '50px' }}
+                    style={{ backgroundColor: colorHex(hanger.color), minWidth: '50px' }}
                   />
                 </div>
               </div>
@@ -1012,7 +956,7 @@ function SidebarQueueTable({
               <TableBody>
                 {filteredData.map((hanger, idx) => {
                   const isSticksHanger = isSticks(hanger);
-                  let cleanedProfile = extractProfileText(hanger.profile);
+                  let cleanedProfile = profileText(hanger.profile);
                   if (isSticksHanger && (cleanedProfile === '—' || !cleanedProfile)) {
                     cleanedProfile = 'Клюшки';
                   }
@@ -1033,7 +977,7 @@ function SidebarQueueTable({
                           {hanger.color && hanger.color.trim() !== '—' && hanger.color.trim() !== '' && (
                             <span 
                               className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-black/15 dark:border-white/15" 
-                              style={{ backgroundColor: getColorHex(hanger.color) }}
+                              style={{ backgroundColor: colorHex(hanger.color) }}
                               title={hanger.color}
                             />
                           )}
@@ -1241,10 +1185,11 @@ export default function Dashboard() {
   // Determine if the API should filter for loading_only rows
   const loadingOnly = !isLast100Mode;
 
+  const queryClient = useQueryClient()
   const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, loadingOnly)
   const { data: recentAllData, isLoading: isLoadingAll, refetch: refetchRecentAll, isFetching: isRecentAllFetching } = useDashboard(7, 35, false)
-  const { data: fileStatus, refetch: refetchFileStatus } = useFileStatus()
-  const { data: matchedEvents, refetch: refetchMatched } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
+  const { data: fileStatus } = useFileStatus()
+  const { data: matchedEvents } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
 
   // Excel files selector state
   const [activeFile, setActiveFile] = useState<string>('');
@@ -1282,10 +1227,7 @@ export default function Dashboard() {
         setActiveFile(res.active);
         addRecentFile(res.active);
         // Refetch queries
-        refetch();
-        refetchRecentAll();
-        refetchMatched();
-        refetchFileStatus();
+        queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY })
       }
     } catch (err: any) {
       console.error('Ошибка загрузки Excel-файла:', err);
@@ -1309,7 +1251,7 @@ export default function Dashboard() {
         }
       })
       .catch((err) => console.error('Ошибка загрузки активного Excel-файла:', err));
-  }, [refetchFileStatus, addRecentFile]);
+  }, [addRecentFile]);
 
   const handleSelectExcelFile = async (filePath: string) => {
     try {
@@ -1318,10 +1260,7 @@ export default function Dashboard() {
         setActiveFile(res.active);
         addRecentFile(res.active);
         // Refetch queries
-        refetch();
-        refetchRecentAll();
-        refetchMatched();
-        refetchFileStatus();
+        queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY })
       }
     } catch (err: any) {
       console.error('Ошибка выбора Excel-файла:', err);
@@ -1374,17 +1313,6 @@ export default function Dashboard() {
     const rows = data?.products ?? []
     const events = matchedEvents ?? []
 
-    const toHangerKey = (value: string | number | null | undefined): string => {
-      if (value === null || value === undefined) return ''
-      const raw = String(value).trim()
-      if (!raw) return ''
-      const numeric = Number(raw.replace(',', '.'))
-      if (Number.isFinite(numeric)) {
-        return String(Math.trunc(numeric))
-      }
-      return raw
-    }
-
     const normalizeValue = (value?: string | null): string | undefined => {
       const trimmed = value?.trim()
       return trimmed ? trimmed : undefined
@@ -1403,7 +1331,7 @@ export default function Dashboard() {
     }
 
     const metaFromRows = rows.reduce<Record<string, { profile?: string; color?: string }>>((acc, row) => {
-      const key = toHangerKey(row.number)
+      const key = hangerKey(row.number)
       if (!key) return acc
 
       mergeMeta(acc, key, row.profile, row.color)
@@ -1411,7 +1339,7 @@ export default function Dashboard() {
     }, {})
 
     return events.reduce<Record<string, { profile?: string; color?: string }>>((acc, event) => {
-      const key = toHangerKey(event.hanger)
+      const key = hangerKey(event.hanger)
       if (!key) return acc
 
       mergeMeta(acc, key, event.profile, event.color)
@@ -1579,21 +1507,6 @@ export default function Dashboard() {
       setIsFullscreen(true)
     }
   }, [])
-
-  // Refetch matched events when new unload event arrives
-  useRealtimeData({
-    onMessage: (msg) => {
-      if (msg.type === 'unload_event') {
-        // New unload event - refetch matched data
-        refetchMatched()
-      } else if (msg.type === 'line_update') {
-        // Line update - данные обновляются каждую секунду
-        // Можно использовать для обновления статуса OPC UA
-      }
-    }
-  })
-
-
 
   useEffect(() => { saveFilters(filters) }, [filters])
 

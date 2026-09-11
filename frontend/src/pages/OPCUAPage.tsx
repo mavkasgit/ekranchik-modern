@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertCircle, CheckCircle, Loader, RefreshCw, Activity, Zap, Clock, Settings, FlaskConical, Cpu } from 'lucide-react'
 import { LineVisualization } from '@/components/LineVisualization'
 import { HangerTracking } from '@/components/HangerTracking'
+import { formatLocalized } from '@/lib/domain/time'
 
 interface PLCData {
   status: string
@@ -184,7 +185,7 @@ export function OPCUAPage() {
               <Clock className="w-4 h-4 text-gray-400" />
             </div>
             <div className="text-lg font-mono text-gray-900">
-              {data?.server_time ? new Date(data.server_time).toLocaleTimeString() : '—'}
+              {formatLocalized(data?.server_time)}
             </div>
           </div>
           

@@ -6,6 +6,7 @@ import Dashboard from '@/pages/Dashboard'
 import Catalog from '@/pages/Catalog'
 import Analysis from '@/pages/Analysis'
 import { OPCUAPage } from '@/pages/OPCUAPage'
+import { useRealtimeBridge } from '@/hooks/useRealtime'
 
 // Fullscreen context
 const FullscreenContext = createContext({
@@ -82,6 +83,7 @@ function Footer() {
 
 function App() {
   const [isFullscreen, setIsFullscreen] = useState(false)
+  useRealtimeBridge()
 
   return (
     <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>

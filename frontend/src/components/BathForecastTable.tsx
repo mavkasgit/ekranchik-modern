@@ -1,5 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { useMemo, useRef } from 'react'
+import { useLineStatus } from '@/hooks/useLineStatus'
+import { colorAbbreviation, colorCellStyle, colorHex } from '@/lib/domain/color'
+import { hangerKey } from '@/lib/domain/hanger'
+import { profileText } from '@/lib/domain/profile'
+import type { LineStatus } from '@/types/line'
 
 interface BathForecastItem {
   bathNum: number
@@ -22,19 +26,6 @@ interface HangerMeta {
 
 type HangerMetaByNumber = Record<string, HangerMeta>
 
-function normalizeHangerKey(value: string | number | null | undefined): string {
-  if (value === null || value === undefined) return ''
-  const raw = String(value).trim()
-  if (!raw) return ''
-
-  const normalizedNumeric = Number(raw.replace(',', '.'))
-  if (Number.isFinite(normalizedNumeric)) {
-    return String(Math.trunc(normalizedNumeric))
-  }
-
-  return raw
-}
-
 function normalizeMetaValue(value: string | null | undefined): string {
   const text = (value ?? '').trim()
   return text || '—'
@@ -46,197 +37,55 @@ function pickMetaValue(primary: string | null | undefined, fallback: string | nu
   return normalizeMetaValue(fallback)
 }
 
-function normalizeColorName(colorName: string): string {
-  return colorName.toLowerCase().replace(/[\s\-_]/g, '')
-}
+/** Ванны прогноза (30–33) и точка выгрузки (34) из состояния линии. */
+function buildBathForecast(
+  lineStatus: LineStatus | undefined,
+  lastKnownHangerByBath: Map<number, number>,
+): Map<number, BathForecastItem> {
+  const forecast: Map<number, BathForecastItem> = new Map()
 
-function getColorHex(colorName: string): string {
-  const name = normalizeColorName(colorName)
+  for (const bath of lineStatus?.baths ?? []) {
+    const isForecastBath = [30, 31, 32, 33].includes(bath.bath_number)
+    const isUnloadBath = bath.bath_number === 34
+    const inTime = bath.in_time || 0
+    const outTime = bath.out_time || 0
 
-  const colorMap: Record<string, string> = {
-    'серебро': '#C0C0C0',
-    'черный': '#1C1C1C',
-    'золото': '#FFD700',
-    'шампань': '#F7E7CE',
-    'титан': '#878681',
-    'бронза': '#8B5A2B',
-    'медь': '#CD5C5C',
-    'растрав': '#D3D3D3',
-    'rosegold': '#B76E79',
-    'rosebronze': '#800020',
+    const rawPalletNumber = bath.pallete || 0
+    if (rawPalletNumber > 0) {
+      lastKnownHangerByBath.set(bath.bath_number, rawPalletNumber)
+    }
+    if (isUnloadBath && inTime <= 0 && rawPalletNumber <= 0) {
+      lastKnownHangerByBath.delete(34)
+    }
+
+    const fallbackPalletNumber = lastKnownHangerByBath.get(bath.bath_number) || 0
+    const palletNumber = rawPalletNumber > 0 ? rawPalletNumber : fallbackPalletNumber
+    const hasUnloadSignal = isUnloadBath && (inTime > 0 || rawPalletNumber > 0 || fallbackPalletNumber > 0)
+
+    if ((isForecastBath && rawPalletNumber > 0) || hasUnloadSignal) {
+      forecast.set(bath.bath_number, {
+        bathNum: bath.bath_number,
+        hangerNumber: palletNumber,
+        article: normalizeMetaValue(bath.article),
+        color: normalizeMetaValue(bath.color),
+        inTime,
+        outTime,
+        remainingTime: Math.max(0, outTime - inTime),
+      })
+    }
   }
 
-  // Exact match with normalized key
-  for (const [key, value] of Object.entries(colorMap)) {
-    if (normalizeColorName(key) === name) return value
-  }
-
-  // Partial match
-  for (const [key, value] of Object.entries(colorMap)) {
-    const normKey = normalizeColorName(key)
-    if (name.includes(normKey) || normKey.includes(name)) return value
-  }
-
-  return '#9CA3AF'
-}
-
-function abbreviateColor(colorName: string): string {
-  const name = normalizeColorName(colorName)
-  const abbrevMap: Record<string, string> = {
-    'серебро': 'сер',
-    'черный': 'чер',
-    'золото': 'зол',
-    'шампань': 'шам',
-    'титан': 'тит',
-    'бронза': 'брз',
-    'медь': 'мед',
-    'растрав': 'рст',
-    'rosegold': 'RG',
-    'rosebronze': 'RB',
-  }
-
-  // Exact match with normalized key
-  for (const [key, value] of Object.entries(abbrevMap)) {
-    if (normalizeColorName(key) === name) return value
-  }
-
-  // Partial match
-  for (const [key, value] of Object.entries(abbrevMap)) {
-    const normKey = normalizeColorName(key)
-    if (name.includes(normKey) || normKey.includes(name)) return value
-  }
-
-  const cleanName = colorName.toLowerCase().trim()
-  return cleanName.slice(0, 4) || '—'
-}
-
-function extractProfileText(profile: string): string {
-  const normalized = profile
-    .replace(/\s+/g, '')
-    .replace(/[^0-9()+*xхX×\/.,;]/g, '')
-  return normalized || '—'
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const normalized = hex.replace('#', '').trim()
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-    return `rgba(156, 163, 175, ${alpha})`
-  }
-
-  const r = Number.parseInt(normalized.slice(0, 2), 16)
-  const g = Number.parseInt(normalized.slice(2, 4), 16)
-  const b = Number.parseInt(normalized.slice(4, 6), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
-function getCellStyle(colorHex: string) {
-  return {
-    background: `linear-gradient(135deg, ${hexToRgba(colorHex, 0.6)} 0%, ${hexToRgba(colorHex, 0.4)} 100%)`,
-    boxShadow: `inset 0 0 0 1px ${hexToRgba(colorHex, 0.52)}`,
-  }
+  return forecast
 }
 
 export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
-  const [bathData, setBathData] = useState<Map<number, BathForecastItem>>(new Map())
+  const { data: lineStatus } = useLineStatus()
   const lastKnownHangerByBathRef = useRef<Map<number, number>>(new Map())
 
-  const fetchData = useCallback(async () => {
-    try {
-      const lineRes = await fetch(`/api/opcua/line/status?t=${Date.now()}`)
-      if (lineRes.ok) {
-        const lineData = await lineRes.json()
-        const newBathData = new Map<number, BathForecastItem>()
-
-        for (const bath of lineData.baths) {
-          const isForecastBath = [30, 31, 32, 33].includes(bath.bath_number)
-          const isUnloadBath = bath.bath_number === 34
-          const inTime = bath.in_time || 0
-          const outTime = bath.out_time || 0
-          const remainingTime = Math.max(0, outTime - inTime)
-
-          const rawPalletNumber = Number(bath.pallete) || 0
-          if (rawPalletNumber > 0) {
-            lastKnownHangerByBathRef.current.set(bath.bath_number, rawPalletNumber)
-          }
-
-          if (isUnloadBath && inTime <= 0 && rawPalletNumber <= 0) {
-            lastKnownHangerByBathRef.current.delete(34)
-          }
-
-          const fallbackPalletNumber = lastKnownHangerByBathRef.current.get(bath.bath_number) || 0
-          const palletNumber = rawPalletNumber > 0 ? rawPalletNumber : fallbackPalletNumber
-          const hasUnloadSignal = isUnloadBath && (inTime > 0 || rawPalletNumber > 0 || fallbackPalletNumber > 0)
-
-          if ((isForecastBath && rawPalletNumber > 0) || hasUnloadSignal) {
-            newBathData.set(bath.bath_number, {
-              bathNum: bath.bath_number,
-              hangerNumber: palletNumber,
-              article: normalizeMetaValue(bath.article),
-              color: normalizeMetaValue(bath.color),
-              inTime,
-              outTime,
-              remainingTime,
-            })
-          }
-        }
-
-        setBathData(newBathData)
-      }
-    } catch (err) {
-      console.error('[BathForecast] Error fetching data:', err)
-    }
-  }, [])
-
-  useRealtimeData({
-    onMessage: (message) => {
-      if (message.type === 'data_update' || message.type === 'unload_event' || message.type === 'opcua_status') {
-        void fetchData()
-      }
-    }
-  })
-
-  useEffect(() => {
-    void fetchData()
-  }, [fetchData])
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      void fetchData()
-    }, 10000)
-
-    return () => clearInterval(interval)
-  }, [fetchData])
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setBathData(prev => {
-        if (prev.size === 0) return prev
-
-        const next = new Map<number, BathForecastItem>()
-        let changed = false
-
-        for (const [bathNum, item] of prev.entries()) {
-          if (bathNum === 34) {
-            next.set(bathNum, { ...item, inTime: item.inTime + 1 })
-            changed = true
-            continue
-          }
-
-          if (item.remainingTime > 0) {
-            next.set(bathNum, { ...item, remainingTime: Math.max(0, item.remainingTime - 1) })
-            changed = true
-            continue
-          }
-
-          next.set(bathNum, item)
-        }
-
-        return changed ? next : prev
-      })
-    }, 1000)
-
-    return () => clearInterval(timer)
-  }, [])
+  const bathData = useMemo(
+    () => buildBathForecast(lineStatus, lastKnownHangerByBathRef.current),
+    [lineStatus],
+  )
 
   const sortedBaths = Array.from(bathData.values())
     .filter(b => b.bathNum !== 34)
@@ -300,14 +149,14 @@ function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hanger
   const seconds = item.remainingTime % 60
   const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
 
-  const meta = hangerMetaByNumber[normalizeHangerKey(item.hangerNumber)]
+  const meta = hangerMetaByNumber[hangerKey(item.hangerNumber)]
   const profile = pickMetaValue(item.article, meta?.profile)
   const color = pickMetaValue(item.color, meta?.color)
-  const colorHex = getColorHex(color)
-  const colorAbbr = abbreviateColor(color)
-  const profileDigits = extractProfileText(profile)
+  const hex = colorHex(color)
+  const colorAbbr = colorAbbreviation(color)
+  const profileDigits = profileText(profile)
   const hangerLabel = item.hangerNumber > 0 ? `№${item.hangerNumber}` : '№—'
-  const fillStyle = getCellStyle(colorHex)
+  const fillStyle = colorCellStyle(hex)
 
   let timeColor = 'text-green-600'
   if (item.remainingTime < 60) {
@@ -335,14 +184,14 @@ function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hanger
 }
 
 function UnloadCard({ item, hangerMetaByNumber, isCompact, unloadTimeStr }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber, isCompact: boolean, unloadTimeStr: string }) {
-  const meta = hangerMetaByNumber[normalizeHangerKey(item.hangerNumber)]
+  const meta = hangerMetaByNumber[hangerKey(item.hangerNumber)]
   const profile = pickMetaValue(item.article, meta?.profile)
   const color = pickMetaValue(item.color, meta?.color)
-  const colorHex = getColorHex(color)
-  const colorAbbr = abbreviateColor(color)
-  const profileDigits = extractProfileText(profile)
+  const hex = colorHex(color)
+  const colorAbbr = colorAbbreviation(color)
+  const profileDigits = profileText(profile)
   const hangerLabel = item.hangerNumber > 0 ? `№${item.hangerNumber}` : '№—'
-  const fillStyle = getCellStyle(colorHex)
+  const fillStyle = colorCellStyle(hex)
 
   return (
     <div className="flex items-center gap-1 px-1 py-0 border-l border-r border-slate-200 dark:border-slate-800 shrink-0">
