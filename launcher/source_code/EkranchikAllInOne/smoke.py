@@ -4,6 +4,11 @@
 киоском → ожидание готовности → запуск киоска → авто-выход по ТОМУ ЖЕ коду
 Shutdown(), что висит на пункте трея «Выход». Проверяет логи и маркеры.
 
+Второй прогон — жёсткий: --crash-after-ready убивает exe через TerminateProcess
+(Shutdown/StopProcess в нём не бегут), поэтому заглушки может добить только
+kill-on-close job-объекта (ChildProcesses.cs). Проверка — отсутствие живых
+python.exe с командной строкой stub_health.py / fake_kiosk.py после смерти exe.
+
 Issue #4: persist пяти настроек (allinone_config.json + --dump-config),
 применение Excel/OPC UA/симуляции в env сервера, монитора в kiosk_config.json,
 --silent без окна, round-trip галки автозапуска в ТЕСТОВОМ ключе реестра
@@ -86,6 +91,21 @@ def _ps(*args: str, timeout: int = 60):
                           capture_output=True, text=True, timeout=timeout)
 
 
+def scan_lingering():
+    """Живые заглушки в python.exe по командной строке; None — скан не удался."""
+    try:
+        w = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+             "Select-Object -ExpandProperty CommandLine"],
+            capture_output=True, timeout=60)
+        out = (w.stdout or b"").decode("utf-8", errors="replace")
+        return [n for n in ("stub_health.py", "fake_kiosk.py") if n in out]
+    except Exception as ex:
+        print(f"[WARN] lingering check failed: {ex}")
+        return None
+
+
 def main() -> int:
     ok = True
 
@@ -101,7 +121,9 @@ def main() -> int:
                 build_out[-2000:])
 
     if TMP.exists():
-        shutil.rmtree(TMP)
+        # ignore_errors: после провала hard-kill прогона в stubdir может ещё
+        # жить недобитая заглушка — следующий прогон не должен падать об это.
+        shutil.rmtree(TMP, ignore_errors=True)
     (TMP / "stubdir").mkdir(parents=True)
     (TMP / "stubdir" / "stub_health.py").write_text(STUB_BACKEND, encoding="utf-8")
     (TMP / "fakekiosk").mkdir(parents=True)
@@ -159,6 +181,7 @@ def main() -> int:
     lingering: list = []
     app_log = ""
     proc = None
+    crash = None
     try:
         # Подмена на время прогона (исходники — в бэкапах выше).
         allinone_cfg.write_text(_json.dumps(TEST_SETTINGS, ensure_ascii=False), encoding="utf-8")
@@ -259,23 +282,42 @@ def main() -> int:
         except Exception as ex:
             ok &= check("monitor applied to kiosk", False, str(ex))
 
-        try:
-            w = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-                 "Select-Object -ExpandProperty CommandLine"],
-                capture_output=True, timeout=60)
-            out = (w.stdout or b"").decode("utf-8", errors="replace")
-            for needle in ("stub_health.py", "fake_kiosk.py"):
-                if needle in out:
-                    lingering.append(needle)
-        except Exception as ex:
-            print(f"[WARN] lingering check skipped: {ex}")
+        lingering.extend(scan_lingering() or [])
         ok &= check("corrupt config backed up, kiosk still launched",
                     any((p.read_bytes() == CORRUPT)
                         for p in ek_dir.glob("kiosk_config*.corrupt-*.bak") if p not in pre_baks)
                     and "kiosk started pid=" in app_log)
         ok &= check("corrupt raw noted in log", "kiosk config corrupt" in app_log)
+
+        # --- Job Object: аварийная смерть приложения не оставляет детей.
+        #     --crash-after-ready убивает exe через TerminateProcess: Shutdown и
+        #     StopProcess в этом прогоне не бегут, значит заглушки может добить
+        #     только kill-on-close самого job-объекта.
+        print("== hard-kill run (job object) ==")
+        crash_pre = _today.stat().st_size if _today.exists() else 0
+        crash = subprocess.Popen([str(EXE), "--silent", "--crash-after-ready=2"], env=env)
+        try:
+            crash.wait(timeout=90)
+        except subprocess.TimeoutExpired:
+            crash.kill()
+            crash.wait(timeout=30)
+            ok &= check("crash run finished by itself", False, "killed after 90s")
+        time.sleep(1)
+        crash_log = (_today.read_bytes()[crash_pre:].decode("utf-8", errors="replace")
+                     if _today.exists() else "")
+        ok &= check("crash run: backend started", "backend started pid=" in crash_log)
+        ok &= check("crash run: no graceful shutdown",
+                    "smoke hook: Process.Kill" in crash_log and "shutdown (" not in crash_log,
+                    crash_log[-500:])
+        crash_lingering = None
+        for _ in range(20):  # kill-on-close асинхронен — до 10 с
+            crash_lingering = scan_lingering()
+            if crash_lingering == []:
+                break
+            time.sleep(0.5)
+        ok &= check("hard kill: job killed stub children", crash_lingering == [],
+                    "scan failed" if crash_lingering is None else f"lingering: {crash_lingering}")
+
         # --- Issue #4: round-trip галки автозапуска в ТЕСТОВОМ ключе реестра. ---
         print("== autostart round-trip (test key only) ==")
         r_on = subprocess.run([str(EXE), "--autostart=on", f"--run-key={TEST_KEY}"],
@@ -302,6 +344,13 @@ def main() -> int:
                     proc.wait(timeout=30)
             except Exception as ex:
                 print(f"[WARN] exe kill failed: {ex}")
+        if crash is not None:
+            try:
+                if crash.poll() is None:
+                    crash.kill()
+                    crash.wait(timeout=30)
+            except Exception as ex:
+                print(f"[WARN] crash exe kill failed: {ex}")
         try:
             if saved_cfg is None:
                 if kiosk_cfg.exists():

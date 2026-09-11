@@ -16,6 +16,9 @@
 //   --auto-exit-after-ready=N — после успешного запуска киоска ждёт N сек и
 //     идёт по ТОМУ ЖЕ коду Shutdown(), что и пункт трея «Выход»;
 //     подразумевает тихий режим (без окна настроек);
+//   --crash-after-ready=N — после успешного запуска киоска ждёт N сек и
+//     убивает себя через TerminateProcess (без managed-очистки): проверяет,
+//     что Job Object добивает дочерние процессы; тоже тихий режим;
 //   --dump-config — печатает итоговый конфиг (файл + env) в stdout и выходит;
 //   --autostart=on|off [--run-key=<subkey>] — включает/выключает автозапуск
 //     (по умолчанию в настоящем Run; с --run-key — в тестовом подключе
@@ -54,6 +57,7 @@ namespace EkranchikAllInOne
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
 
             int autoExitAfterReady = 0;
+            int crashAfterReady = 0;
             bool silent = false;
             bool dumpConfig = false;
             bool selfTest = false;
@@ -62,6 +66,7 @@ namespace EkranchikAllInOne
             foreach (var arg in args)
             {
                 const string autoPrefix = "--auto-exit-after-ready=";
+                const string crashPrefix = "--crash-after-ready=";
                 const string autostartPrefix = "--autostart=";
                 const string runKeyPrefix = "--run-key=";
                 if (arg.StartsWith(autoPrefix, StringComparison.OrdinalIgnoreCase)
@@ -69,6 +74,12 @@ namespace EkranchikAllInOne
                     && seconds > 0)
                 {
                     autoExitAfterReady = seconds;
+                }
+                else if (arg.StartsWith(crashPrefix, StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(arg.Substring(crashPrefix.Length), out int crashSeconds)
+                    && crashSeconds > 0)
+                {
+                    crashAfterReady = crashSeconds;
                 }
                 else if (arg.Equals("--silent", StringComparison.OrdinalIgnoreCase))
                 {
@@ -134,7 +145,9 @@ namespace EkranchikAllInOne
             }
 
             // smoke-хук идёт тем же тихим путём, что и --silent: без окна.
-            using (var context = new AllInOneContext(config, autoExitAfterReady, silent || autoExitAfterReady > 0))
+            using (var context = new AllInOneContext(
+                config, autoExitAfterReady, crashAfterReady,
+                silent || autoExitAfterReady > 0 || crashAfterReady > 0))
             {
                 Application.Run(context);
                 return context.ExitCode;
@@ -403,9 +416,12 @@ namespace EkranchikAllInOne
     {
         private readonly AllInOneConfig _config;
         private readonly int _autoExitAfterReady;
+        private readonly int _crashAfterReady;
         private readonly bool _silent;
         private readonly RotatingLogger _appLog;
         private readonly RotatingLogger _backendLog;
+        // Единственный владелец дочерних процессов: create → assign → stop.
+        private readonly ChildProcesses _children;
         private readonly CancellationTokenSource _cts = new();
         // UI-поток: Main ставит WindowsFormsSynchronizationContext, контекст
         // захватывается на UI-потоке; окно киоска создаётся только через Post.
@@ -429,13 +445,15 @@ namespace EkranchikAllInOne
 
         public int ExitCode { get; private set; }
 
-        public AllInOneContext(AllInOneConfig config, int autoExitAfterReady, bool silent)
+        public AllInOneContext(AllInOneConfig config, int autoExitAfterReady, int crashAfterReady, bool silent)
         {
             _config = config;
             _autoExitAfterReady = autoExitAfterReady;
+            _crashAfterReady = crashAfterReady;
             _silent = silent;
             _appLog = new RotatingLogger("allinone");
             _backendLog = new RotatingLogger("backend");
+            _children = new ChildProcesses(_appLog);
             Current = this;
             _ui = SynchronizationContext.Current;
             if (_ui == null)
@@ -519,7 +537,6 @@ namespace EkranchikAllInOne
             _idleItem = new ToolStripMenuItem("🕐 Режим простоя", null, (s, e) => _kioskForm?.ToggleIdleScreen());
             menu.Items.Add(_idleItem);
             menu.Items.Add(new ToolStripMenuItem("⚙️ Настройки", null, (s, e) => ShowSettings()));
-            menu.Items.Add(new ToolStripMenuItem("🔄 Проверить обновления", null, (s, e) => { Task.Run(() => CheckForUpdatesAsync(manual: true)); }));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem("Выход", null, (s, e) => Shutdown("tray exit")));
 
@@ -563,6 +580,17 @@ namespace EkranchikAllInOne
             if (!ready) return;
             StartKiosk();
 
+            // Крючок smoke: жёсткая смерть без managed-очистки. Shutdown в этом
+            // пути не бежит, поэтому детей может добить только job-объект.
+            if (_crashAfterReady > 0)
+            {
+                _appLog.Write($"smoke hook: hard kill in {_crashAfterReady}s (no cleanup)");
+                try { await Task.Delay(TimeSpan.FromSeconds(_crashAfterReady), token); } catch { }
+                _appLog.Write("smoke hook: Process.Kill");
+                Process.GetCurrentProcess().Kill();
+                return;
+            }
+
             if (_autoExitAfterReady > 0)
             {
                 _appLog.Write($"smoke hook: auto-exit in {_autoExitAfterReady}s");
@@ -592,16 +620,19 @@ namespace EkranchikAllInOne
                 };
                 // Issue #4: Excel/OPC UA/симуляция из окна настроек → env сервера.
                 _config.ApplyToBackendEnvironment(psi.Environment);
-                var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                proc.OutputDataReceived += (s, e) => { if (e.Data != null) _backendLog.Write("[out] " + e.Data); };
-                proc.ErrorDataReceived += (s, e) => { if (e.Data != null) _backendLog.Write("[err] " + e.Data); };
-                proc.Exited += (s, e) =>
+                var proc = _children.Start(psi, ChildLifetime.Job, "backend", p =>
                 {
-                    _backendLog.Write($"backend exited code={proc.ExitCode}");
-                    if (!_shutdownStarted && !_cts.IsCancellationRequested)
-                        Fail($"backend exited early with code {proc.ExitCode}, see backend log");
-                };
-                if (!proc.Start())
+                    p.EnableRaisingEvents = true;
+                    p.OutputDataReceived += (s, e) => { if (e.Data != null) _backendLog.Write("[out] " + e.Data); };
+                    p.ErrorDataReceived += (s, e) => { if (e.Data != null) _backendLog.Write("[err] " + e.Data); };
+                    p.Exited += (s, e) =>
+                    {
+                        _backendLog.Write($"backend exited code={p.ExitCode}");
+                        if (!_shutdownStarted && !_cts.IsCancellationRequested)
+                            Fail($"backend exited early with code {p.ExitCode}, see backend log");
+                    };
+                });
+                if (proc == null)
                 {
                     Fail("failed to start backend process");
                     return false;
@@ -609,7 +640,6 @@ namespace EkranchikAllInOne
                 proc.BeginOutputReadLine();
                 proc.BeginErrorReadLine();
                 _backend = proc;
-                _appLog.Write($"backend started pid={proc.Id}");
                 return true;
             }
             catch (Exception ex)
@@ -668,9 +698,9 @@ namespace EkranchikAllInOne
                         Arguments = _config.ResolvedKioskArgs,
                         UseShellExecute = false
                     };
-                    _kiosk = Process.Start(psi);
-                    ProcessJob.Assign(_kiosk);
-                    _appLog.Write($"kiosk started pid={_kiosk?.Id}");
+                    _kiosk = _children.Start(psi, ChildLifetime.Job, "kiosk");
+                    if (_kiosk == null)
+                        _appLog.Write("kiosk start failed (backend keeps running)");
                 }
                 catch (Exception ex)
                 {
@@ -782,10 +812,9 @@ namespace EkranchikAllInOne
             try { _cts.Cancel(); } catch { }
             try { _updateTimer?.Dispose(); } catch { }
 
-            StopProcess(_kiosk, "kiosk");
-            StopProcess(_backend, "backend");
+            StopChildren();
             // Встроенный экран живёт в этом процессе — закрываем форму
-            // (внешний киоск — через StopProcess выше).
+            // (внешний киоск — через StopChildren выше).
             DisposeKioskForm();
 
             try
@@ -805,20 +834,12 @@ namespace EkranchikAllInOne
             ExitThread();
         }
 
-        private static void StopProcess(Process? proc, string name)
+        // Дети, которыми владеет приложение. Установщик обновления стартует как
+        // Detached и здесь намеренно не трогается.
+        private void StopChildren()
         {
-            if (proc == null) return;
-            try
-            {
-                if (proc.HasExited) return;
-                try { proc.CloseMainWindow(); } catch { }
-                if (!proc.WaitForExit(3000))
-                {
-                    try { proc.Kill(entireProcessTree: true); } catch { }
-                    proc.WaitForExit(5000);
-                }
-            }
-            catch { /* процесс уже мёртв — цель достигнута */ }
+            _children.Stop(_kiosk, "kiosk");
+            _children.Stop(_backend, "backend");
         }
 
         // === Обновления: канал full-v* + ассет EkranchikSetup.exe ===
@@ -872,8 +893,7 @@ namespace EkranchikAllInOne
             RefreshOpenSettings();
             try
             {
-                StopProcess(_kiosk, "kiosk");
-                StopProcess(_backend, "backend");
+                StopChildren();
                 // Встроенный экран гасим до запуска установщика (issue #9).
                 DisposeKioskForm();
             }
@@ -881,19 +901,18 @@ namespace EkranchikAllInOne
             {
                 _appLog.Write($"update stop children failed: {ex.Message}");
             }
-            try
-            {
-                Process.Start(new ProcessStartInfo { FileName = setupPath, UseShellExecute = true });
-                _appLog.Write($"setup launched: {setupPath}");
-            }
-            catch (Exception ex)
+            // Установщик обязан пережить нас — Detached: ни job, ни Stop.
+            if (_children.Start(
+                    new ProcessStartInfo { FileName = setupPath, UseShellExecute = true },
+                    ChildLifetime.Detached, "setup") == null)
             {
                 _updateStatus = "Не удалось запустить установщик.";
-                _appLog.Write($"setup launch failed: {ex.Message}");
+                _appLog.Write($"setup launch failed: {setupPath}");
                 Notify("Ekranchik: не удалось запустить установщик.");
                 RefreshOpenSettings();
                 return;
             }
+            _appLog.Write($"setup launched: {setupPath}");
             Shutdown("update");
         }
 
@@ -990,7 +1009,8 @@ namespace EkranchikAllInOne
         }
 
         // Крэш-хендлеры (issue #9): падение UI-потока больше не роняет стек
-        // молча — лог + корректная остановка (Job Object чистит бэкенд).
+        // молча — лог + корректная остановка (job-объект в ChildProcesses
+        // добивает backend, если Shutdown не дойдёт).
         private static AllInOneContext? Current;
         public static void ReportUiCrash(Exception ex)
         {
@@ -1037,67 +1057,6 @@ namespace EkranchikAllInOne
                 try { _kiosk?.Dispose(); } catch { }
             }
             base.Dispose(disposing);
-        }
-    }
-    // === Job Object (issue #9): дочерние процессы (python-бэкенд, внешний
-    // киоск в крючке smoke) умирают вместе с приложением даже при аварийной
-    // смерти процесса. Ошибка Job Object не фатальна: StopProcess в
-    // Shutdown работает как раньше. ===
-    static class ProcessJob
-    {
-        private static IntPtr _handle = IntPtr.Zero;
-        private static readonly object _lock = new();
-        private const int JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
-        private const int JobObjectBasicLimitInformation = 4;
-
-        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-        private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
-        {
-            public long PerProcessUserTimeLimit;
-            public long PerJobUserTimeLimit;
-            public uint LimitFlags;
-            public UIntPtr MinimumWorkingSetSize;
-            public UIntPtr MaximumWorkingSetSize;
-            public uint ActiveProcessLimit;
-            public UIntPtr Affinity;
-            public uint PriorityClass;
-            public uint SchedulingClass;
-        }
-
-        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr CreateJobObjectW(IntPtr lpJobAttributes, string? lpName);
-
-        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, ref JOBOBJECT_BASIC_LIMIT_INFORMATION info, int cbSize);
-
-        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
-
-        public static void Assign(Process? proc)
-        {
-            if (proc == null) return;
-            try
-            {
-                lock (_lock)
-                {
-                    if (_handle == IntPtr.Zero)
-                    {
-                        _handle = CreateJobObjectW(IntPtr.Zero, null);
-                        if (_handle == IntPtr.Zero) return;
-                        var info = new JOBOBJECT_BASIC_LIMIT_INFORMATION
-                        {
-                            LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                        };
-                        if (!SetInformationJobObject(_handle, JobObjectBasicLimitInformation, ref info,
-                            System.Runtime.InteropServices.Marshal.SizeOf<JOBOBJECT_BASIC_LIMIT_INFORMATION>()))
-                        {
-                            return;
-                        }
-                    }
-                    AssignProcessToJobObject(_handle, proc.Handle);
-                }
-            }
-            catch { /* без Job-объекта живём как раньше */ }
         }
     }
 }
