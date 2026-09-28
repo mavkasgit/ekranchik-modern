@@ -41,6 +41,7 @@ static/app_settings.json
 # *.db
 # *.sqlite3
 # static/*.db
+static/ekranchik_backup_*.db
 
 # Data folders
 # static/images/*
