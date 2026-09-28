@@ -71,18 +71,28 @@ function toUnloadedRow(hanger: RunHanger, unloadTime: string): HangerData {
 /** Старт прогона: круг перемешан, первые подвесы разведены по ваннам разгоном. */
 export function startRun(rows: HangerData[], random: () => number = Math.random): RunState {
   const pool = shuffle(rows, random)
+  const starting = pool.slice(0, RUN_BATHS.length)
   const inBaths: RunHanger[] = []
   const launched: HangerData[] = []
   let nextNumber = 1
 
-  for (const [index, row] of pool.slice(0, RUN_BATHS.length).entries()) {
-    const hanger: RunHanger = { number: nextNumber, remainingTime: START_COUNTDOWN[index], row }
+  // На старте линия уже в работе: подвес, которому осталось пять секунд, вошёл раньше
+  // того, которому осталось двадцать. Номер — по порядку входа, поэтому первым
+  // с линии сходит №1, а последним встаёт в ванну следующий.
+  const entered = START_COUNTDOWN
+    .map((remainingTime, bathIndex) => ({ remainingTime, bathIndex }))
+    .filter(({ bathIndex }) => bathIndex < starting.length)
+    .sort((a, b) => a.remainingTime - b.remainingTime)
+
+  for (const { remainingTime, bathIndex } of entered) {
+    const row = starting[bathIndex]
+    const hanger: RunHanger = { number: nextNumber, remainingTime, row }
     nextNumber += 1
-    inBaths.push(hanger)
+    inBaths[bathIndex] = hanger
     launched.unshift({ ...row, number: String(hanger.number) })
   }
 
-  return { inBaths, launched, unloaded: [], pool, cursor: inBaths.length, nextNumber }
+  return { inBaths, launched, unloaded: [], pool, cursor: entered.length, nextNumber }
 }
 
 /**

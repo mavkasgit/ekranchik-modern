@@ -47,12 +47,14 @@ function tick(state: RunState, times: number, random = seededRandom(1)): RunStat
 }
 
 describe('startRun', () => {
-  it('запускает разгон четырёх ванн со сквозными номерами подвесов', () => {
+  it('нумерует подвесы по порядку входа: первым уходит №1, а не последний', () => {
     const state = startRun(POOL, seededRandom(7))
 
     expect(state.inBaths).toHaveLength(RUN_BATHS.length)
-    expect(state.inBaths.map(hanger => hanger.number)).toEqual([1, 2, 3, 4])
     expect(state.inBaths.map(hanger => hanger.remainingTime)).toEqual([20, 15, 10, 5])
+    // Подвес, которому осталось 5 секунд, вошёл раньше всех — его номер первый.
+    expect(state.inBaths[RUN_BATHS.length - 1].number).toBe(1)
+    expect(state.inBaths[0].number).toBe(RUN_BATHS.length)
     expect(state.inBaths.every(hanger => PALETTE.includes(hanger.row.color))).toBe(true)
   })
 
@@ -61,6 +63,13 @@ describe('startRun', () => {
 
     expect(state.launched.map(hanger => hanger.number)).toEqual(['4', '3', '2', '1'])
     expect(state.unloaded).toEqual([])
+  })
+
+  it('выгружает подвесы по номерам: первым уходит №1, дальше по порядку', () => {
+    const state = tick(startRun(POOL, seededRandom(7)), 30)
+
+    expect(state.unloaded.map(hanger => Number(hanger.number)))
+      .toEqual([6, 5, 4, 3, 2, 1])
   })
 
   it('берёт столько ванн, сколько есть строк', () => {
