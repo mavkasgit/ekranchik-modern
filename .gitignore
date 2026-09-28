@@ -117,3 +117,6 @@ launcher/Microsoft.Web.WebView2.*.xml
 
 # Smoke harness scratch (пересоздаётся smoke.py на каждом прогоне)
 launcher/source_code/EkranchikServer/smoke_tmp/
+
+# Черновики агентов (дампы diff, черновики задач)
+.scratch/
