@@ -4,5 +4,9 @@
   <PropertyGroup>
     <_AppVersionFile>$(MSBuildThisFileDirectory)../../VERSION</_AppVersionFile>
     <Version Condition="'$(Version)' == '' and Exists('$(_AppVersionFile)')">$([System.IO.File]::ReadAllText('$(_AppVersionFile)').Trim())</Version>
+    <!-- Мониторы линии — 175-250% масштаба. Без PerMonitorV2 WinForms рисует
+         GDI-текст в 96 dpi, Windows растягивает битмап окна — текст мыльный.
+         Свойство пишет dpiAwareness в манифест обоих exe (киоск и полный). -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 </Project>

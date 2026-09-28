@@ -16,12 +16,16 @@ namespace EkranchikShared
         string? ExcelPath { get; }
         string? OpcuaEndpoint { get; }
         bool Simulation { get; }
+        // Доступ с других машин локалки (--host 0.0.0.0). null-свойство =
+        // «секцию не показывать» (киоск: у него своего сервера нет).
+        bool? LanAccess { get; }
         int MonitorIndex { get; }
         bool WindowsAutostart { get; }
         bool AutoLaunchOnSecondMonitor { get; }
 
         void Save(string? url, string? excelPath, string? opcua, bool simulation,
-                  int monitorIndex, bool windowsAutostart, bool autoLaunchOnSecondMonitor);
+                  bool lanAccess, int monitorIndex, bool windowsAutostart,
+                  bool autoLaunchOnSecondMonitor);
     }
 
     // === Обновления: общий контракт полного режима и киоска (проверить /
@@ -61,12 +65,14 @@ namespace EkranchikShared
         public string? ExcelPath => null;
         public string? OpcuaEndpoint => null;
         public bool Simulation => false;
+        public bool? LanAccess => null;
         public int MonitorIndex => _config.monitor;
         public bool WindowsAutostart => _config.windows_startup;
         public bool AutoLaunchOnSecondMonitor => _config.auto_launch_on_second_monitor;
 
         public void Save(string? url, string? excelPath, string? opcua, bool simulation,
-                         int monitorIndex, bool windowsAutostart, bool autoLaunchOnSecondMonitor)
+                         bool lanAccess, int monitorIndex, bool windowsAutostart,
+                         bool autoLaunchOnSecondMonitor)
         {
             ConfigManager.Save(url ?? _config.url, monitorIndex, autoLaunchOnSecondMonitor, windowsAutostart);
             WindowsAutoStart.Apply(windowsAutostart, WindowsAutoStart.KioskValueName, WindowsAutoStart.KioskArgsSuffix);
@@ -84,6 +90,7 @@ namespace EkranchikShared
         private readonly TextBox? _txtExcel;
         private readonly TextBox? _txtOpcua;
         private readonly CheckBox? _chkSim;
+        private readonly CheckBox? _chkLan;
         private readonly ComboBox _cmbMonitor;
         private readonly CheckBox _chkAutostart;
         private readonly CheckBox? _chkAutoLaunch;
@@ -105,6 +112,13 @@ namespace EkranchikShared
             Color fgMuted = Color.FromArgb(148, 163, 184);  // slate-400
             Color accentBlue = Color.FromArgb(59, 130, 246); // #3b82f6
             Color borderGray = Color.FromArgb(51, 65, 85);   // #334155
+            // Вёрстка окна задана в пикселях, рассчитанных для 96 dpi, поэтому
+            // AutoScaleDimensions = 96 — точка отсчёта для AutoScaleMode.Dpi.
+            // Без неё WinForms не знает, от чего масштабировать: окно остаётся
+            // 540x800 физических пикселей, а текст рисуется в 150-250% dpi —
+            // содержимое обрезается.
+            this.AutoScaleDimensions = new SizeF(96F, 96F);
+            this.AutoScaleMode = AutoScaleMode.Dpi;
             this.Size = host != null ? new Size(540, 800) : new Size(540, _updates != null ? 560 : 430);
             this.Text = "Ekranchik — Настройки";
             this.BackColor = bgDark;
@@ -231,6 +245,18 @@ namespace EkranchikShared
                 _chkSim = chkSim;
                 this.Controls.Add(chkSim);
                 y += 34;
+
+                _chkLan = new CheckBox
+                {
+                    Text = "Доступ из локальной сети (дашборд открывается с других ПК)",
+                    Checked = model.LanAccess ?? false,
+                    Font = new Font("Segoe UI", 10),
+                    Location = new Point(40, y),
+                    Size = new Size(440, 26),
+                    ForeColor = fgLight
+                };
+                this.Controls.Add(_chkLan);
+                y += 44;
             }
 
             // --- Монитор для киоска (оба варианта) ---
@@ -471,6 +497,25 @@ namespace EkranchikShared
             btnCancel.FlatAppearance.BorderColor = borderGray;
             this.Controls.Add(btnCancel);
             this.CancelButton = btnCancel;
+
+            // Геометрия посчитана под 96 dpi — масштабируем под монитор.
+            this.AutoScroll = true;
+            ApplyDpiScale();
+        }
+
+        // Один вызов в конце конструктора: пересчитывает координаты всех
+        // контролов и размер окна под текущий dpi монитора (мониторы линии
+        // — 150-250% масштаба). Шрифты WinForms рисует сам по dpi, поэтому
+        // масштабировать нужно только геометрию.
+        private void ApplyDpiScale()
+        {
+            float k = DeviceDpi / 96f;
+            if (k > 1.01f) Scale(new SizeF(k, k));
+            // Экран ниже 200% на 1080p: окно не влезает — режем по рабочей
+            // области, остальное доступно прокруткой (AutoScroll включён).
+            Rectangle work = Screen.FromControl(this).WorkingArea;
+            int maxH = work.Height - 40;
+            if (Height > maxH) this.Size = new Size(Width, maxH);
         }
 
         private void BrowseExcel()
@@ -504,6 +549,7 @@ namespace EkranchikShared
                     _txtExcel?.Text.Trim(),
                     _txtOpcua?.Text.Trim(),
                     _chkSim?.Checked ?? false,
+                    _chkLan?.Checked ?? false,
                     Math.Max(_cmbMonitor.SelectedIndex, 0),
                     _chkAutostart.Checked,
                     _chkAutoLaunch?.Checked ?? false);

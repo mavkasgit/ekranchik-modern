@@ -17,6 +17,10 @@ namespace EkranchikShared
     // «Свернуть» = спрятать окно в трей; сервер продолжает работу.
     public interface IKioskHost
     {
+        // Экран не открылся (WebView2 не поднялся даже с чистым профилем) —
+        // хост пишет причину в свой лог: иначе отказ виден только в окне,
+        // которое на заводской машине некому заметить.
+        void OnKioskScreenFailed(string reason);
         // Пользователь попросил закрыть экран: хост решает (прячет в трей).
         void OnKioskCloseRequested();
         // Переключение режима простоя — для текста пункта трея хоста.
@@ -154,6 +158,9 @@ namespace EkranchikShared
             this.monitorIndex = monitor;
 
             this.Text = "Ekranchik";
+            // Окно на весь монитор, вёрстки в пикселях нет — автоскейл WinForms
+            // на форме без designer-метрик только сжимает (делит на dpi/96).
+            this.AutoScaleMode = AutoScaleMode.None;
             this.FormBorderStyle = FormBorderStyle.None;
             this.WindowState = FormWindowState.Maximized;
             this.TopMost = true;
@@ -243,22 +250,17 @@ namespace EkranchikShared
                 profileRoot, "WebView2Data"
             );
 
-            try
+            // Инициализация WebView2 не бросает исключение, а может просто
+            // не завершиться (сломанный/отсутствующий Runtime, запрет на запуск
+            // дочерних процессов, залоченный профиль от аварийно убитого
+            // киоска). Без предела ожидания экран не появляется молча.
+            // Первая попытка — с обычным профилем, вторая — с чистым: убитый
+            // WebView2 оставляет папку, которую следующий запуск уже не
+            // разблокирует, и до ручной чистки киоск не поднимется.
+            if (!await TryInitWebView(userDataFolder)
+                && !await TryInitWebView(userDataFolder + "-clean", userDataFolder))
             {
-                var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
-                await webView.EnsureCoreWebView2Async(env);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка инициализации WebView2:\n\n{ex}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                if (_hosted)
-                {
-                    // Сервер продолжает работу — только прячем экран.
-                    try { this.Hide(); } catch { }
-                    _host?.OnKioskCloseRequested();
-                    return;
-                }
-                Application.Exit();
+                FailWebView2("WebView2 не поднялся ни с рабочим, ни с чистым профилем");
                 return;
             }
 
@@ -288,6 +290,58 @@ namespace EkranchikShared
 
             // Сразу загружаем целевой URL бэкенда
             webView.CoreWebView2.Navigate(targetUrl);
+        }
+
+        private static readonly TimeSpan WebView2InitTimeout = TimeSpan.FromSeconds(30);
+
+        // Task.WaitAsync есть в .NET 6+; таймаут не отменяет саму инициализацию,
+        // но приложение перестаёт на ней висеть и показывает причину.
+        private static async Task WithTimeout(Task task, TimeSpan timeout)
+        {
+            await task.WaitAsync(timeout);
+        }
+
+        // false — WebView2 не поднялся (исключение или таймаут). moveAside
+        // уводится в сторону, чтобы следующая попытка шла с чистым профилем.
+        private async Task<bool> TryInitWebView(string userDataFolder, string? moveAside = null)
+        {
+            try
+            {
+                if (moveAside != null && Directory.Exists(moveAside))
+                    Directory.Move(moveAside,
+                        moveAside + ".bak-" + DateTime.Now.ToString("yyyyMMddHHmmss"));
+                var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+                await WithTimeout(webView.EnsureCoreWebView2Async(env), WebView2InitTimeout);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // Единая точка отказа WebView2: окно с причиной (в полном режиме
+        // сервер продолжает работать, в самостоятельном киоске — выход).
+        private void FailWebView2(string reason)
+        {
+            try
+            {
+                _host?.OnKioskScreenFailed(reason);
+            }
+            catch { }
+            MessageBox.Show(
+                "Экран киоска не открылся: WebView2 Runtime не ответил за " +
+                $"{(int)WebView2InitTimeout.TotalSeconds} с.\n\n{reason}\n\n" +
+                "Проверьте, что установлен Microsoft Edge WebView2 Runtime " +
+                "(https://developer.microsoft.com/microsoft-edge/webview2/).",
+                "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (_hosted)
+            {
+                try { this.Hide(); } catch { }
+                _host?.OnKioskCloseRequested();
+                return;
+            }
+            Application.Exit();
         }
 
         private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)

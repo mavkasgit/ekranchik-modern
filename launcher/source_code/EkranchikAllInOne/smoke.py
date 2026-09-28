@@ -88,8 +88,8 @@ def check(name: str, cond: bool, detail: str = "") -> bool:
 
 def _ps(*args: str, timeout: int = 60):
     return subprocess.run(["powershell", "-NoProfile", "-Command", *args],
-                          capture_output=True, text=True, timeout=timeout)
-
+                          capture_output=True, text=True, timeout=timeout,
+                          encoding="utf-8", errors="replace")
 
 def scan_lingering():
     """Живые заглушки в python.exe по командной строке; None — скан не удался."""
@@ -110,9 +110,14 @@ def main() -> int:
     ok = True
 
     print("== build ==")
+    # Локаль машины не должна ломать прогон: dotnet по умолчанию печатает
+    # по-русски в однобайтовой кодировке (UnicodeDecodeError в readerthread),
+    # а проверки ниже ищут английские строки сборки.
+    build_env = dict(os.environ, DOTNET_CLI_UI_LANGUAGE="en")
     r = subprocess.run(
         ["dotnet", "build", "EkranchikAllInOne.csproj", "-v", "minimal"],
-        cwd=HERE, capture_output=True, text=True, timeout=300)
+        cwd=HERE, capture_output=True, text=True, timeout=300, env=build_env,
+        encoding="utf-8", errors="replace")
     build_out = (r.stdout or "") + (r.stderr or "")
     ok &= check("build succeeded", r.returncode == 0 and EXE.exists(),
                 build_out[-2000:])
@@ -120,6 +125,12 @@ def main() -> int:
                 and "warning" not in build_out.lower().replace("0 warning(s)", ""),
                 build_out[-2000:])
 
+    # Приложение однопользовательское (мьютекс Local\EkrankikAllInOne): второй
+    # экземпляр тихо выходит, и прогон прошёл бы вхолостую. Снимаем любой живой
+    # экземпляр (в том числе установленный) — прогон должен владеть стеком.
+    _ps("Get-Process -Name 'EkranchikAllInOne','Ekranchik' -ErrorAction SilentlyContinue "
+        "| Stop-Process -Force")
+    time.sleep(1)
     if TMP.exists():
         # ignore_errors: после провала hard-kill прогона в stubdir может ещё
         # жить недобитая заглушка — следующий прогон не должен падать об это.
@@ -131,11 +142,12 @@ def main() -> int:
     marker = TMP / "kiosk.marker"
     env_dump = TMP / "backend_env.json"
 
-    # --- Issue #4: пять настроек в конфиг-файле (не env — файл главнее кейса).
+    # --- Настройки в конфиг-файле (не env — файл главнее кейса).
     TEST_SETTINGS = {
         "ExcelPath": "\\\\test-server\\share\\Учет КПЗ 2026.xlsm",
         "OpcuaEndpoint": "opc.tcp://192.0.2.10:4840/",
         "SimulationEnabled": True,
+        "LanAccess": True,
         "KioskMonitor": 1,
         "AutoStart": False,
     }
@@ -164,12 +176,14 @@ def main() -> int:
     port = free_port()
     env = dict(os.environ)
     for _k in ("EKRANCHIK_EXCEL_PATH", "EKRANCHIK_OPCUA_ENDPOINT",
-               "EKRANCHIK_SIMULATION", "EKRANCHIK_KIOSK_MONITOR", "EKRANCHIK_AUTOSTART"):
+               "EKRANCHIK_SIMULATION", "EKRANCHIK_KIOSK_MONITOR", "EKRANCHIK_AUTOSTART",
+               "EKRANCHIK_LAN_ACCESS"):
         env.pop(_k, None)
     env.update({
         "EKRANCHIK_PYTHON": sys.executable,
         "EKRANCHIK_BACKEND_DIR": str(TMP / "stubdir"),
-        "EKRANCHIK_BACKEND_ARGS": f'stub_health.py --port {{port}} --env-dump "{env_dump}"',
+        # --host/--port добавляет сам exe (LanAccess/Port) — в аргументах их нет.
+        "EKRANCHIK_BACKEND_ARGS": f'stub_health.py --env-dump "{env_dump}"',
         "EKRANCHIK_PORT": str(port),
         "EKRANCHIK_URL": f"http://127.0.0.1:{port}",
         "EKRANCHIK_KIOSK_EXE": sys.executable,
@@ -258,6 +272,9 @@ def main() -> int:
                         ("monitor", str(TEST_SETTINGS["KioskMonitor"])),
                         ("autostart", str(TEST_SETTINGS["AutoStart"]))):
             ok &= check(f"settings logged: {_k}", _v in app_log, f"missing {_v!r}")
+        # LanAccess=true → сервер слушает все интерфейсы (доступ с других ПК).
+        ok &= check("lan access binds 0.0.0.0", "--host 0.0.0.0" in app_log,
+                    "no --host 0.0.0.0 in backend args")
         try:
             seen_env = _json.loads(env_dump.read_text(encoding="utf-8"))
         except Exception as ex:

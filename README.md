@@ -53,6 +53,49 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ---
 
+## Полный режим без Docker (заводская/резервная машина)
+
+Один установщик `EkranchikSetup-<версия>.exe` ставит на машину **одно
+приложение** — бэкенд (embedded Python), веб-интерфейс и экран киоска
+(ADR 0002, `docs/adr/0002-full-mode-all-in-one-without-docker.md`). Docker,
+Node, nginx и системный Python на машине не нужны.
+
+### Сборка установщика
+
+Нужны .NET 9 SDK, Node.js и Inno Setup 6 (`winget install Microsoft.DotNet.SDK.9
+JRSoftware.InnoSetup`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build-full-installer.ps1 -BuildKiosk
+```
+
+Скрипт последовательно собирает frontend, `dist-full/` (embedded Python +
+бэкенд + `dist/`), оба exe и компилирует `launcher/Output/EkranchikSetup-<VERSION>.exe`.
+Отдельный пакет без установщика: `scripts/build-full-package.ps1`.
+
+### Установка и запуск
+
+Запустить установщик, выбрать тип **«Полный пакет»** и запустить ярлык
+«Ekranchik»: бэкенд поднимается на порту 8083, экран киоска открывается сам,
+в трее — «Настройки», «Показать экран», «Выход». Повторный запуск установщика
+меняет тип установки (например, на «Только киоск»).
+
+Дашборд: `http://<ip-машины>:8083` — сервер по умолчанию слушает все
+интерфейсы («Доступ из локальной сети» в настройках), поэтому дашборд
+открывается и с других компьютеров сети. Галка снимается — сервер остаётся
+только на localhost.
+
+Настройки окна: путь к сетевой книге учёта Excel, адрес OPC UA, тестовые
+данные, монитор киоска, автозапуск, «Доступ из локальной сети». Файл — Excel,
+OPC UA и тестовые данные применяются при следующем старте приложения.
+
+Данные (SQLite + фото профилей) лежат в `%LOCALAPPDATA%\Ekranchik\data` и
+переживают переустановку. Логи — `%LOCALAPPDATA%\Ekranchik\logs`.
+Перенос данных с Docker-прода: `scripts/copy-prod-data.ps1`
+(процедура — `docs/docker-prod-to-allinone-migration.md`).
+
+---
+
 ## Подключение сетевой папки (Mount) на Виртуальной Машине
 
 Чтобы бэкенд в Docker-контейнере мог читать файлы отчетов Excel с общего сетевого диска Windows, этот диск нужно примонтировать к виртуальной машине.

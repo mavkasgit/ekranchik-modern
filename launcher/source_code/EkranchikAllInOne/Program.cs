@@ -44,6 +44,7 @@ namespace EkranchikAllInOne
         [STAThread]
         static int Main(string[] args)
         {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             // Падение UI-потока больше не роняет весь стек (issue #9):
@@ -144,13 +145,36 @@ namespace EkranchikAllInOne
                 return 0;
             }
 
-            // smoke-хук идёт тем же тихим путём, что и --silent: без окна.
-            using (var context = new AllInOneContext(
-                config, autoExitAfterReady, crashAfterReady,
-                silent || autoExitAfterReady > 0 || crashAfterReady > 0))
+            // Один экземпляр на машину: второй занимал бы тот же порт и
+            // падал бы с "backend exited early", оставляя пользователя с
+            // ошибкой вместо работающего приложения. Мьютекс держится до
+            // конца процесса, умирает вместе с ним.
+            using (var single = new Mutex(true, @"Local\EkrankikAllInOne", out bool first))
             {
-                Application.Run(context);
-                return context.ExitCode;
+                if (!first)
+                {
+                    if (!silent)
+                    {
+                        try
+                        {
+                            MessageBox.Show(
+                                "Ekranchik уже запущен — значок в трее, экран открывается кликом по нему.\n" +
+                                "Второй экземпляр не нужен: он занимает тот же порт.",
+                                "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
+                        catch { }
+                    }
+                    return 0;
+                }
+
+                // smoke-хук идёт тем же тихим путём, что и --silent: без окна.
+                using (var context = new AllInOneContext(
+                    config, autoExitAfterReady, crashAfterReady,
+                    silent || autoExitAfterReady > 0 || crashAfterReady > 0))
+                {
+                    Application.Run(context);
+                    return context.ExitCode;
+                }
             }
         }
     }
@@ -160,11 +184,15 @@ namespace EkranchikAllInOne
     // persist-ятся в allinone_config.json между запусками. ===
     sealed class AllInOneConfig
     {
-        public string PythonExe { get; set; } = "python";
-        // Полная строка аргументов backend; {port} подставляется автоматически.
-        public string BackendArgs { get; set; } = "-m uvicorn app.main:app --host 127.0.0.1 --port {port}";
+        public string PythonExe { get; set; } = "";
+        // Полная строка аргументов backend; {host} и {port} подставляются
+        // автоматически из LanAccess/Port (аргументы у пользователя не хранятся).
+        public string BackendArgs { get; set; } = "-m uvicorn app.main:app";
         public string BackendDir { get; set; } = "";
         public int Port { get; set; } = 8083;
+        // Дашборд виден с других машин локалки (--host 0.0.0.0). Выключено —
+        // только этот компьютер (127.0.0.1).
+        public bool LanAccess { get; set; } = true;
         public string DashboardUrl { get; set; } = "";
         public string KioskExe { get; set; } = "";
         // Крючок smoke/дев: киоск запускается внешним процессом, а не окном
@@ -190,7 +218,9 @@ namespace EkranchikAllInOne
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ekranchik");
         private static readonly string ConfigFile = Path.Combine(ConfigDir, "allinone_config.json");
 
-        public string ResolvedBackendArgs => BackendArgs.Replace("{port}", Port.ToString());
+        public string ResolvedBackendArgs =>
+            $"{BackendArgs} --host {ResolvedHost} --port {Port}";
+        public string ResolvedHost => LanAccess ? "0.0.0.0" : "127.0.0.1";
 
         public string ResolvedDashboardUrl =>
             string.IsNullOrWhiteSpace(DashboardUrl) ? $"http://localhost:{Port}" : DashboardUrl;
@@ -243,6 +273,7 @@ namespace EkranchikAllInOne
             if (int.TryParse(Env("EKRANCHIK_KIOSK_MONITOR"), out int monitor) && monitor >= 0) KioskMonitor = monitor;
             if (TryParseBool(Env("EKRANCHIK_AUTOSTART"), out bool autostart)) AutoStart = autostart;
             if (int.TryParse(Env("EKRANCHIK_PORT"), out int port) && port > 0 && port < 65536) Port = port;
+            if (TryParseBool(Env("EKRANCHIK_LAN_ACCESS"), out bool lan)) LanAccess = lan;
             if (int.TryParse(Env("EKRANCHIK_READY_TIMEOUT_S"), out int timeout) && timeout > 0) ReadyTimeoutSeconds = timeout;
         }
 
@@ -275,6 +306,13 @@ namespace EkranchikAllInOne
         private void ApplyDefaults()
         {
             string exeDir = AppContext.BaseDirectory;
+            // Пустой PythonExe в config.json = искать интерпретатор пакета
+            // (ResolvePythonExe): рядом с exe в установке, в dist-full/ — в
+            // репозитории. Только если нет ни того, ни другого — системный
+            // python: в репозитории он почти наверняка без зависимостей
+            // бэкенда, и uvicorn падает с кодом 1.
+            if (string.IsNullOrWhiteSpace(PythonExe))
+                PythonExe = ResolvePythonExe(exeDir);
             if (string.IsNullOrWhiteSpace(BackendDir))
                 BackendDir = ResolveBackendDir(exeDir);
             if (string.IsNullOrWhiteSpace(KioskExe))
@@ -296,6 +334,24 @@ namespace EkranchikAllInOne
                 dir = dir.Parent;
             }
             return besideExe;
+        }
+
+        // Прод-раскладка: python\python.exe рядом с exe (его кладёт установщик).
+        // Дев-раскладка: подняться вверх до корня репозитория и взять embedded
+        // python из dist-full\ (собирается scripts/build-full-package.ps1) —
+        // тогда exe из build/source_code/launcher запускает настоящий стек.
+        private static string ResolvePythonExe(string exeDir)
+        {
+            string beside = Path.Combine(exeDir, "python", "python.exe");
+            if (File.Exists(beside)) return beside;
+            var dir = new DirectoryInfo(exeDir);
+            for (int i = 0; i < 8 && dir != null; i++)
+            {
+                string candidate = Path.Combine(dir.FullName, "dist-full", "python", "python.exe");
+                if (File.Exists(candidate)) return candidate;
+                dir = dir.Parent;
+            }
+            return "python";
         }
     }
 
@@ -387,16 +443,19 @@ namespace EkranchikAllInOne
         public string? ExcelPath => _config.ExcelPath;
         public string? OpcuaEndpoint => _config.OpcuaEndpoint;
         public bool Simulation => _config.SimulationEnabled;
+        public bool? LanAccess => _config.LanAccess;
         public int MonitorIndex => _config.KioskMonitor;
         public bool WindowsAutostart => _config.AutoStart;
         public bool AutoLaunchOnSecondMonitor => false;
 
         public void Save(string? url, string? excelPath, string? opcua, bool simulation,
-                         int monitorIndex, bool windowsAutostart, bool autoLaunchOnSecondMonitor)
+                         bool lanAccess, int monitorIndex, bool windowsAutostart,
+                         bool autoLaunchOnSecondMonitor)
         {
             _config.ExcelPath = excelPath ?? _config.ExcelPath;
             _config.OpcuaEndpoint = opcua ?? _config.OpcuaEndpoint;
             _config.SimulationEnabled = simulation;
+            _config.LanAccess = lanAccess;
             _config.KioskMonitor = Math.Max(monitorIndex, 0);
             _config.AutoStart = windowsAutostart;
             try
@@ -629,7 +688,8 @@ namespace EkranchikAllInOne
                     {
                         _backendLog.Write($"backend exited code={p.ExitCode}");
                         if (!_shutdownStarted && !_cts.IsCancellationRequested)
-                            Fail($"backend exited early with code {p.ExitCode}, see backend log");
+                            Fail($"backend exited early with code {p.ExitCode}, see backend log"
+                                 + PythonLaunchHint() + PortHint());
                     };
                 });
                 if (proc == null)
@@ -637,6 +697,7 @@ namespace EkranchikAllInOne
                     Fail("failed to start backend process");
                     return false;
                 }
+
                 proc.BeginOutputReadLine();
                 proc.BeginErrorReadLine();
                 _backend = proc;
@@ -646,6 +707,40 @@ namespace EkranchikAllInOne
             {
                 Fail($"failed to start backend: {ex.Message}");
                 return false;
+            }
+        }
+
+        // Подсказка к фатальному сообщению. Интерпретатор берётся из пакета
+        // (python\ рядом с exe, dist-full\ в репозитории); если не нашёлся ни
+        // один — подставляется системный python, а он без зависимостей бэкенда,
+        // и uvicorn падает с кодом 1. Пользователь должен понять, чего не хватило.
+        private string PythonLaunchHint()
+        {
+            string python = _config.PythonExe;
+            if (Path.IsPathRooted(python)) return "\n\nPython: " + python;
+            return "\n\nPython: " + python + " — системный; ни python\\ рядом с exe," +
+                   " ни dist-full\\python\\ в репозитории не найдено." +
+                   "\nЛибо поставь EkranchikSetup.exe (тип «Полный пакет») и запусти ярлык" +
+                   " «Ekranchik», либо собери пакет: scripts\build-full-package.ps1";
+        }
+
+        // Порт занят — самая частая причина раннего падения бэкенда: уже
+        // запущен другой экземпляр Ekranchik (или сторонняя программа).
+        // Проверяем фактом: если сокет не поднялся — место действительно занято.
+        private string PortHint()
+        {
+            try
+            {
+                var probe = new System.Net.Sockets.TcpListener(
+                    System.Net.IPAddress.Loopback, _config.Port);
+                probe.Start();
+                probe.Stop();
+                return "";
+            }
+            catch (System.Net.Sockets.SocketException)
+            {
+                return $"\n\nПорт {_config.Port} уже занят другим процессом — обычно это второй" +
+                       " экземпляр Ekranchik: закройте его (значок в трее → «Выход») и запустите снова.";
             }
         }
 
@@ -712,7 +807,14 @@ namespace EkranchikAllInOne
             // Полный режим (issue #9): экран киоска живёт в этом же процессе —
             // одно приложение, одна иконка в трее.
             PointKioskConfigAtDashboard();
-            _ui?.Post(_ =>
+            if (_ui == null)
+            {
+                // Без контекста синхронизации окно нельзя создать на UI-потоке;
+                // раньше это было тихое «ничего не произошло».
+                _appLog.Write("FATAL: kiosk window not created — no UI SynchronizationContext");
+                return;
+            }
+            _ui.Post(_ =>
             {
                 try
                 {
@@ -966,6 +1068,14 @@ namespace EkranchikAllInOne
 
         // === IKioskHost (issue #9): экран прячется в трей, пункт простоя
         // обновляется на UI-потоке. ===
+
+        // Экран не поднялся (WebView2): сервер работает, но пользователь должен
+        // узнать об этом из лога, а не только из окна, которое легко пропустить.
+        void IKioskHost.OnKioskScreenFailed(string reason)
+        {
+            _appLog.Write("FATAL: kiosk screen failed to start: " + reason);
+        }
+
         void IKioskHost.OnKioskCloseRequested()
         {
             _appLog.Write("kiosk close requested -> hide to tray");

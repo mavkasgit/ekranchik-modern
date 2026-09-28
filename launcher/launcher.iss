@@ -311,13 +311,15 @@ begin
 end;
 
 { Даунгрейд/та же версия — только осознанно: предупреждение с подтверждением.
-  Апгрейд идёт без лишних вопросов. }
+  Апгрейд идёт без лишних вопросов. В тихой установке (/SILENT, /VERYSILENT)
+  вопросов быть не может: повторная установка на заводской машине идёт
+  без пользователя и не должна висеть на MsgBox. }
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Cmp: Integer;
 begin
   Result := True;
-  if (CurPageID = wpReady) and (PrevVersion <> '') then
+  if (CurPageID = wpReady) and (PrevVersion <> '') and not WizardSilent then
   begin
     Cmp := CompareVersions(PrevVersion, '{#MyAppVersion}');
     if Cmp = 0 then
