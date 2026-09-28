@@ -38,11 +38,33 @@
 ## Быстрый запуск (Разработка)
 
 ### Бэкенд
-1. Установите Python.
-2. Установите зависимости и запустите:
+1. Установите **Python 3.12** — именно эта версия нужна: её же ставит
+   установщик (`scripts/build-full-package.ps1`) и она же работает в
+   production (`backend/Dockerfile` — `python:3.12-slim`). На более новом
+   интерпретаторе (например, 3.14) пины из `backend/requirements.txt` не имеют
+   готовых колёс, и `pip install` уходит в сборку из исходников.
+   ```powershell
+   winget install Python.Python.312
+   ```
+2. Создайте venv и поставьте зависимости:
    ```bash
-   pip install -r requirements.txt
-   uvicorn app.main:app --reload --port 8000
+   npm run setup:python
+   ```
+   Скрипт создаёт `backend/.venv` на Python 3.12 и ставит
+   `backend/requirements.txt` в него.
+3. Запуск всего стека (бэкенд + фронтенд + OPC UA симулятор):
+   ```bash
+   npm install
+   npm run install-all
+   npm run dev
+   ```
+   `npm run dev` сам подхватывает `backend/.venv`, поэтому системный `python`
+   в PATH значения не имеет.
+
+### Отдельно бэкенд без всего стека
+   ```bash
+   cd backend
+   ..\backend\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
    ```
 
 ### Фронтенд
