@@ -39,6 +39,7 @@ import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvent
 import { useRealtimeConnection } from '@/hooks/useRealtime'
 import { useTestRun } from '@/hooks/useTestRun'
 import { DASHBOARD_KEY } from '@/lib/queryKeys'
+import { SIDEBAR_ROW_LIMIT } from '@/config/limits'
 import { COLOR_CATALOG, colorHex, colorName } from '@/lib/domain/color'
 import { hangerKey } from '@/lib/domain/hanger'
 import { photoUrl } from '@/lib/domain/photo'
@@ -938,7 +939,7 @@ function SidebarQueueTable({
             ))}
           </div>
         ) : filteredData.length > 0 ? (
-          <div className="overflow-auto text-[11px] flex-1 h-full">
+          <div className="overflow-auto text-[11px] flex-1 min-h-0 h-full">
             <Table>
               <TableHeader className="sticky top-0 bg-muted z-10 text-[12px] font-semibold text-foreground/85 tracking-tight">
                 <TableRow>
@@ -1199,7 +1200,7 @@ export default function Dashboard() {
 
   const queryClient = useQueryClient()
   const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, loadingOnly)
-  const { data: recentAllData, isLoading: isLoadingAll, refetch: refetchRecentAll, isFetching: isRecentAllFetching } = useDashboard(7, 35, false)
+  const { data: recentAllData, isLoading: isLoadingAll, refetch: refetchRecentAll, isFetching: isRecentAllFetching } = useDashboard(7, SIDEBAR_ROW_LIMIT, false)
   const { data: fileStatus } = useFileStatus()
   const { data: matchedEvents } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
 
