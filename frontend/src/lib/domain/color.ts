@@ -2,7 +2,7 @@
 // и стиль ячейки. Единственный владелец правила: раньше жило копиями в Dashboard и
 // BathForecastTable.
 
-interface ColorSpec {
+export interface ColorSpec {
   /** Каноническое написание: его показываем и по нему узнаём любой вариант из книги учёта. */
   name: string
   hex: string
@@ -10,7 +10,7 @@ interface ColorSpec {
 }
 
 /** Справочник цветов: один пункт на цвет, «Rose Bronze» и «RoseBronze» — один. */
-const COLOR_CATALOG: ColorSpec[] = [
+export const COLOR_CATALOG: ColorSpec[] = [
   { name: 'серебро', hex: '#C0C0C0', abbreviation: 'сер' },
   { name: 'черный', hex: '#1C1C1C', abbreviation: 'чер' },
   { name: 'золото', hex: '#FFD700', abbreviation: 'зол' },

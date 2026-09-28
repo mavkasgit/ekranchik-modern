@@ -38,7 +38,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeConnection } from '@/hooks/useRealtime'
 import { DASHBOARD_KEY } from '@/lib/queryKeys'
-import { colorHex, colorName } from '@/lib/domain/color'
+import { COLOR_CATALOG, colorHex, colorName } from '@/lib/domain/color'
 import { hangerKey } from '@/lib/domain/hanger'
 import { photoUrl } from '@/lib/domain/photo'
 import { profileText } from '@/lib/domain/profile'
@@ -1020,6 +1020,8 @@ function FiltersPanel({
   isLast100Mode,
   onToggleMockMode,
   isMockMode,
+  onToggleAllColors,
+  isAllColorsMode,
 }: {
   filters: Filters
   onChange: (filters: Filters) => void
@@ -1029,6 +1031,8 @@ function FiltersPanel({
   isLast100Mode: boolean
   onToggleMockMode: () => void
   isMockMode: boolean
+  onToggleAllColors: () => void
+  isAllColorsMode: boolean
 }) {
   const otherFiltersDisabled = isLast100Mode || isMockMode;
 
@@ -1121,11 +1125,19 @@ function FiltersPanel({
               </Button>
 
               <Button
-                variant={isMockMode ? "default" : "outline"}
+                variant={isMockMode && !isAllColorsMode ? "default" : "outline"}
                 onClick={onToggleMockMode}
-                className={isMockMode ? "bg-purple-600 hover:bg-purple-700" : ""}
+                className={isMockMode && !isAllColorsMode ? "bg-purple-600 hover:bg-purple-700" : ""}
               >
                 Все профили (тест)
+              </Button>
+
+              <Button
+                variant={isAllColorsMode ? "default" : "outline"}
+                onClick={onToggleAllColors}
+                className={isAllColorsMode ? "bg-purple-600 hover:bg-purple-700" : ""}
+              >
+                Все цвета
               </Button>
             </div>
 
@@ -1181,6 +1193,9 @@ export default function Dashboard() {
   // State for "Catalog Mock" mode
   const [isMockMode, setIsMockMode] = useState(false);
   const [mockData, setMockData] = useState<HangerData[]>([]);
+
+  // State for "Все цвета" mode — тестовый показ справочника цветов в строках подвесов
+  const [isAllColorsMode, setIsAllColorsMode] = useState(false);
 
   // Determine if the API should filter for loading_only rows
   const loadingOnly = !isLast100Mode;
@@ -1348,7 +1363,9 @@ export default function Dashboard() {
   }, [data?.products, matchedEvents])
 
   const handleToggleLast100 = () => {
-    if (isMockMode) setIsMockMode(false); // Disable mock mode if switching to Last 100
+    // Тестовые режимы не смешиваются с «последними 100»
+    if (isMockMode) setIsMockMode(false);
+    if (isAllColorsMode) setIsAllColorsMode(false);
 
     if (isLast100Mode) {
       // Turn OFF: Restore previous filters
@@ -1369,12 +1386,7 @@ export default function Dashboard() {
     }
   };
 
-  const handleToggleMockMode = async () => {
-    if (isMockMode) {
-      setIsMockMode(false);
-      return;
-    }
-
+  const loadMockRows = async (withColors: boolean) => {
     // Turn off "Last 100" if active
     if (isLast100Mode) {
       setIsLast100Mode(false);
@@ -1386,7 +1398,16 @@ export default function Dashboard() {
       if (!res.ok) throw new Error('Failed to fetch catalog');
       const profiles: any[] = await res.json();
 
-      const mapped: HangerData[] = profiles.map((p) => ({
+      // Витрине цветов столько строк, сколько показывает режим: каждый цвет справочника
+      // один раз, плюс вариант без пробела для названий из латиницы — как их пишут в книге.
+      const palette = withColors
+        ? COLOR_CATALOG.flatMap((c) => (c.name.includes(' ')
+          ? [c.name, c.name.replace(/ /g, '')]
+          : [c.name]))
+        : [];
+      const rows = withColors ? profiles.slice(0, palette.length) : profiles;
+
+      const mapped: HangerData[] = rows.map((p, index) => ({
         number: `${p.id}`,
         date: new Date().toLocaleDateString('ru-RU'),
         time: '12:00',
@@ -1396,7 +1417,7 @@ export default function Dashboard() {
         profiles_info: [], // Single profile view
         profile_photo_thumb: p.photo_thumb,
         profile_photo_full: p.photo_full,
-        color: 'Не указан',
+        color: withColors ? palette[index % palette.length] : 'Не указан',
         lamels_qty: p.quantity_per_hanger ?? 0,
         kpz_number: '—',
         material_type: 'Тест',
@@ -1408,6 +1429,25 @@ export default function Dashboard() {
       console.error("Error loading mock data:", e);
       alert("Ошибка загрузки каталога");
     }
+  };
+
+  const handleToggleMockMode = async () => {
+    if (isMockMode && !isAllColorsMode) {
+      setIsMockMode(false);
+      return;
+    }
+    setIsAllColorsMode(false);
+    await loadMockRows(false);
+  };
+
+  const handleToggleAllColors = async () => {
+    if (isAllColorsMode) {
+      setIsAllColorsMode(false);
+      setIsMockMode(false);
+      return;
+    }
+    setIsAllColorsMode(true);
+    await loadMockRows(true);
   };
 
 
@@ -1659,6 +1699,8 @@ export default function Dashboard() {
           isLast100Mode={isLast100Mode}
           onToggleMockMode={handleToggleMockMode}
           isMockMode={isMockMode}
+          onToggleAllColors={handleToggleAllColors}
+          isAllColorsMode={isAllColorsMode}
         />
       )}
 
@@ -1679,6 +1721,11 @@ export default function Dashboard() {
                       data={isMockMode ? mockData : (data?.products ?? [])}
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
+                      headerChildren={isMockMode ? (
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-600/10 border-b border-purple-500/40 text-[13px] font-semibold text-purple-700 dark:text-purple-300">
+                          Тестовый режим: {isAllColorsMode ? 'показан справочник цветов' : 'показаны все профили каталога'} — строк из книги учёта здесь нет
+                        </div>
+                      ) : undefined}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
