@@ -1,4 +1,4 @@
-// EkranchikAllInOne — владелец дочерних процессов приложения (ADR 0002, issue #9).
+// EkranchikServer — владелец дочерних процессов приложения (ADR 0002, issue #9).
 //
 // Инвариант: ребёнок, которого запустило приложение, не переживает его смерть —
 // даже аварийную (TerminateProcess, «снять задачу»). Держит его kernel Job
@@ -6,7 +6,7 @@
 // (процесс умер — ОС закрыла handle) убивает всех, кто в job назначен.
 //
 // Политика задаётся на ребёнка (ChildLifetime): Job — долгоживущий ребёнок
-// стека (backend, внешний киоск в smoke-крючке), Detached — тот, кто обязан
+// стека (backend, заглушка в smoke-крючке), Detached — тот, кто обязан
 // пережить приложение (установщик обновления).
 //
 // Отказ ОС (родитель уже в job без вложенности, ограничения UI) не фатален, но
@@ -17,7 +17,7 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace EkranchikAllInOne
+namespace EkranchikServer
 {
     enum ChildLifetime
     {

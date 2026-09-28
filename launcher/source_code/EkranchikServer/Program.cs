@@ -1,28 +1,32 @@
-// EkranchikAllInOne — трей-лаунчер полного режима (issue #3, ADR 0002; окно
-// настроек + автозапуск Windows — issue #4).
+// EkranchikServer — фоновое приложение сервера (ADR 0004; экран киоска и
+// сервер разнесены в два приложения).
 //
-// Сценарий: двойной клик → окно настроек (Excel, OPC UA, симуляция, монитор,
-// автозапуск) → запуск backend (python -m uvicorn) → poll /health →
-// запуск существующего Ekranchik.exe с URL дашборда → трей с «Настройки» /
-// «Открыть папку логов» / «Выход» (останавливает сервер и закрывает киоск).
+// Сценарий: двойной клик → окно настроек (Excel, OPC UA, симуляция, доступ
+// по локалке, автозапуск) → запуск backend (python -m uvicorn) → poll
+// /health → трей с «Настройки» / «Выход». Своего окна у приложения нет:
+// дашборд открывает отдельный экран киоска (Ekranchik.exe), оператор вводит
+// ему «Адрес для экранов» из окна настроек сервера.
 // Флаг --silent (и запись автозапуска HKCU ...\Run с ним): старт в трей без
 // окна, стек поднимается сам.
 //
-// Конфигурирование: JSON %LOCALAPPDATA%/Ekranchik/allinone_config.json
-// + перекрывающие env-переменные EKRANCHIK_* (см. AllInOneConfig).
+// Конфигурирование: JSON %LOCALAPPDATA%\Ekranchik\server_config.json
+// + перекрывающие env-переменные EKRANCHIK_* (см. ServerConfig).
 // В трее НЕТ портов/статусов — только действия.
 //
 // Тестовые крючки для smoke (не показываются пользователю):
-//   --auto-exit-after-ready=N — после успешного запуска киоска ждёт N сек и
-//     идёт по ТОМУ ЖЕ коду Shutdown(), что и пункт трея «Выход»;
-//     подразумевает тихий режим (без окна настроек);
-//   --crash-after-ready=N — после успешного запуска киоска ждёт N сек и
-//     убивает себя через TerminateProcess (без managed-очистки): проверяет,
-//     что Job Object добивает дочерние процессы; тоже тихий режим;
+//   --auto-exit-after-ready=N — после готовности сервера ждёт N сек и идёт по
+//     ТОМУ ЖЕ коду Shutdown(), что и пункт трея «Выход»; подразумевает тихий
+//     режим (без окна настроек);
+//   --crash-after-ready=N — после готовности сервера ждёт N сек и убивает себя
+//     через TerminateProcess (без managed-очистки): проверяет, что Job Object
+//     добивает дочерние процессы; тоже тихий режим;
 //   --dump-config — печатает итоговый конфиг (файл + env) в stdout и выходит;
 //   --autostart=on|off [--run-key=<subkey>] — включает/выключает автозапуск
-//     (по умолчанию в настоящем Run; с --run-key — в тестовом подключе
-//     HKCU\<subkey> под тем же именем значения) и выходит.
+//     (по умолчанию в настоящем Run; с --run-key — в тестовом подключении
+//     HKCU\<subkey> под тем же именем значения) и выходит;
+//   --run-key=<subkey> — действует и на обычном старте: и запись автозапуска
+//     сервера, и чистка устаревшего merged-значения идут в тестовое
+//     подключение, настоящий Run машины не пачкается.
 
 using System;
 using System.Diagnostics;
@@ -37,7 +41,7 @@ using System.Windows.Forms;
 using EkranchikShared;
 using Microsoft.Win32;
 
-namespace EkranchikAllInOne
+namespace EkranchikServer
 {
     static class Program
     {
@@ -51,9 +55,9 @@ namespace EkranchikAllInOne
             // лог + корректная остановка сервера и трея. Режим ставится ДО
             // создания скрытых контролов синхронизации.
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-            Application.ThreadException += (s, e) => AllInOneContext.ReportUiCrash(e.Exception);
-            AppDomain.CurrentDomain.UnhandledException += (s, e) => AllInOneContext.ReportCrash(e.ExceptionObject);
-            // Контекст синхронизации UI-потока: окно киоска создаётся только
+            Application.ThreadException += (s, e) => ServerContext.ReportUiCrash(e.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => ServerContext.ReportCrash(e.ExceptionObject);
+            // Контекст синхронизации UI-потока: окно настроек создаётся только
             // на Main-потоке (issue #9).
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
 
@@ -112,7 +116,7 @@ namespace EkranchikAllInOne
                     || autostartArg.Equals("true", StringComparison.OrdinalIgnoreCase);
                 try
                 {
-                    WindowsAutoStart.Apply(enable, WindowsAutoStart.AllInOneValueName, WindowsAutoStart.AllInOneArgsSuffix, runKeyArg);
+                    WindowsAutoStart.Apply(enable, WindowsAutoStart.ServerValueName, WindowsAutoStart.ServerArgsSuffix, runKeyArg);
                     Console.WriteLine($"autostart {(enable ? "enabled" : "disabled")} key={WindowsAutoStart.EffectiveKeyPath(runKeyArg)}");
                     return 0;
                 }
@@ -135,7 +139,7 @@ namespace EkranchikAllInOne
                 return failures == 0 ? 0 : 1;
             }
 
-            var config = AllInOneConfig.Load();
+            var config = ServerConfig.Load();
 
             // Крючок smoke: проверка persist пяти настроек (файл + env).
             if (dumpConfig)
@@ -149,7 +153,7 @@ namespace EkranchikAllInOne
             // падал бы с "backend exited early", оставляя пользователя с
             // ошибкой вместо работающего приложения. Мьютекс держится до
             // конца процесса, умирает вместе с ним.
-            using (var single = new Mutex(true, @"Local\EkrankikAllInOne", out bool first))
+            using (var single = new Mutex(true, @"Local\EkranchikServer", out bool first))
             {
                 if (!first)
                 {
@@ -158,9 +162,9 @@ namespace EkranchikAllInOne
                         try
                         {
                             MessageBox.Show(
-                                "Ekranchik уже запущен — значок в трее, экран открывается кликом по нему.\n" +
+                                "Сервер Ekranchik уже запущен — значок в трее, настройки открываются кликом по нему.\n" +
                                 "Второй экземпляр не нужен: он занимает тот же порт.",
-                                "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                                "Ekranchik (сервер)", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                         catch { }
                     }
@@ -168,9 +172,13 @@ namespace EkranchikAllInOne
                 }
 
                 // smoke-хук идёт тем же тихим путём, что и --silent: без окна.
-                using (var context = new AllInOneContext(
+                // runKeyArg пробрасывается в контекст, чтобы проверка
+                // автозапуска и чистки устаревшего значения шла в тестовом
+                // подключении и не трогала настоящий Run машины.
+                using (var context = new ServerContext(
                     config, autoExitAfterReady, crashAfterReady,
-                    silent || autoExitAfterReady > 0 || crashAfterReady > 0))
+                    silent || autoExitAfterReady > 0 || crashAfterReady > 0,
+                    runKeyArg))
                 {
                     Application.Run(context);
                     return context.ExitCode;
@@ -179,10 +187,10 @@ namespace EkranchikAllInOne
         }
     }
 
-    // === Конфигурация (JSON + env-переопределения). Issue #4: пять настроек
-    // окна (путь Excel, адрес OPC UA, симуляция, монитор киоска, автозапуск)
-    // persist-ятся в allinone_config.json между запусками. ===
-    sealed class AllInOneConfig
+    // === Конфигурация (JSON + env-переопределения). Настройки окна сервера
+    // (путь Excel, адрес OPC UA, симуляция, доступ по локалке, автозапуск)
+    // persist-ятся в server_config.json между запусками. ===
+    sealed class ServerConfig
     {
         public string PythonExe { get; set; } = "";
         // Полная строка аргументов backend; {host} и {port} подставляются
@@ -190,16 +198,16 @@ namespace EkranchikAllInOne
         public string BackendArgs { get; set; } = "-m uvicorn app.main:app";
         public string BackendDir { get; set; } = "";
         public int Port { get; set; } = 8083;
+        // Адрес, по которому сервер себя проверяет (здоровье и версии).
+        // Обычно пусто — тогда localhost:Port. Перекрывается только env.
+        public string DashboardUrl { get; set; } = "";
         // Дашборд виден с других машин локалки (--host 0.0.0.0). Выключено —
         // только этот компьютер (127.0.0.1).
         public bool LanAccess { get; set; } = true;
-        public string DashboardUrl { get; set; } = "";
-        public string KioskExe { get; set; } = "";
-        // Крючок smoke/дев: киоск запускается внешним процессом, а не окном
-        // в этом же процессе. Ставится только env EKRANCHIK_KIOSK_EXE.
-        public bool UseExternalKiosk { get; private set; } = false;
-        // Полная строка аргументов киоска; {url} подставляется автоматически.
-        public string KioskArgs { get; set; } = "--no-gui \"{url}\"";
+        // Крючок smoke: процесс-заглушка, который надо запустить после
+        // готовности сервера (экрана киоска у сервера нет). Только env.
+        public string AfterReadyExe { get; set; } = "";
+        public string AfterReadyArgs { get; set; } = "";
         public int ReadyTimeoutSeconds { get; set; } = 90;
 
         // --- Issue #4: настройки окна (persist между запусками) ---
@@ -209,14 +217,12 @@ namespace EkranchikAllInOne
         public string OpcuaEndpoint { get; set; } = "opc.tcp://172.17.11.131:4840/";
         // Тестовые данные (SIMULATION_ENABLED у backend).
         public bool SimulationEnabled { get; set; } = false;
-        // Индекс монитора для киоска (как monitor в kiosk_config.json).
-        public int KioskMonitor { get; set; } = 0;
         // Желаемый автозапуск Windows (реестр HKCU ...\Run синхронизируется
         // при старте и при сохранении окна настроек).
         public bool AutoStart { get; set; } = false;
         private static readonly string ConfigDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ekranchik");
-        private static readonly string ConfigFile = Path.Combine(ConfigDir, "allinone_config.json");
+        private static readonly string ConfigFile = Path.Combine(ConfigDir, "server_config.json");
 
         public string ResolvedBackendArgs =>
             $"{BackendArgs} --host {ResolvedHost} --port {Port}";
@@ -224,17 +230,19 @@ namespace EkranchikAllInOne
 
         public string ResolvedDashboardUrl =>
             string.IsNullOrWhiteSpace(DashboardUrl) ? $"http://localhost:{Port}" : DashboardUrl;
-        public string ResolvedKioskArgs =>
-            KioskArgs.Replace("{url}", ResolvedDashboardUrl);
+        // Адрес, который оператор вводит в настройках экрана киоска. Сборку
+        // строки (подбор IP этой машины) делает общий код: сервер своего
+        // обхода сетевых интерфейсов не держит.
+        public string KioskAddress => EkranchikShared.KioskAddress.ForPort(Port);
 
-        public static AllInOneConfig Load()
+        public static ServerConfig Load()
         {
-            var config = new AllInOneConfig();
+            var config = new ServerConfig();
             if (File.Exists(ConfigFile))
             {
                 try
                 {
-                    var loaded = JsonSerializer.Deserialize<AllInOneConfig>(File.ReadAllText(ConfigFile));
+                    var loaded = JsonSerializer.Deserialize<ServerConfig>(File.ReadAllText(ConfigFile));
                     if (loaded != null) config = loaded;
                 }
                 catch { /* битый конфиг = дефолты, молча */ }
@@ -260,17 +268,12 @@ namespace EkranchikAllInOne
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_PYTHON"))) PythonExe = Env("EKRANCHIK_PYTHON")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_BACKEND_ARGS"))) BackendArgs = Env("EKRANCHIK_BACKEND_ARGS")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_BACKEND_DIR"))) BackendDir = Env("EKRANCHIK_BACKEND_DIR")!;
-            if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_KIOSK_EXE")))
-            {
-                KioskExe = Env("EKRANCHIK_KIOSK_EXE")!;
-                UseExternalKiosk = true;
-            }
-            if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_KIOSK_ARGS"))) KioskArgs = Env("EKRANCHIK_KIOSK_ARGS")!;
+            if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_AFTER_READY_EXE"))) AfterReadyExe = Env("EKRANCHIK_AFTER_READY_EXE")!;
+            if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_AFTER_READY_ARGS"))) AfterReadyArgs = Env("EKRANCHIK_AFTER_READY_ARGS")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_URL"))) DashboardUrl = Env("EKRANCHIK_URL")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_EXCEL_PATH"))) ExcelPath = Env("EKRANCHIK_EXCEL_PATH")!;
             if (!string.IsNullOrWhiteSpace(Env("EKRANCHIK_OPCUA_ENDPOINT"))) OpcuaEndpoint = Env("EKRANCHIK_OPCUA_ENDPOINT")!;
             if (TryParseBool(Env("EKRANCHIK_SIMULATION"), out bool sim)) SimulationEnabled = sim;
-            if (int.TryParse(Env("EKRANCHIK_KIOSK_MONITOR"), out int monitor) && monitor >= 0) KioskMonitor = monitor;
             if (TryParseBool(Env("EKRANCHIK_AUTOSTART"), out bool autostart)) AutoStart = autostart;
             if (int.TryParse(Env("EKRANCHIK_PORT"), out int port) && port > 0 && port < 65536) Port = port;
             if (TryParseBool(Env("EKRANCHIK_LAN_ACCESS"), out bool lan)) LanAccess = lan;
@@ -315,8 +318,6 @@ namespace EkranchikAllInOne
                 PythonExe = ResolvePythonExe(exeDir);
             if (string.IsNullOrWhiteSpace(BackendDir))
                 BackendDir = ResolveBackendDir(exeDir);
-            if (string.IsNullOrWhiteSpace(KioskExe))
-                KioskExe = Path.Combine(exeDir, "Ekranchik.exe");
         }
 
         // Прод-раскладка: backend/ рядом с exe. Дев-раскладка: подняться вверх
@@ -427,14 +428,14 @@ namespace EkranchikAllInOne
         }
     }
 
-    // === Модель настроек полного режима для единого окна (issue #9):
-    // обёртка AllInOneConfig. URL-поле скрыто (URL — всегда локальный
-    // сервер), серверная секция видна. ===
-    sealed class AllInOneSettingsModel : ISettingsModel
+    // === Модель настроек сервера для единого окна: обёртка ServerConfig.
+    // URL и монитор скрыты — это настройки экрана киоска; сервер показывает
+    // серверную секцию и «Адрес для экранов». ===
+    sealed class ServerSettingsModel : ISettingsModel
     {
-        private readonly AllInOneConfig _config;
+        private readonly ServerConfig _config;
 
-        public AllInOneSettingsModel(AllInOneConfig config)
+        public ServerSettingsModel(ServerConfig config)
         {
             _config = config;
         }
@@ -444,19 +445,24 @@ namespace EkranchikAllInOne
         public string? OpcuaEndpoint => _config.OpcuaEndpoint;
         public bool Simulation => _config.SimulationEnabled;
         public bool? LanAccess => _config.LanAccess;
-        public int MonitorIndex => _config.KioskMonitor;
+        // Монитора у сервера нет: секцию выбора монитора общее окно прячет.
+        public int? MonitorIndex => null;
+        // Порт дашборда: строку «Адрес для экранов» собирает общее окно через
+        // KioskAddress.ForPort, сервер своего адреса не строит.
+        public int? KioskPort => _config.Port;
         public bool WindowsAutostart => _config.AutoStart;
         public bool AutoLaunchOnSecondMonitor => false;
 
+        // monitorIndex и autoLaunchOnSecondMonitor — настройки экрана киоска,
+        // сервер их игнорирует.
         public void Save(string? url, string? excelPath, string? opcua, bool simulation,
-                         bool lanAccess, int monitorIndex, bool windowsAutostart,
+                         bool lanAccess, int? monitorIndex, bool windowsAutostart,
                          bool autoLaunchOnSecondMonitor)
         {
             _config.ExcelPath = excelPath ?? _config.ExcelPath;
             _config.OpcuaEndpoint = opcua ?? _config.OpcuaEndpoint;
             _config.SimulationEnabled = simulation;
             _config.LanAccess = lanAccess;
-            _config.KioskMonitor = Math.Max(monitorIndex, 0);
             _config.AutoStart = windowsAutostart;
             try
             {
@@ -464,35 +470,31 @@ namespace EkranchikAllInOne
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException("не удалось записать allinone_config.json: " + ex.Message, ex);
+                throw new InvalidOperationException("не удалось записать server_config.json: " + ex.Message, ex);
             }
-            WindowsAutoStart.Apply(_config.AutoStart, WindowsAutoStart.AllInOneValueName, WindowsAutoStart.AllInOneArgsSuffix);
+            WindowsAutoStart.Apply(_config.AutoStart, WindowsAutoStart.ServerValueName, WindowsAutoStart.ServerArgsSuffix);
         }
     }
 
-    // === Контекст приложения: backend → готовность → киоск → трей ===
-    sealed class AllInOneContext : ApplicationContext, IKioskHost, ISettingsHost
+    // === Контекст сервера: backend → готовность → трей (без экрана киоска) ===
+    sealed class ServerContext : ApplicationContext, ISettingsHost
     {
-        private readonly AllInOneConfig _config;
+        private readonly ServerConfig _config;
         private readonly int _autoExitAfterReady;
         private readonly int _crashAfterReady;
         private readonly bool _silent;
+        // Куда пишем автозапуск: null = настоящий Run, иначе тестовый подключ.
+        private readonly string? _runKeyPath;
         private readonly RotatingLogger _appLog;
         private readonly RotatingLogger _backendLog;
         // Единственный владелец дочерних процессов: create → assign → stop.
         private readonly ChildProcesses _children;
         private readonly CancellationTokenSource _cts = new();
-        // UI-поток: Main ставит WindowsFormsSynchronizationContext, контекст
-        // захватывается на UI-потоке; окно киоска создаётся только через Post.
-        private readonly SynchronizationContext? _ui;
 
         private NotifyIcon? _tray;
-        private ToolStripMenuItem? _idleItem;
         private Process? _backend;
-        private Process? _kiosk;
-        // Киоск в этом же процессе (issue #9); _kiosk остаётся для крючка
-        // smoke (внешний процесс).
-        private KioskForm? _kioskForm;
+        // Крючок smoke: процесс-заглушка после готовности сервера.
+        private Process? _afterReady;
         private SettingsForm? _settingsForm;
         private bool _shutdownStarted;
         private UpdateInfo? _pendingUpdate;
@@ -504,30 +506,34 @@ namespace EkranchikAllInOne
 
         public int ExitCode { get; private set; }
 
-        public AllInOneContext(AllInOneConfig config, int autoExitAfterReady, int crashAfterReady, bool silent)
+        public ServerContext(ServerConfig config, int autoExitAfterReady, int crashAfterReady,
+                             bool silent, string? runKeyPath = null)
         {
             _config = config;
             _autoExitAfterReady = autoExitAfterReady;
             _crashAfterReady = crashAfterReady;
             _silent = silent;
-            _appLog = new RotatingLogger("allinone");
+            // Тестовое подключение реестра для smoke (--run-key=<subkey>);
+            // null — настоящий HKCU\...\Run.
+            _runKeyPath = runKeyPath;
+            _appLog = new RotatingLogger("server");
             _backendLog = new RotatingLogger("backend");
             _children = new ChildProcesses(_appLog);
             Current = this;
-            _ui = SynchronizationContext.Current;
-            if (_ui == null)
-                _appLog.Write("WARN: no UI SynchronizationContext — kiosk window will not start");
             _appLog.Write($"config: python={config.PythonExe} dir={config.BackendDir} " +
-                $"args={config.ResolvedBackendArgs} url={config.ResolvedDashboardUrl} kiosk={config.KioskExe}");
+                $"args={config.ResolvedBackendArgs} kioskAddress={config.KioskAddress}");
             _appLog.Write($"settings: excel={config.ExcelPath} opcua={config.OpcuaEndpoint} " +
-                $"sim={config.SimulationEnabled} monitor={config.KioskMonitor} autostart={config.AutoStart}");
+                $"sim={config.SimulationEnabled} lan={config.LanAccess} autostart={config.AutoStart}");
             SyncAutoStart();
-            // Миграция (issue #9): старое киоск-значение автозапуска больше
-            // не нужно — полный режим стартует одним приложением.
+            // Миграция: merged-приложение (EkranchikAllInOne) больше не
+            // поставляется — его значение автозапуска убираем, иначе при
+            // автозагрузке стартует то, чего уже нет на диске. Значение
+            // экрана киоска (Ekranchik) НЕ трогаем: это отдельное приложение.
             try
             {
-                WindowsAutoStart.DeleteValue(WindowsAutoStart.KioskValueName);
-                _appLog.Write("migration: legacy kiosk autostart value removed");
+                WindowsAutoStart.DeleteValue(WindowsAutoStart.LegacyMergedValueName, _runKeyPath);
+                _appLog.Write($"migration: legacy merged autostart value removed from " +
+                              $"{WindowsAutoStart.EffectiveKeyPath(_runKeyPath)}");
             }
             catch (Exception ex)
             {
@@ -560,7 +566,8 @@ namespace EkranchikAllInOne
         {
             try
             {
-                WindowsAutoStart.Apply(_config.AutoStart, WindowsAutoStart.AllInOneValueName, WindowsAutoStart.AllInOneArgsSuffix);
+                WindowsAutoStart.Apply(_config.AutoStart, WindowsAutoStart.ServerValueName,
+                                       WindowsAutoStart.ServerArgsSuffix, _runKeyPath);
                 _appLog.Write($"autostart synced: {(_config.AutoStart ? "enabled" : "disabled")}");
             }
             catch (Exception ex)
@@ -578,7 +585,7 @@ namespace EkranchikAllInOne
                     _settingsForm.Activate();
                     return;
                 }
-                _settingsForm = new SettingsForm(new AllInOneSettingsModel(_config), this);
+                _settingsForm = new SettingsForm(new ServerSettingsModel(_config), this);
                 _settingsForm.FormClosed += (s, e) => { _settingsForm = null; };
                 _settingsForm.Show();
             }
@@ -588,29 +595,28 @@ namespace EkranchikAllInOne
             }
         }
 
-        // --- Трей: меню киоска как было (issue #9), никаких портов/статусов ---
+        // --- Трей сервера: только действия, без портов и статусов. Экрана
+        // киоска у сервера нет, поэтому и пунктов «монитор»/«режим простоя»
+        // здесь не бывает — они в трее экрана (Ekranchik.exe). ---
         private void CreateTray()
         {
             var menu = new ContextMenuStrip();
-            menu.Items.Add(new ToolStripMenuItem("Переключить монитор", null, (s, e) => _kioskForm?.SwitchMonitor()));
-            _idleItem = new ToolStripMenuItem("🕐 Режим простоя", null, (s, e) => _kioskForm?.ToggleIdleScreen());
-            menu.Items.Add(_idleItem);
             menu.Items.Add(new ToolStripMenuItem("⚙️ Настройки", null, (s, e) => ShowSettings()));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem("Выход", null, (s, e) => Shutdown("tray exit")));
 
             _tray = new NotifyIcon
             {
-                Text = "Ekranchik",
+                Text = "Ekranchik — сервер",
                 ContextMenuStrip = menu,
                 Visible = true
             };
             try { _tray.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
             catch { _tray.Icon = SystemIcons.Application; }
-            // Клик по иконке — вернуть спрятанный экран (issue #9).
+            // Клик по иконке — открыть настройки: своего окна у сервера нет.
             _tray.MouseClick += (s, e) =>
             {
-                if (e.Button == MouseButtons.Left) ShowKioskWindow();
+                if (e.Button == MouseButtons.Left) ShowSettings();
             };
             _tray.BalloonTipClicked += (s, e) => { Task.Run(() => InstallUpdateAsync()); };
         }
@@ -631,13 +637,14 @@ namespace EkranchikAllInOne
             }
         }
 
-        // --- Последовательность запуска ---
+        // --- Последовательность запуска: сервер поднялся — и всё. Экрана
+        // киоска здесь нет (отдельное приложение), остаётся smoke-хук. ---
         private async Task StartupSequenceAsync(CancellationToken token)
         {
             if (!StartBackend()) return;
             bool ready = await WaitForReadyAsync(token);
             if (!ready) return;
-            StartKiosk();
+            StartAfterReadyHook();
 
             // Крючок smoke: жёсткая смерть без managed-очистки. Shutdown в этом
             // пути не бежит, поэтому детей может добить только job-объект.
@@ -720,12 +727,13 @@ namespace EkranchikAllInOne
             if (Path.IsPathRooted(python)) return "\n\nPython: " + python;
             return "\n\nPython: " + python + " — системный; ни python\\ рядом с exe," +
                    " ни dist-full\\python\\ в репозитории не найдено." +
-                   "\nЛибо поставь EkranchikSetup.exe (тип «Полный пакет») и запусти ярлык" +
-                   " «Ekranchik», либо собери пакет: scripts\build-full-package.ps1";
+                   "\nЛибо переустанови EkranchikSetup.exe (тип «Сервер: фоновое приложение»)" +
+                   " и запусти ярлык «Ekranchik (сервер)», либо собери пакет:" +
+                   " scripts\\build-full-package.ps1";
         }
 
         // Порт занят — самая частая причина раннего падения бэкенда: уже
-        // запущен другой экземпляр Ekranchik (или сторонняя программа).
+        // запущен другой экземпляр сервера Ekranchik (или сторонняя программа).
         // Проверяем фактом: если сокет не поднялся — место действительно занято.
         private string PortHint()
         {
@@ -740,7 +748,8 @@ namespace EkranchikAllInOne
             catch (System.Net.Sockets.SocketException)
             {
                 return $"\n\nПорт {_config.Port} уже занят другим процессом — обычно это второй" +
-                       " экземпляр Ekranchik: закройте его (значок в трее → «Выход») и запустите снова.";
+                       " экземпляр сервера Ekranchik: закройте его (значок в трее → «Выход»)" +
+                       " и запустите снова.";
             }
         }
 
@@ -748,8 +757,11 @@ namespace EkranchikAllInOne
         {
             string healthUrl = _config.ResolvedDashboardUrl.TrimEnd('/') + "/health";
             var deadline = DateTime.UtcNow.AddSeconds(_config.ReadyTimeoutSeconds);
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             _appLog.Write($"waiting for {healthUrl} (timeout {_config.ReadyTimeoutSeconds}s)");
+            // Причина последней неудачи — в лог: без неё «не дождались» нечем
+            // объяснить оператору, кроме молчаливого выхода.
+            string lastError = "нет ответа";
             while (DateTime.UtcNow < deadline && !token.IsCancellationRequested)
             {
                 if (_backend is { HasExited: true })
@@ -762,121 +774,46 @@ namespace EkranchikAllInOne
                         _appLog.Write("backend ready");
                         return true;
                     }
+                    lastError = $"HTTP {(int)resp.StatusCode}";
                 }
-                catch (OperationCanceledException) { return false; }
-                catch { /* ещё не готов — ждём */ }
+                // Отмена по таймауту HttpClient — это TaskCanceledException,
+                // наследник OperationCanceledException: медленный ответ на /health
+                // не значит «сервер не поднимется». Различаем отмену задачи и
+                // отмену запроса, иначе старт молча прерывался на первом же
+                // небыстром ответе.
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { return false; }
+                catch (Exception ex) { lastError = ex.Message; }
                 try { await Task.Delay(1000, token); } catch { return false; }
             }
             if (!token.IsCancellationRequested)
-                Fail($"backend not ready in {_config.ReadyTimeoutSeconds}s: {healthUrl}");
+                Fail($"backend not ready in {_config.ReadyTimeoutSeconds}s: {healthUrl}" +
+                     $" (последняя причина: {lastError})");
             return false;
         }
 
-        private void StartKiosk()
+        // Крючок smoke: процесс-заглушка после готовности сервера. Живёт
+        // столько же, сколько сервер, и умирает вместе с ним (job-объект).
+        private void StartAfterReadyHook()
         {
-            // Крючок smoke/дев: киоск — внешний процесс.
-            if (_config.UseExternalKiosk)
-            {
-                try
-                {
-                    if (!File.Exists(_config.KioskExe))
-                    {
-                        _appLog.Write($"kiosk exe not found, skipping: {_config.KioskExe}");
-                        return; // Сервер уже работает — отсутствие киоска не фатально.
-                    }
-                    PointKioskConfigAtDashboard();
-                    // URL позиционным аргументом (киоск берёт URL из конфига,
-                    // лишние аргументы игнорирует) + --no-gui против окна настроек.
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = _config.KioskExe,
-                        Arguments = _config.ResolvedKioskArgs,
-                        UseShellExecute = false
-                    };
-                    _kiosk = _children.Start(psi, ChildLifetime.Job, "kiosk");
-                    if (_kiosk == null)
-                        _appLog.Write("kiosk start failed (backend keeps running)");
-                }
-                catch (Exception ex)
-                {
-                    _appLog.Write($"kiosk start failed (backend keeps running): {ex.Message}");
-                }
-                return;
-            }
-
-            // Полный режим (issue #9): экран киоска живёт в этом же процессе —
-            // одно приложение, одна иконка в трее.
-            PointKioskConfigAtDashboard();
-            if (_ui == null)
-            {
-                // Без контекста синхронизации окно нельзя создать на UI-потоке;
-                // раньше это было тихое «ничего не произошло».
-                _appLog.Write("FATAL: kiosk window not created — no UI SynchronizationContext");
-                return;
-            }
-            _ui.Post(_ =>
-            {
-                try
-                {
-                    _kioskForm = new KioskForm(_config.ResolvedDashboardUrl, Math.Max(_config.KioskMonitor, 0), this);
-                    _kioskForm.Show();
-                    _appLog.Write("kiosk window shown (in-process)");
-                }
-                catch (Exception ex)
-                {
-                    _appLog.Write($"kiosk window failed (backend keeps running): {ex.Message}");
-                }
-            }, null);
-        }
-
-        // Киоск читает URL и монитор из kiosk_config.json — подменяем поля url
-        // и monitor (issue #4: монитор из окна настроек), остальные настройки
-        // (автозапуск киоска, неизвестные ключи) сохраняем как есть.
-        // Безопасность записи:
-        //   - целый конфиг → копия в kiosk_config.json.bak до изменения;
-        //   - битый конфиг → копия в kiosk_config.corrupt-<ts>.bak, затем
-        //     минимальный валидный конфиг (настройки уже не спасти, но киоск
-        //     стартует, а исходник лежит в бэкапе);
-        //   - запись через tmp-файл + move (не бывает полузаписанного конфига).
-        // Восстановление исходника — НЕ здесь (в проде URL должен остаться),
-        // а в smoke-хуке, который подменяет чужой конфиг на время прогона.
-        private void PointKioskConfigAtDashboard()
-        {
+            if (string.IsNullOrWhiteSpace(_config.AfterReadyExe)) return;
             try
             {
-                string dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ekranchik");
-                Directory.CreateDirectory(dir);
-                string file = Path.Combine(dir, "kiosk_config.json");
-                Dictionary<string, JsonElement> root = new();
-                if (File.Exists(file))
+                var psi = new ProcessStartInfo
                 {
-                    string raw = File.ReadAllText(file);
-                    try
-                    {
-                        var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(raw);
-                        root = parsed ?? new Dictionary<string, JsonElement>();
-                        File.Copy(file, file + ".bak", overwrite: true);
-                    }
-                    catch
-                    {
-                        string corruptBak = file + $".corrupt-{DateTime.Now:yyyyMMddHHmmss}.bak";
-                        File.Copy(file, corruptBak);
-                        _appLog.Write($"kiosk config corrupt, raw saved to {Path.GetFileName(corruptBak)}");
-                    }
-                }
-                root["url"] = JsonDocument.Parse($"\"{_config.ResolvedDashboardUrl}\"").RootElement;
-                int monitor = Math.Max(_config.KioskMonitor, 0);
-                root["monitor"] = JsonDocument.Parse(monitor.ToString()).RootElement;
-                string tmp = file + ".tmp";
-                File.WriteAllText(tmp, JsonSerializer.Serialize(root,
-                    new JsonSerializerOptions { WriteIndented = true }));
-                File.Move(tmp, file, overwrite: true);
-                _appLog.Write($"kiosk_config.json url+monitor updated (monitor={monitor})");
+                    FileName = _config.AfterReadyExe,
+                    Arguments = _config.AfterReadyArgs,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                _afterReady = _children.Start(psi, ChildLifetime.Job, "after-ready");
+                // ChildProcesses уже пишет строку запуска с pid — здесь только
+                // итог для оператора: заглушка жива или нет.
+                if (_afterReady == null)
+                    _appLog.Write("after-ready hook not started (server keeps running)");
             }
             catch (Exception ex)
             {
-                _appLog.Write($"kiosk config update failed: {ex.Message}");
+                _appLog.Write($"after-ready hook failed: {ex.Message}");
             }
         }
 
@@ -891,19 +828,15 @@ namespace EkranchikAllInOne
                 try
                 {
                     MessageBox.Show(message + "\n\nПодробности — в папке логов Ekranchik.",
-                        "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        "Ekranchik (сервер)", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
                 catch { }
             }
             Shutdown("fatal");
         }
 
-        // Гасим встроенный экран на UI-потоке (issue #9): и при «Выход»,
-        // и перед запуском установщика обновления.
-        private void DisposeKioskForm()
-        {
-            try { _ui?.Post(_ => { try { _kioskForm?.Dispose(); } catch { } _kioskForm = null; }, null); } catch { }
-        }
+        // Экрана киоска у сервера нет: встроенной формы не гасим, только
+        // дочерние процессы (StopChildren выше).
 
         // --- Остановка: один путь и для трея «Выход», и для smoke-хука ---
         private void Shutdown(string reason)
@@ -915,9 +848,6 @@ namespace EkranchikAllInOne
             try { _updateTimer?.Dispose(); } catch { }
 
             StopChildren();
-            // Встроенный экран живёт в этом процессе — закрываем форму
-            // (внешний киоск — через StopChildren выше).
-            DisposeKioskForm();
 
             try
             {
@@ -940,7 +870,7 @@ namespace EkranchikAllInOne
         // Detached и здесь намеренно не трогается.
         private void StopChildren()
         {
-            _children.Stop(_kiosk, "kiosk");
+            _children.Stop(_afterReady, "after-ready");
             _children.Stop(_backend, "backend");
         }
 
@@ -996,8 +926,7 @@ namespace EkranchikAllInOne
             try
             {
                 StopChildren();
-                // Встроенный экран гасим до запуска установщика (issue #9).
-                DisposeKioskForm();
+                // Экрана киоска у сервера нет — гасим только дочерние процессы.
             }
             catch (Exception ex)
             {
@@ -1047,9 +976,8 @@ namespace EkranchikAllInOne
 
         public string VersionsText(string backendVersion)
         {
-            return $"All-in-One: {AppVersion.Current}\nBackend: {backendVersion}";
+            return $"Сервер: {AppVersion.Current}\nBackend: {backendVersion}";
         }
-
 
         public async Task<string> GetBackendVersionAsync()
         {
@@ -1066,62 +994,10 @@ namespace EkranchikAllInOne
             return "—";
         }
 
-        // === IKioskHost (issue #9): экран прячется в трей, пункт простоя
-        // обновляется на UI-потоке. ===
-
-        // Экран не поднялся (WebView2): сервер работает, но пользователь должен
-        // узнать об этом из лога, а не только из окна, которое легко пропустить.
-        void IKioskHost.OnKioskScreenFailed(string reason)
-        {
-            _appLog.Write("FATAL: kiosk screen failed to start: " + reason);
-        }
-
-        void IKioskHost.OnKioskCloseRequested()
-        {
-            _appLog.Write("kiosk close requested -> hide to tray");
-            _ui?.Post(_ =>
-            {
-                try { if (_kioskForm is { IsDisposed: false }) _kioskForm.Hide(); } catch { }
-            }, null);
-        }
-
-        void IKioskHost.OnIdleModeChanged(bool idle)
-        {
-            _appLog.Write($"idle mode: {idle}");
-            _ui?.Post(_ =>
-            {
-                try { if (_idleItem != null) _idleItem.Text = idle ? "💻 Вернуться к работе" : "🕐 Режим простоя"; } catch { }
-            }, null);
-        }
-
-        // Клик по иконке трея / кнопка «Показать экран» (issue #9).
-        public void ShowKioskWindow()
-        {
-            if (_kioskForm == null || _kioskForm.IsDisposed)
-            {
-                _appLog.Write("show kiosk: window not created yet (backend not ready)");
-                return;
-            }
-            _ui?.Post(_ =>
-            {
-                try
-                {
-                    if (_kioskForm is { IsDisposed: false })
-                    {
-                        _kioskForm.Show();
-                        if (_kioskForm.WindowState == FormWindowState.Minimized)
-                            _kioskForm.WindowState = FormWindowState.Normal;
-                        _kioskForm.Activate();
-                    }
-                }
-                catch (Exception ex) { _appLog.Write($"show kiosk failed: {ex.Message}"); }
-            }, null);
-        }
-
         // Крэш-хендлеры (issue #9): падение UI-потока больше не роняет стек
         // молча — лог + корректная остановка (job-объект в ChildProcesses
         // добивает backend, если Shutdown не дойдёт).
-        private static AllInOneContext? Current;
+        private static ServerContext? Current;
         public static void ReportUiCrash(Exception ex)
         {
             Current?.CrashStop("ui thread exception: " + ex.Message);
@@ -1140,21 +1016,15 @@ namespace EkranchikAllInOne
             ExitCode = 1;
             Shutdown("crash");
         }
-        // Окно настроек сохранило (issue #9): монитор сразу к живому экрану,
-        // kiosk_config.json актуализируем для будущего перехода «только киоск».
+
+        // Окно настроек сохранило. Экрана у сервера нет, поэтому настроек
+        // киоска тут нечего применять: конфиг и реестр уже записаны моделью.
         public void OnSettingsSaved()
         {
-            PointKioskConfigAtDashboard();
-            int monitor = Math.Max(_config.KioskMonitor, 0);
-            _ui?.Post(_ =>
-            {
-                try
-                {
-                    if (_kioskForm is { IsDisposed: false })
-                        _kioskForm.ApplyMonitor(monitor);
-                }
-                catch (Exception ex) { _appLog.Write($"apply monitor failed: {ex.Message}"); }
-            }, null);
+            _appLog.Write("settings saved: " +
+                $"excel={_config.ExcelPath} opcua={_config.OpcuaEndpoint} " +
+                $"sim={_config.SimulationEnabled} lan={_config.LanAccess} " +
+                $"port={_config.Port} autostart={_config.AutoStart}");
         }
 
         protected override void Dispose(bool disposing)
@@ -1164,7 +1034,7 @@ namespace EkranchikAllInOne
                 try { _cts.Dispose(); } catch { }
                 try { _updateTimer?.Dispose(); } catch { }
                 try { _backend?.Dispose(); } catch { }
-                try { _kiosk?.Dispose(); } catch { }
+                try { _afterReady?.Dispose(); } catch { }
             }
             base.Dispose(disposing);
         }

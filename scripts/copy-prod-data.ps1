@@ -16,8 +16,8 @@
       environment IMAGES_DIR=/app/static/images)
 
   Проверки: источник БД и images/ существуют; целевой каталог создаётся;
-  БД не копируется поверх запущенного процесса без -Force (ищем лаунчер
-  EkranchikAllInOne, висящий python-бэкенд по командной строке (-m uvicorn
+  БД не копируется поверх запущенного процесса без -Force (ищем сервер
+  EkranchikServer, висящий python-бэкенд по командной строке (-m uvicorn
   app.main:app + признаки localhost:8083/Ekranchik, чужой python не цепляем)
   и пробуем эксклюзивно открыть целевой файл БД).
   backend/.env скрипт никогда не копирует.
@@ -60,9 +60,15 @@ $TargetImages = Join-Path $DataDir "images"
 
 # --- 2. Цель не занята запущенным процессом (без -Force отказываем) ---
 if (-not $Force) {
-  $launcher = Get-Process -Name "EkranchikAllInOne" -ErrorAction SilentlyContinue
-  if ($launcher) {
-    throw "EkranchikAllInOne запущен (PID $(($launcher.Id) -join ', ')). Остановите All-in-One/бэкенд и повторите, либо -Force."
+  # Живой сервер держит БД своим дочерним python-бэкендом. Имя процесса на
+  # новых поставках — EkranchikServer (экран киоска Ekranchik БД не трогает,
+  # поэтому в проверку не входит); EkranchikAllInOne оставлен для машин,
+  # где ещё стоит merged-приложение.
+  $serverNames = @("EkranchikServer", "EkranchikAllInOne")
+  $server = Get-Process -Name $serverNames -ErrorAction SilentlyContinue
+  if ($server) {
+    $names = ($server | ForEach-Object { "$($_.ProcessName) (PID $($_.Id))" }) -join ", "
+    throw "Сервер Ekranchik запущен: $names. Закройте его (правый клик по значку в трее → «Выход») и повторите, либо -Force."
   }
   # Висящий python-бэкенд без лаунчера (см. ADR 0002): пакет запускает его как
   # python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8083.
@@ -85,14 +91,14 @@ if (-not $Force) {
   }
   if ($backend) {
     $backendPids = ($backend | Select-Object -ExpandProperty ProcessId) -join ", "
-    throw "Бэкенд python/uvicorn запущен отдельно (PID $backendPids, app.main). Остановите All-in-One/бэкенд и повторите, либо -Force."
+    throw "Бэкенд python/uvicorn запущен отдельно (PID $backendPids, app.main). Закройте сервер Ekranchik (значок в трее → «Выход») и повторите, либо -Force."
   }
   if (Test-Path -LiteralPath $TargetDb -PathType Leaf) {
     try {
       $fs = [System.IO.File]::Open($TargetDb, "Open", "ReadWrite", "None")
       $fs.Close()
     } catch {
-      throw "Целевая БД занята (похоже, бэкенд запущен): $TargetDb. Остановите его и повторите, либо -Force."
+      throw "Целевая БД занята (похоже, сервер запущен): $TargetDb. Закройте сервер Ekranchik и повторите, либо -Force."
     }
   }
 }

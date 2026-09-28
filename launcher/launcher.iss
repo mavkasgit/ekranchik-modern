@@ -1,42 +1,66 @@
-; EkranchikSetup — один установщик, два типа установки (issue #6, #9).
+; EkranchikSetup — один установщик, два приложения (issue #04).
 ;
-;   «Только киоск» — состав байт-в-байт как раньше: экран отдельным
-;     процессом (Ekranchik.exe + WebView2 + конфиги).
-;   «Полный пакет» — ОДНО приложение EkranchikAllInOne.exe: сервер, экран
-;     киоска, трей и настройки в одном процессе (issue #9)
-;     + embedded Python + backend + frontend/dist.
+;   «Только киоск»  — экран на отдельном компьютере: Ekranchik.exe +
+;                     WebView2-загрузчик, runtime-файлы, конфиг, картинки
+;                     и сам Microsoft Edge WebView2 Runtime (issue #11).
+;   «Сервер»        — фоновое приложение: EkranchikServer.exe + встроенный
+;                     Python, backend, собранный веб-интерфейс.
+;   «Оба на одной машине» — выборочная установка с двумя галочками.
+
+; WebView2 Runtime (issue #11). Своего бэкенда у экрана нет, но без
+; вечнозелёного рантайма WebView2 окно не откроется, а на чистой
+; корпоративной машине рантайма может не быть. Установщик ставит его сам:
+; если по реестру рантайма нет (признаки per-machine и per-user из
+; документации Microsoft), скачивается официальный вечнозелёный загрузчик
+; (~2 МБ) и запускается с /silent /install — без вопросов и без перезагрузки.
+; Прав администратора установщику не нужны (PrivilegesRequired=lowest),
+; поэтому рантайм встаёт в профиль того же пользователя, что и сам экран.
+; Нет сети — установка не падает: после установки оператор получает внятное
+; сообщение (в тихой установке — текстом в
+; %LOCALAPPDATA%\Ekranchik\logs\install-webview2.txt).
+
+; Устаревший автозапуск (issue #11). Значение EkranchikAllInOne в
+; HKCU\Software\Microsoft\Windows\CurrentVersion\Run удаляет установщик:
+; на машине, где поставили только экран и сервер так и не запускали, чистить
+; его некому, а Windows при каждом входе пытается запустить уже несуществующий
+; файл. Сервер по-прежнему делает то же самое при старте — как страховка.
 ;
-; Повторный запуск меняет тип: переход full -> kiosk стирает файлы
-; компонента full, переход kiosk -> full стирает отдельный киоск exe —
-; секцией [InstallDelete]. Каталог данных и живые настройки
-; (%LOCALAPPDATA%\Ekranchik: data/, *.json, logs/) установкой, обновлением
-; и удалением компонентов НЕ затрагиваются — они нигде ниже не перечислены.
+; Общего компонента с файлами WebView2 больше нет: они нужны только экрану.
+; Два ярлыка в «Пуске»: «Ekranchik (киоск)» и «Ekranchik (сервер)», плюс те же
+; два на рабочем столе по задаче desktopicon. Каждый ярлык ведёт на своё
+; приложение и создаётся только при выбранном компоненте.
+;
+; Повторный запуск меняет состав: снятие галочки удаляет файлы и ярлыки своего
+; приложения (в «Пуске» и на рабочем столе) секцией [InstallDelete]. Каталог
+; данных и живые настройки (%LOCALAPPDATA%\Ekranchik: data/, *.json, logs/)
+; установкой, обновлением и удалением компонентов НЕ затрагиваются — они
+; нигде ниже не перечислены.
+; Файлы и ярлыки прежнего merged-приложения EkranchikAllInOne вычищаются
+; всегда: разделённых приложений он больше не запускает.
 ;
 ; Сборка пакета перед компиляцией (порядок важен):
 ;   1. Киоск:        рядом с этим файлом должен лежать Ekranchik.exe
 ;                    (+ WebView2Loader.dll, runtimes/, idle_clock.html,
-;                     kiosk_config.json, ktm_colored.png, launcher.ico) —
-;                    как раньше.
-;   2. AllInOne:     опубликовать self-contained и положить рядом с этим
-;                    файлом EkranchikAllInOne.exe, например:
-;                    dotnet publish source_code\EkranchikAllInOne\EkranchikAllInOne.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:Version=$(Get-Content ..\VERSION)"
+;                     kiosk_config.json, ktm_colored.png, launcher.ico).
+;   2. Сервер:       dotnet publish source_code\EkranchikServer\EkranchikServer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:Version=$(Get-Content ..\VERSION)"
 ;                    (штамп из корневого VERSION; без флага версия подхватится
 ;                    сама через source_code\Directory.Build.props).
-;                    (если публикация НЕ single-file — рядом также кладутся
-;                    EkranchikAllInOne.dll/.deps.json/.runtimeconfig.json,
-;                    ниже они подключены с skipifsourcedoesntexist).
+;                    Даёт launcher\EkranchikServer.exe. Рядом раскладывается
+;                    пакет полного режима (ниже шаг 3).
 ;   3. Python-пакет: powershell -ExecutionPolicy Bypass -File ..\scripts\build-full-package.ps1
 ;                    (раскладывает ..\dist-full\{python,backend,dist}).
 ;
 ; Компиляция: ISCC.exe launcher.iss (Inno Setup 6).
 ; Песочница без компилятора: структурная валидация — каждый Source секции
-; [Files] существует на диске после шагов 1–3 (python/ и AllInOne.exe —
+; [Files] существует на диске после шагов 1–3 (python/ и EkranchikServer.exe —
 ; артефакты полной сборки, в сухом прогоне отсутствуют штатно).
 
 #define MyAppName "Ekranchik"
 #define MyAppPublisher "Mavka"
 #define MyAppExeName "Ekranchik.exe"
-#define MyAppAllInOneExeName "EkranchikAllInOne.exe"
+#define MyAppServerExeName "EkranchikServer.exe"
+; Прежнее merged-приложение: файлы и ярлыки вычищаются всегда.
+#define MyAppLegacyExeName "EkranchikAllInOne.exe"
 #define MyAppIconName "launcher.ico"
 
 #ifndef MyAppVersion
@@ -59,8 +83,9 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 DisableDirPage=no
-; Апгрейд-путь: каталог, тип установки (kiosk/full) и задачи наследуются
-; от предыдущей установки с тем же AppId — тип full не сбрасывается молча.
+; Апгрейд-путь: каталог, тип установки (kiosk/server/custom) и задачи
+; наследуются от предыдущей установки с тем же AppId — состав не сбрасывается
+; молча.
 UsePreviousAppDir=yes
 UsePreviousSetupType=yes
 UsePreviousTasks=yes
@@ -69,90 +94,116 @@ UsePreviousTasks=yes
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Types]
-Name: "kiosk"; Description: "Только киоск (как раньше)"
-Name: "full"; Description: "Полный пакет: одно приложение — сервер + киоск + Python + веб-интерфейс"
-Name: "custom"; Description: "Выборочная установка"; Flags: iscustom
+Name: "kiosk"; Description: "Только киоск (экран на отдельном компьютере)"
+Name: "server"; Description: "Сервер: фоновое приложение"
+Name: "custom"; Description: "Оба на одной машине (выборочная установка)"; Flags: iscustom
 
 [Components]
-Name: "runtime"; Description: "Общие файлы (WebView2, конфиг, иконки)"; Types: kiosk full custom; Flags: fixed
-Name: "kioskapp"; Description: "Киоск Ekranchik (только экран, отдельный exe)"; Types: kiosk
-Name: "full"; Description: "Сервер, embedded Python и веб-интерфейс + экран в одном приложении"; Types: full
+Name: "kiosk"; Description: "Экран киоска Ekranchik: приложение, загрузчик WebView2, конфиг, картинки (рантайм WebView2 ставит установщик)"; Types: kiosk custom
+Name: "server"; Description: "Сервер Ekranchik: фоновое приложение, встроенный Python, бэкенд и веб-интерфейс"; Types: server custom
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; --- Компонент «runtime»: общие файлы обоих режимов. ---
+; --- Компонент «kiosk»: самостоятельный процесс экрана киоска. ---
 ; kiosk_config.json ставится только на чистую установку (onlyifdoesntexist):
 ; установщик одновременно кладёт seed по умолчанию и НЕ затирает живые
-; настройки пользователя при обновлении/переустановке/смене типа.
-Source: "WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: runtime
-Source: "runtimes\*"; DestDir: "{app}\runtimes"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: runtime
-Source: "idle_clock.html"; DestDir: "{app}"; Flags: ignoreversion; Components: runtime
-Source: "kiosk_config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Components: runtime
-Source: "ktm_colored.png"; DestDir: "{app}"; Flags: ignoreversion; Components: runtime
-Source: "launcher.ico"; DestDir: "{app}"; Flags: ignoreversion; Components: runtime
-; --- Компонент «kioskapp»: самостоятельный киоск-процесс («Только киоск»). ---
-Source: "Ekranchik.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: kioskapp
-; --- Компонент «full»: ОДНО приложение — merged exe с экраном киоска
-; внутри (issue #9), плюс раскладка рядом (контракт ADR 0002/issue #5):
-; AllInOne ищет backend/ рядом с собой. ---
-Source: "{#MyAppAllInOneExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: full
-Source: "EkranchikAllInOne.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: full
-Source: "EkranchikAllInOne.deps.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: full
-Source: "EkranchikAllInOne.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: full
-Source: "..\dist-full\backend\*"; DestDir: "{app}\backend"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: full
-Source: "..\dist-full\dist\*"; DestDir: "{app}\dist"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: full
-Source: "..\dist-full\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: full
+; настройки пользователя при обновлении/переустановке/смене состава.
+; Seed кладёт scripts/build-full-installer.ps1 и он совпадает с тем, что
+; приложение само пишет в пустой конфиг (адрес дашборда с портом 8083 из
+; глоссария, монитор 0, оба признака выключены): установщик не должен
+; менять поведение экрана. Оба признака выключены не просто так — с
+; включённым «автозапуск на втором мониторе» окно настроек на двух мониторах
+; не показывается вовсе, и оператор не попадёт в настройки.
+Source: "{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
+Source: "WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
+Source: "runtimes\*"; DestDir: "{app}\runtimes"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: kiosk
+Source: "idle_clock.html"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
+Source: "kiosk_config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist; Components: kiosk
+Source: "ktm_colored.png"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk
+; --- Иконка нужна обоим приложениям (ярлыки сервера ссылаются на неё) ---
+; и удаляется, только когда не выбран ни один компонент.
+Source: "{#MyAppIconName}"; DestDir: "{app}"; Flags: ignoreversion; Components: kiosk server
+; --- Компонент «server»: фоновое приложение + раскладка рядом (контракт
+; ADR 0002): сервер ищет backend/, dist/ и python/ рядом с собой. ---
+Source: "{#MyAppServerExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: server
+Source: "EkranchikServer.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: server
+Source: "EkranchikServer.deps.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: server
+Source: "EkranchikServer.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: server
+Source: "..\dist-full\backend\*"; DestDir: "{app}\backend"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: server
+Source: "..\dist-full\dist\*"; DestDir: "{app}\dist"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: server
+Source: "..\dist-full\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: server
 
 [InstallDelete]
-; Смена типа full -> kiosk (и выборочная без full): стереть merged exe и
-; серверную раскладку. Переход kiosk -> full: отдельный киоск-процесс
-; больше не ставится — его место занимает merged exe (issue #9).
-; data/, *.json, logs/ здесь намеренно отсутствуют — данные и настройки
-; переживают удаление компонентов. На чистой установке удалять нечего.
-Type: files; Name: "{app}\{#MyAppAllInOneExeName}"; Check: not IsFullSelected
-Type: files; Name: "{app}\EkranchikAllInOne.dll"; Check: not IsFullSelected
-Type: files; Name: "{app}\EkranchikAllInOne.deps.json"; Check: not IsFullSelected
-Type: files; Name: "{app}\EkranchikAllInOne.runtimeconfig.json"; Check: not IsFullSelected
-Type: filesandordirs; Name: "{app}\backend"; Check: not IsFullSelected
-Type: filesandordirs; Name: "{app}\dist"; Check: not IsFullSelected
-Type: filesandordirs; Name: "{app}\python"; Check: not IsFullSelected
+; Снятие галочки на повторной установке удаляет ТОЛЬКО своё приложение.
+; data/, *.json, logs/ здесь намеренно отсутствуют: данные и живые настройки
+; переживают и установку, и удаление любого компонента. На чистой установке
+; удалять нечего — секция молча ничего не делает.
+; Снятие галочки удаляет и ярлыки приложения (issue #12): без этого в «Пуске»
+; оставалась ссылка на exe, которого на машине больше нет. Рабочий стол
+; удаляется тем же правилом — ярлыка там могло не быть вовсе, Type: files
+; на отсутствующем файле молчит.
+Type: files; Name: "{app}\{#MyAppExeName}"; Check: not WizardIsComponentSelected('kiosk')
+Type: files; Name: "{app}\WebView2Loader.dll"; Check: not WizardIsComponentSelected('kiosk')
+Type: filesandordirs; Name: "{app}\runtimes"; Check: not WizardIsComponentSelected('kiosk')
+Type: files; Name: "{app}\idle_clock.html"; Check: not WizardIsComponentSelected('kiosk')
+Type: files; Name: "{app}\ktm_colored.png"; Check: not WizardIsComponentSelected('kiosk')
+Type: files; Name: "{group}\{#MyAppName} (киоск).lnk"; Check: not WizardIsComponentSelected('kiosk')
+Type: files; Name: "{userdesktop}\{#MyAppName} (киоск).lnk"; Check: not WizardIsComponentSelected('kiosk')
+Type: files; Name: "{app}\{#MyAppIconName}"; Check: not (WizardIsComponentSelected('kiosk') or WizardIsComponentSelected('server'))
+Type: files; Name: "{app}\{#MyAppServerExeName}"; Check: not WizardIsComponentSelected('server')
+Type: files; Name: "{app}\EkranchikServer.dll"; Check: not WizardIsComponentSelected('server')
+Type: files; Name: "{app}\EkranchikServer.deps.json"; Check: not WizardIsComponentSelected('server')
+Type: files; Name: "{app}\EkranchikServer.runtimeconfig.json"; Check: not WizardIsComponentSelected('server')
+Type: filesandordirs; Name: "{app}\backend"; Check: not WizardIsComponentSelected('server')
+Type: filesandordirs; Name: "{app}\dist"; Check: not WizardIsComponentSelected('server')
+Type: filesandordirs; Name: "{app}\python"; Check: not WizardIsComponentSelected('server')
+Type: files; Name: "{group}\{#MyAppName} (сервер).lnk"; Check: not WizardIsComponentSelected('server')
+Type: files; Name: "{userdesktop}\{#MyAppName} (сервер).lnk"; Check: not WizardIsComponentSelected('server')
+; --- Вычистка прежнего merged-приложения (общий AppId): на любой машине с
+; прежней поставкой мог остаться EkranchikAllInOne.exe и его ярлыки. ---
+Type: files; Name: "{app}\{#MyAppLegacyExeName}"
+Type: files; Name: "{app}\EkranchikAllInOne.dll"
+Type: files; Name: "{app}\EkranchikAllInOne.deps.json"
+Type: files; Name: "{app}\EkranchikAllInOne.runtimeconfig.json"
+Type: files; Name: "{group}\{#MyAppName}.lnk"
+Type: files; Name: "{userdesktop}\{#MyAppName}.lnk"
 Type: files; Name: "{group}\{#MyAppName} Полный пакет.lnk"
 Type: files; Name: "{userdesktop}\{#MyAppName} Полный пакет.lnk"
-; Старая десктоп-иконка «Ekranchik» указывала на киоск exe — на full она
-; пересоздаётся [Icons] только при отмеченной задаче, а старый exe удаляется
-; выше: битую иконку стираем до возможной пересоздания.
-Type: files; Name: "{userdesktop}\{#MyAppName}.lnk"; Check: IsFullSelected
-Type: files; Name: "{app}\{#MyAppExeName}"; Check: IsFullSelected
 
 [Icons]
-; Полный режим: единственный ярлык ведёт на merged exe (issue #9) — одно
-; приложение под именем «Ekranchik».
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppAllInOneExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Components: full
-Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppAllInOneExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Tasks: desktopicon; Components: full
-; Киоск-режим: ярлык на киоск exe, когда полный не выбран (Check — против
-; дубля имени в выборочной установке с обоими компонентами).
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Components: kioskapp; Check: not IsFullSelected
-Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Tasks: desktopicon; Components: kioskapp; Check: not IsFullSelected
+; Два ярлыка в «Пуске» и те же два на рабочем столе по задаче desktopicon.
+; Каждый появляется только при выбранном компоненте.
+Name: "{group}\{#MyAppName} (киоск)"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Components: kiosk
+Name: "{group}\{#MyAppName} (сервер)"; Filename: "{app}\{#MyAppServerExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Components: server
+Name: "{userdesktop}\{#MyAppName} (киоск)"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Tasks: desktopicon; Components: kiosk
+Name: "{userdesktop}\{#MyAppName} (сервер)"; Filename: "{app}\{#MyAppServerExeName}"; IconFilename: "{app}\{#MyAppIconName}"; Tasks: desktopicon; Components: server
 
 [Run]
-Filename: "{app}\{#MyAppAllInOneExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent; Components: full
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent; Components: kioskapp; Check: not IsFullSelected
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}} (киоск)"; Flags: nowait postinstall skipifsilent; Components: kiosk
+Filename: "{app}\{#MyAppServerExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}} (сервер)"; Flags: nowait postinstall skipifsilent; Components: server
 
 [Code]
 const
   PrevAppUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{C6D2B1C1-827A-4D3F-B5FE-D372FEBF44C7}_is1';
+  { Автозапуск прежнего единого приложения (ADR 0004): на машине, где стоял
+    только экран, сервер не запускали и убрать значение было некому. }
+  WinRunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  LegacyAutostartValue = 'EkranchikAllInOne';
+  { Вечнозелёный WebView2 Runtime: официальный загрузчик Microsoft (~2 МБ) и
+    реестровые признаки per-machine / per-user из документации Microsoft. }
+  WebView2ClientKey = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  WebView2SetupUrl = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703';
+  WebView2SetupFile = 'MicrosoftEdgeWebview2Setup.exe';
 
 var
   PrevVersion: String;
   PrevSetupType: String;
   PrevDetected: Boolean;
-
-function IsFullSelected(): Boolean;
-begin
-  Result := WizardIsComponentSelected('full');
-end;
+  WebView2SetupPath: String;  { '' — ставить нечего }
+  WebView2Error: String;      { '' — замечаний к рантайму нет }
+  WebView2Detail: String;     { техническая причина — в лог установки }
 
 { DisplayVersion предыдущей установки с тем же AppId (HKCU — свой для
   PrivilegesRequired=lowest; HKLM — на случай старой машинной установки). }
@@ -178,6 +229,24 @@ begin
     Result := T;
 end;
 
+{ Имя типа из реестра -> человекочитаемое. Надписи обязаны совпадать с
+  описаниями из [Types]: мастер показывает при выборе и в сводке одно и то
+  же («Оба на одной машине», а не внутреннее «Выборочная установка»).
+  Прежний тип «full» тоже разворачивается в текст: в сводке пользователь
+  должен видеть, что стояло раньше, а не внутреннее имя. }
+function SetupTypeLabel(const T: String): String;
+begin
+  Result := T;
+  if CompareText(T, 'kiosk') = 0 then
+    Result := 'Только киоск (экран на отдельном компьютере)'
+  else if CompareText(T, 'server') = 0 then
+    Result := 'Сервер: фоновое приложение'
+  else if CompareText(T, 'custom') = 0 then
+    Result := 'Оба на одной машине (выборочная установка)'
+  else if CompareText(T, 'full') = 0 then
+    Result := 'Единое приложение EkranchikAllInOne (прежняя поставка)';
+end;
+
 { Признак предыдущей установки без записи в реестре: каталог по умолчанию
   уже несёт exe или настройки Ekranchik (портативный/дев-запуск, ключ
   Uninstall отсутствует или снесён). }
@@ -188,7 +257,10 @@ begin
   Dir := ExpandConstant('{localappdata}\{#MyAppName}');
   Result :=
     FileExists(Dir + '\{#MyAppExeName}') or
+    FileExists(Dir + '\{#MyAppServerExeName}') or
+    FileExists(Dir + '\{#MyAppLegacyExeName}') or
     FileExists(Dir + '\kiosk_config.json') or
+    FileExists(Dir + '\server_config.json') or
     FileExists(Dir + '\allinone_config.json');
 end;
 
@@ -300,7 +372,7 @@ begin
     else
       S := S + 'Обнаружены настройки и данные предыдущей установки.';
     if PrevSetupType <> '' then
-      S := S + NewLine + Space + 'Предыдущий тип установки: ' + PrevSetupType + '.';
+      S := S + NewLine + Space + 'Предыдущий тип установки: ' + SetupTypeLabel(PrevSetupType) + '.';
     S := S + NewLine + Space +
       'Данные и настройки (%LOCALAPPDATA%\Ekranchik) сохраняются.';
   end
@@ -338,5 +410,161 @@ begin
         mbConfirmation, MB_YESNO) <> IDYES then
         Result := False;
     end;
+  end;
+end;
+
+{ --- WebView2 Runtime и устаревший автозапуск (issue #11) ----------------
+
+  Рантайм WebView2 уже есть на машине. Признаки — реестровые ключи
+  per-machine (HKLM, ветка WOW6432Node) и per-user (HKCU) из документации
+  Microsoft; значение 0.0.0.0 рантаймом не считается. }
+function WebView2RuntimeInstalled(): Boolean;
+var
+  V: String;
+  Machine, User: Boolean;
+begin
+  V := '';
+  Machine := RegQueryStringValue(HKLM,
+    'SOFTWARE\WOW6432Node\' + WebView2ClientKey, 'pv', V) and (V <> '') and (V <> '0.0.0.0');
+  V := '';
+  User := RegQueryStringValue(HKCU,
+    'Software\' + WebView2ClientKey, 'pv', V) and (V <> '') and (V <> '0.0.0.0');
+  Result := Machine or User;
+end;
+
+{ Скачанное — настоящий exe установщика, а не страница с ошибкой: ссылка
+  Microsoft на неизвестный LinkId отдаёт 200 OK с html. }
+function DownloadedFileIsExe(const Path: String): Boolean;
+var
+  F: TFileStream;
+  Head: AnsiString;
+begin
+  Result := False;
+  if not FileExists(Path) then
+    Exit;
+  F := TFileStream.Create(Path, 0);
+  try
+    SetLength(Head, 2);
+    F.Read(Head, 2);
+  finally
+    F.Free;
+  end;
+  Result := Head = 'MZ';
+end;
+
+{ Рантайм нужен только экрану и ставится только когда его нет. Скачиваем
+  официальный вечнозелёный загрузчик во временный каталог установщика (сети
+  нет — DownloadTemporaryFile бросает исключение, установка не падает: причина
+  уходит оператору после установки, см. ReportWebView2Missing). }
+procedure PrepareWebView2Runtime();
+var
+  Dest: String;
+begin
+  WebView2SetupPath := '';
+  if not WizardIsComponentSelected('kiosk') then
+    Exit;
+  if WebView2RuntimeInstalled then
+  begin
+    Log('WebView2 Runtime уже установлен — установщик его не трогает.');
+    Exit;
+  end;
+  Dest := ExpandConstant('{tmp}\' + WebView2SetupFile);
+  try
+    DownloadTemporaryFile(WebView2SetupUrl, WebView2SetupFile, '', nil);
+    if not DownloadedFileIsExe(Dest) then
+    begin
+      DeleteFile(Dest);
+      RaiseException('по ссылке отвечает не загрузчик, а страница');
+    end;
+    WebView2SetupPath := Dest;
+    Log('Загрузчик WebView2 Runtime скачан: ' + Dest);
+  except
+    WebView2Detail := GetExceptionMessage;
+    WebView2Error :=
+      'Не удалось получить установщик Microsoft Edge WebView2 Runtime (' +
+      WebView2SetupUrl + ').';
+    Log(WebView2Error + ' ' + WebView2Detail);
+  end;
+end;
+
+{ /silent /install — без вопросов и без требования перезагрузки. Прав
+  администратора установщику не нужны (PrivilegesRequired=lowest), поэтому
+  рантайм встаёт в профиль того же пользователя, что и сам экран; уже
+  установленный (в т.ч. общесистемный) мы не трогаем. }
+procedure InstallWebView2Runtime();
+var
+  Res: Integer;
+begin
+  if WebView2SetupPath = '' then
+    Exit;
+  if not Exec(WebView2SetupPath, '/silent /install', '', SW_HIDE,
+    ewWaitUntilTerminated, Res) then
+  begin
+    WebView2Detail := 'код запуска ' + IntToStr(Res);
+    WebView2Error := 'Не удалось запустить установщик Microsoft Edge WebView2 Runtime.';
+    Log(WebView2Error + ' ' + WebView2Detail);
+    Exit;
+  end;
+  if (Res <> 0) or not WebView2RuntimeInstalled then
+  begin
+    WebView2Detail := 'код ' + IntToStr(Res);
+    WebView2Error := 'Microsoft Edge WebView2 Runtime не установился.';
+    Log(WebView2Error + ' ' + WebView2Detail);
+  end
+  else
+    Log('WebView2 Runtime установлен.');
+end;
+
+{ Рантайм не встал — установку откатывать нечем и незачем, но оператор
+  обязан узнать об этом сразу: иначе экран молча не откроется. На явной
+  установке — сообщение; в тихой (/SILENT: вопросов быть не может) — текст
+  в лог приложений, иначе на заводской машине никто не узнает, почему
+  дашборд не показывается. }
+procedure ReportWebView2Missing();
+var
+  NoteFile, Note: String;
+begin
+  if WebView2Error = '' then
+    Exit;
+  Note := GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + ' EkranchikSetup: ' +
+    WebView2Error + #13#10 +
+    'Без Microsoft Edge WebView2 Runtime экран киоска не откроется. ' +
+    'Скачать рантайм: https://developer.microsoft.com/microsoft-edge/webview2/' + #13#10;
+  if WebView2Detail <> '' then
+    Note := Note + 'Подробности: ' + WebView2Detail + #13#10;
+  NoteFile := ExpandConstant('{app}\logs\install-webview2.txt');
+  ForceDirectories(ExtractFileDir(NoteFile));
+  SaveStringToFile(NoteFile, Note, True);
+  if not WizardSilent then
+    MsgBox(WebView2Error + #13#10#13#10 +
+      'Экран киоска до установки Microsoft Edge WebView2 Runtime не откроется.' + #13#10 +
+      'Скачайте рантайм ' +
+      '(https://developer.microsoft.com/microsoft-edge/webview2/) и запустите ' +
+      'установку ещё раз — установщик поставит его сам.',
+      mbError, MB_OK);
+end;
+
+{ Устаревший автозапуск прежнего единого приложения: на машине, где поставили
+  только экран, сервер не запускают, а значение осталось бы навсегда, и
+  Windows при каждом входе пыталась бы запустить несуществующий файл. Чистит
+  установщик; сервер по-прежнему делает то же самое при старте (страховка). }
+procedure RemoveLegacyAutostart();
+begin
+  if RegDeleteValue(HKCU, WinRunKey, LegacyAutostartValue) then
+    Log('Удалено устаревшее значение автозапуска ' + LegacyAutostartValue + '.');
+end;
+
+{ Загрузчик рантайма готовим между выбором компонентов и раскладкой файлов,
+  сам рантайм ставим после файлов и до [Run]: приложения из [Run] стартуют
+  уже с рабочим WebView2. }
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+    PrepareWebView2Runtime()
+  else if CurStep = ssPostInstall then
+  begin
+    RemoveLegacyAutostart;
+    InstallWebView2Runtime;
+    ReportWebView2Missing;
   end;
 end;

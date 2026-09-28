@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>EkranchikServer</AssemblyName>
+    <ApplicationIcon>..\launcher.ico</ApplicationIcon>
+    <Description>Ekranchik Server: backend + web UI + tray + settings, no screen</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Общий с киоском модуль обновлений (канал full-v*). Экран киоска
+         в сервер НЕ входит: это отдельное приложение и отдельный процесс. -->
+    <Compile Include="..\KioskShared.cs" Link="KioskShared.cs" />
+    <Compile Include="..\UpdateChecker.cs" Link="UpdateChecker.cs" />
+    <Compile Include="..\SettingsForm.cs" Link="SettingsForm.cs" />
+  </ItemGroup>
+
+</Project>

@@ -116,4 +116,4 @@ launcher/*.pdb
 launcher/Microsoft.Web.WebView2.*.xml
 
 # Smoke harness scratch (пересоздаётся smoke.py на каждом прогоне)
-launcher/source_code/EkranchikAllInOne/smoke_tmp/
+launcher/source_code/EkranchikServer/smoke_tmp/

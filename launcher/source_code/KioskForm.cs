@@ -2,143 +2,19 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
 namespace EkranchikShared
 {
-    // === Хост киоска: контракт встроенного режима (issue #9). ===
-    // Standalone (host == null) — самостоятельный киоск: свой трей, проверка
-    // обновлений с баннером, Esc = выход из процесса.
-    // Hosted (All-in-One) — окно экрана живёт в процессе полного приложения:
-    // своего трея нет, наружу на дашборде ничего не показывается, Esc и
-    // «Свернуть» = спрятать окно в трей; сервер продолжает работу.
-    public interface IKioskHost
-    {
-        // Экран не открылся (WebView2 не поднялся даже с чистым профилем) —
-        // хост пишет причину в свой лог: иначе отказ виден только в окне,
-        // которое на заводской машине некому заметить.
-        void OnKioskScreenFailed(string reason);
-        // Пользователь попросил закрыть экран: хост решает (прячет в трей).
-        void OnKioskCloseRequested();
-        // Переключение режима простоя — для текста пункта трея хоста.
-        void OnIdleModeChanged(bool idle);
-    }
-
-    // === Конфигурация киоска: %LOCALAPPDATA%\Ekranchik\kiosk_config.json ===
-    public class KioskConfig
-    {
-        public string url { get; set; } = "http://localhost:5173";
-        public int monitor { get; set; } = 0;
-        public bool auto_launch_on_second_monitor { get; set; } = false;
-        public bool windows_startup { get; set; } = false;
-    }
-
-    public static class ConfigManager
-    {
-        private static readonly string ConfigDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Ekranchik"
-        );
-        private static readonly string ConfigFile = Path.Combine(ConfigDir, "kiosk_config.json");
-
-        public static KioskConfig Load()
-        {
-            var config = new KioskConfig();
-            if (File.Exists(ConfigFile))
-            {
-                try
-                {
-                    string json = File.ReadAllText(ConfigFile);
-                    var loaded = JsonSerializer.Deserialize<KioskConfig>(json);
-                    if (loaded != null)
-                    {
-                        config = loaded;
-                    }
-                }
-                catch { /* Игнорируем ошибки чтения */ }
-            }
-            return config;
-        }
-
-        // Запись настроек киоска. Автозапуск здесь НЕ пишется: реестром
-        // управляет окно настроек (WindowsAutoStart.Apply) — иначе встроенный
-        // режим постоянно перезаписывал бы Run-значение, мигрированное
-        // All-in-One (issue #9).
-        public static void Save(string url, int monitor, bool autoLaunch, bool windowsStartup)
-        {
-            try
-            {
-                Directory.CreateDirectory(ConfigDir);
-                var config = new KioskConfig
-                {
-                    url = url,
-                    monitor = monitor,
-                    auto_launch_on_second_monitor = autoLaunch,
-                    windows_startup = windowsStartup
-                };
-
-                string json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(ConfigFile, json);
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"[ERROR] Ошибка сохранения конфига: {e.Message}");
-            }
-        }
-    }
-
-    // === Автозапуск Windows: HKCU Software\Microsoft\Windows\CurrentVersion\Run.
-    // Общий для обоих приложений; имена значений не пересекаются: киоск —
-    // "Ekranchik" (--no-gui), All-in-One — "EkranchikAllInOne" (--silent).
-    // runKeyPath != null — тестовый подключ (smoke round-trip, настоящий Run
-    // не пачкать). ===
-    public static class WindowsAutoStart
-    {
-        public const string RealRunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        public const string KioskValueName = "Ekranchik";
-        public const string KioskArgsSuffix = " --no-gui";
-        public const string AllInOneValueName = "EkranchikAllInOne";
-        public const string AllInOneArgsSuffix = " --silent";
-
-        public static string EffectiveKeyPath(string? runKeyPath) =>
-            string.IsNullOrWhiteSpace(runKeyPath) ? RealRunKeyPath : runKeyPath!;
-
-        public static void Apply(bool enable, string valueName, string argsSuffix, string? runKeyPath = null)
-        {
-            string keyPath = EffectiveKeyPath(runKeyPath);
-            using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(keyPath, true))
-            {
-                if (key == null)
-                    throw new InvalidOperationException($"cannot open HKCU\\{keyPath}");
-                if (enable)
-                    key.SetValue(valueName, $"\"{Application.ExecutablePath}\"{argsSuffix}");
-                else
-                    key.DeleteValue(valueName, throwOnMissingValue: false);
-            }
-        }
-
-        // Миграция: удалить чужое значение (например, киоск-запись со старой
-        // схемы, когда полный режим автостартовал два процесса).
-        public static void DeleteValue(string valueName, string? runKeyPath = null)
-        {
-            string keyPath = EffectiveKeyPath(runKeyPath);
-            using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(keyPath, writable: true))
-            {
-                key?.DeleteValue(valueName, throwOnMissingValue: false);
-            }
-        }
-    }
 
     // === Киоск: полноэкранное WebView2-окно дашборда на выделенном мониторе.
-    // Самостоятельный киоск — ещё и IUpdateHost: проверка/установка обновлений
-    // теперь в окне настроек (пункт трея убран), баннер на дашборде остался. ===
+    // Самостоятельное приложение (отдельный процесс и отдельный exe): свой
+    // трей, проверка/установка обновлений в окне настроек, баннер на
+    // дашборде, Esc = выход из процесса. ===
     public class KioskForm : Form, IUpdateHost
     {
-        private readonly IKioskHost? _host;
-        private readonly bool _hosted;
         private WebView2 webView = null!;
         private string targetUrl;
         private int monitorIndex;
@@ -150,14 +26,13 @@ namespace EkranchikShared
         private UpdateInfo? _pendingUpdate;
         private string _updateStatus = "Нажмите «Проверить обновления».";
 
-        public KioskForm(string url, int monitor, IKioskHost? host = null)
+        public KioskForm(string url, int monitor)
         {
-            this._host = host;
-            this._hosted = host != null;
             this.targetUrl = url;
             this.monitorIndex = monitor;
 
             this.Text = "Ekranchik";
+
             // Окно на весь монитор, вёрстки в пикселях нет — автоскейл WinForms
             // на форме без designer-метрик только сжимает (делит на dpi/96).
             this.AutoScaleMode = AutoScaleMode.None;
@@ -176,18 +51,12 @@ namespace EkranchikShared
 
             PositionOnMonitor();
             InitializeWebView();
-            if (!_hosted)
-            {
-                InitializeTray();
-            }
+            InitializeTray();
 
             // Перехват клавиш на уровне формы
             this.KeyPreview = true;
             this.KeyDown += KioskForm_KeyDown;
-            if (!_hosted)
-            {
-                StartUpdateChecks();
-            }
+            StartUpdateChecks();
         }
 
         private void PositionOnMonitor()
@@ -240,14 +109,13 @@ namespace EkranchikShared
             webView = new WebView2 { Dock = DockStyle.Fill };
             this.Controls.Add(webView);
 
-            // Создаем изолированную папку кэша/профиля WebView2. Встроенный
-            // режим (issue #9) живёт в Ekranchik\ — не делит профиль с
-            // самостоятельным киоском (они могут работать одновременно на
-            // одной машине, например дев-киоск + merged).
-            string profileRoot = _hosted ? "Ekranchik" : "EkranchikKiosk";
+            // Создаём изолированную папку кэша/профиля WebView2. Профиль
+            // экрана отдельный и не общий с сервером: оба приложения могут
+            // работать на одной машине одновременно, а общий профиль
+            // залочил бы второй запуск.
             string userDataFolder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                profileRoot, "WebView2Data"
+                "EkranchikKiosk", "WebView2Data"
             );
 
             // Инициализация WebView2 не бросает исключение, а может просто
@@ -320,27 +188,16 @@ namespace EkranchikShared
             }
         }
 
-        // Единая точка отказа WebView2: окно с причиной (в полном режиме
-        // сервер продолжает работать, в самостоятельном киоске — выход).
+        // Единая точка отказа WebView2: окно с причиной и выход из процесса —
+        // экрана без WebView2 работать нечем.
         private void FailWebView2(string reason)
         {
-            try
-            {
-                _host?.OnKioskScreenFailed(reason);
-            }
-            catch { }
             MessageBox.Show(
                 "Экран киоска не открылся: WebView2 Runtime не ответил за " +
                 $"{(int)WebView2InitTimeout.TotalSeconds} с.\n\n{reason}\n\n" +
                 "Проверьте, что установлен Microsoft Edge WebView2 Runtime " +
                 "(https://developer.microsoft.com/microsoft-edge/webview2/).",
                 "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            if (_hosted)
-            {
-                try { this.Hide(); } catch { }
-                _host?.OnKioskCloseRequested();
-                return;
-            }
             Application.Exit();
         }
 
@@ -356,10 +213,7 @@ namespace EkranchikShared
                 else if (msg == "minimize_app")
                 {
                     this.Invoke(new Action(() => {
-                        if (_hosted)
-                            Hide();
-                        else
-                            this.WindowState = FormWindowState.Minimized;
+                        this.WindowState = FormWindowState.Minimized;
                     }));
                 }
                 else if (msg == "switch_monitor")
@@ -397,15 +251,10 @@ namespace EkranchikShared
             }
         }
 
-        // Esc/крестик: standalone — выход из процесса; hosted — хост прячет
-        // экран в трей (сервер работает, возврат кликом по иконке).
+        // Esc, крестик на инжектированной панели и пункт трея «Выход»:
+        // приложение закрывается целиком.
         private void CloseApp()
         {
-            if (_hosted)
-            {
-                _host?.OnKioskCloseRequested();
-                return;
-            }
             try { _updateTimer?.Dispose(); } catch { }
             if (trayIcon != null)
             {
@@ -417,20 +266,7 @@ namespace EkranchikShared
             Environment.Exit(0);
         }
 
-        // Alt+F4/системное закрытие в встроенном режиме ведёт себя как Esc:
-        // окно прячется, приложение продолжает работать.
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            base.OnFormClosing(e);
-            if (_hosted && !e.Cancel)
-            {
-                e.Cancel = true;
-                _host?.OnKioskCloseRequested();
-            }
-        }
-
         // === Проверка обновлений: канал v* + ассет Ekranchik.exe (тихий фейл без сети) ===
-        // Только самостоятельный киоск; встроенный режим обновляется хостом.
         private void StartUpdateChecks()
         {
             Task.Run(() => CheckForUpdatesAsync(manual: false));
@@ -680,7 +516,6 @@ namespace EkranchikShared
                 if (idleMenuItem != null) idleMenuItem.Text = "💻 Вернуться к работе";
                 LoadLocalPage("idle_clock.html", GetFallbackClockHtml());
             }
-            _host?.OnIdleModeChanged(isIdleMode);
         }
 
         // Поиск файла HTML в окрестностях и загрузка, либо загрузка fallback строки

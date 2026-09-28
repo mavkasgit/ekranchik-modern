@@ -8,16 +8,21 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Ekranchik</AssemblyName>
     <ApplicationIcon>launcher.ico</ApplicationIcon>
+    <!-- WebView2 тянет свой Wpf-вариант с WindowsBase 5.0 — шум MSB3277.
+         Экран — единственное приложение, которому WebView2 нужна
+         на самом деле, поэтому заглушка предупреждения живёт здесь. -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4022.49" />
   </ItemGroup>
 
-  <!-- Вложенный проект AllInOne — не часть киоска: без этого его исходники
-       и obj/ компилируются в Ekranchik.exe (дубли атрибутов сборки). -->
+  <!-- Вложенный проект сервера — не часть киоска: без этого его исходники
+       и obj/ компилируются в Ekranchik.exe (дубли точки входа и атрибутов
+       сборки). -->
   <ItemGroup>
-    <Compile Remove="EkranchikAllInOne/**/*.cs" />
+    <Compile Remove="EkranchikServer/**/*.cs" />
   </ItemGroup>
 
 </Project>

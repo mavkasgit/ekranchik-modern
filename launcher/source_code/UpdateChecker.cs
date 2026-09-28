@@ -1,6 +1,6 @@
-// Общий модуль проверки обновлений: EkranchikKiosk (канал v*) +
-// EkranchikAllInOne (канал full-v*). Один файл без нового проекта:
-// в киоске лежит рядом с Program.cs (SDK подхватывает сам), в AllInOne —
+// Общий модуль проверки обновлений: экран киоска EkranchikKiosk (канал v*)
+// + сервер EkranchikServer (канал full-v*). Один файл без нового проекта:
+// в киоске лежит рядом с Program.cs (SDK подхватывает сам), в сервере —
 // линком <Compile Include="..\UpdateChecker.cs" Link="UpdateChecker.cs" />.
 // GitHub Releases API без авторизации; без сети — тихий null.
 using System;

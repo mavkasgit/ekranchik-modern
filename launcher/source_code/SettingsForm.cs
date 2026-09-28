@@ -6,10 +6,11 @@ using System.Windows.Forms;
 
 namespace EkranchikShared
 {
-    // === Модель настроек для единого окна (issue #9). ===
-    // Киоск-вариант: URL + монитор + автозапуск + автозапуск на втором
-    // мониторе. Full-вариант (All-in-One): серверная секция (Excel, OPC UA,
-    // симуляция) вместо URL. null-свойство = «секцию не показывать».
+    // === Модель настроек для единого окна. Два приложения — два варианта
+    // формы. Экран киоска: URL дашборда, монитор, автозапуск. Сервер:
+    // серверная секция (Excel, OPC UA, симуляция, локалка) и «Адрес для
+    // экранов» — то, что вводится в настройках экрана киоска. Секция,
+    // которой у приложения нет, не показывается: null-свойство = «скрыть». ===
     public interface ISettingsModel
     {
         string? Url { get; }
@@ -19,16 +20,19 @@ namespace EkranchikShared
         // Доступ с других машин локалки (--host 0.0.0.0). null-свойство =
         // «секцию не показывать» (киоск: у него своего сервера нет).
         bool? LanAccess { get; }
-        int MonitorIndex { get; }
+        // Выбор монитора — только экран киоска; у сервера null (секция скрыта).
+        int? MonitorIndex { get; }
+        // Порт дашборда для «Адреса для экранов»; у экрана null (секция скрыта).
+        int? KioskPort { get; }
         bool WindowsAutostart { get; }
         bool AutoLaunchOnSecondMonitor { get; }
 
         void Save(string? url, string? excelPath, string? opcua, bool simulation,
-                  bool lanAccess, int monitorIndex, bool windowsAutostart,
+                  bool lanAccess, int? monitorIndex, bool windowsAutostart,
                   bool autoLaunchOnSecondMonitor);
     }
 
-    // === Обновления: общий контракт полного режима и киоска (проверить /
+    // === Обновления: общий контракт сервера и киоска (проверить /
     // установить в окне настроек). ===
     public interface IUpdateHost
     {
@@ -38,20 +42,19 @@ namespace EkranchikShared
         Task InstallUpdateAsync();
     }
 
-    // === Хост единого окна настроек (только полный режим): версии и действия
-    // полного режима. Киоск-вариант передаёт null — из окна убираются
-    // «Показать экран», «Открыть папку логов» и блок версий. ===
+    // === Хост единого окна настроек (только сервер): версии и действия
+    // сервера. Экран киоска передаёт null — из окна убираются «Открыть
+    // папку логов» и блок версий. ===
     public interface ISettingsHost : IUpdateHost
     {
         string VersionsText(string backendVersion);
         Task<string> GetBackendVersionAsync();
-        void ShowKioskWindow();
         void OpenLogsFolder();
         void OnSettingsSaved();
     }
 
     // Киоск-вариант модели: kiosk_config.json + автозапуск киоска в реестре
-    // (старая логика LauncherForm: галка применяется сразу).
+    // (логика KioskForm: галка применяется сразу).
     public sealed class KioskSettingsModel : ISettingsModel
     {
         private readonly KioskConfig _config;
@@ -66,22 +69,25 @@ namespace EkranchikShared
         public string? OpcuaEndpoint => null;
         public bool Simulation => false;
         public bool? LanAccess => null;
-        public int MonitorIndex => _config.monitor;
+        public int? MonitorIndex => _config.monitor;
+        // Адрес для экранов у экрана нечего показывать: он сам клиент.
+        public int? KioskPort => null;
         public bool WindowsAutostart => _config.windows_startup;
         public bool AutoLaunchOnSecondMonitor => _config.auto_launch_on_second_monitor;
 
         public void Save(string? url, string? excelPath, string? opcua, bool simulation,
-                         bool lanAccess, int monitorIndex, bool windowsAutostart,
+                         bool lanAccess, int? monitorIndex, bool windowsAutostart,
                          bool autoLaunchOnSecondMonitor)
         {
-            ConfigManager.Save(url ?? _config.url, monitorIndex, autoLaunchOnSecondMonitor, windowsAutostart);
+            ConfigManager.Save(url ?? _config.url, monitorIndex ?? _config.monitor,
+                autoLaunchOnSecondMonitor, windowsAutostart);
             WindowsAutoStart.Apply(windowsAutostart, WindowsAutoStart.KioskValueName, WindowsAutoStart.KioskArgsSuffix);
         }
     }
 
     // === Единое окно настроек (issue #4/#9), стиль Slate-900/800, Segoe UI.
-    // Киоск-вариант — сокращённый; полный — с серверной секцией, версиями и
-    // действиями полного режима. ===
+    // Киоск-вариант — сокращённый; серверный — с серверной секцией, версиями и
+    // действиями сервера. ===
     public class SettingsForm : Form
     {
         private readonly ISettingsModel _model;
@@ -91,7 +97,7 @@ namespace EkranchikShared
         private readonly TextBox? _txtOpcua;
         private readonly CheckBox? _chkSim;
         private readonly CheckBox? _chkLan;
-        private readonly ComboBox _cmbMonitor;
+        private readonly ComboBox? _cmbMonitor;
         private readonly CheckBox _chkAutostart;
         private readonly CheckBox? _chkAutoLaunch;
         private readonly Label? _lblVersions;
@@ -103,7 +109,7 @@ namespace EkranchikShared
         {
             _model = model;
             _host = host;
-            // Обновления: хост полного режима сам IUpdateHost; киоск передаёт
+            // Обновления: хост сервера сам IUpdateHost; экран киоска передаёт
             // себя отдельным аргументом (host == null).
             _updates = updates ?? (IUpdateHost?)host;
             Color bgDark = Color.FromArgb(15, 23, 42);      // #0f172a
@@ -119,7 +125,10 @@ namespace EkranchikShared
             // содержимое обрезается.
             this.AutoScaleDimensions = new SizeF(96F, 96F);
             this.AutoScaleMode = AutoScaleMode.Dpi;
-            this.Size = host != null ? new Size(540, 800) : new Size(540, _updates != null ? 560 : 430);
+            // Серверный вариант выше: серверная секция + адрес для экранов +
+            // версии/обновления + действия. На низких разрешениях
+            // ApplyDpiScale подрежет окно по рабочей области (AutoScroll).
+            this.Size = host != null ? new Size(540, 840) : new Size(540, _updates != null ? 560 : 430);
             this.Text = "Ekranchik — Настройки";
             this.BackColor = bgDark;
             this.ForeColor = fgLight;
@@ -170,7 +179,7 @@ namespace EkranchikShared
                 y += 44;
             }
 
-            // --- Серверная секция (только полный режим) ---
+            // --- Серверная секция (только у сервера) ---
             if (model.ExcelPath != null)
             {
                 var lblExcel = new Label
@@ -259,38 +268,83 @@ namespace EkranchikShared
                 y += 44;
             }
 
-            // --- Монитор для киоска (оба варианта) ---
-            var lblMonitor = new Label
+            // --- Монитор для киоска: только у экрана киоска. У сервера своих
+            // мониторов нет, модель отдаёт null — секция не строится. ---
+            ComboBox? cmbMonitor = null;
+            if (model.MonitorIndex != null)
             {
-                Text = "Монитор для киоска:",
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
-                Location = new Point(40, y),
-                Size = new Size(440, 20),
-                ForeColor = fgMuted
-            };
-            this.Controls.Add(lblMonitor);
-            y += 22;
-            _cmbMonitor = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font("Segoe UI", 10),
-                BackColor = bgCard,
-                ForeColor = fgLight,
-                Location = new Point(40, y),
-                Size = new Size(440, 28)
-            };
-            var screens = Screen.AllScreens;
-            for (int i = 0; i < screens.Length; i++)
-            {
-                var s = screens[i];
-                string name = s.Primary ? "Основной" : "Дополнительный";
-                _cmbMonitor.Items.Add($"Монитор {i} — {name} ({s.Bounds.Width}x{s.Bounds.Height})");
+                var lblMonitor = new Label
+                {
+                    Text = "Монитор для киоска:",
+                    Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                    Location = new Point(40, y),
+                    Size = new Size(440, 20),
+                    ForeColor = fgMuted
+                };
+                this.Controls.Add(lblMonitor);
+                y += 22;
+                cmbMonitor = new ComboBox
+                {
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    Font = new Font("Segoe UI", 10),
+                    BackColor = bgCard,
+                    ForeColor = fgLight,
+                    Location = new Point(40, y),
+                    Size = new Size(440, 28)
+                };
+                var screens = Screen.AllScreens;
+                for (int i = 0; i < screens.Length; i++)
+                {
+                    var s = screens[i];
+                    string name = s.Primary ? "Основной" : "Дополнительный";
+                    cmbMonitor.Items.Add($"Монитор {i} — {name} ({s.Bounds.Width}x{s.Bounds.Height})");
+                }
+                if (cmbMonitor.Items.Count == 0)
+                    cmbMonitor.Items.Add("Монитор 0");
+                cmbMonitor.SelectedIndex = Math.Min(Math.Max(model.MonitorIndex.Value, 0), cmbMonitor.Items.Count - 1);
+                this.Controls.Add(cmbMonitor);
+                y += 44;
             }
-            if (_cmbMonitor.Items.Count == 0)
-                _cmbMonitor.Items.Add("Монитор 0");
-            _cmbMonitor.SelectedIndex = Math.Min(Math.Max(model.MonitorIndex, 0), _cmbMonitor.Items.Count - 1);
-            this.Controls.Add(_cmbMonitor);
-            y += 44;
+            _cmbMonitor = cmbMonitor;
+
+            // --- Адрес для экранов: только сервер. Это то, что оператор
+            // вводит в поле «URL дашборда» настроек экрана киоска; сам адрес
+            // собирает общий код по порту из конфига сервера. ---
+            if (model.KioskPort != null)
+            {
+                var lblKioskAddr = new Label
+                {
+                    Text = "Адрес для экранов (вписать в настройки экрана киоска):",
+                    Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                    Location = new Point(40, y),
+                    Size = new Size(440, 20),
+                    ForeColor = fgMuted
+                };
+                this.Controls.Add(lblKioskAddr);
+                y += 22;
+                this.Controls.Add(new TextBox
+                {
+                    Text = KioskAddress.ForPort(model.KioskPort.Value),
+                    ReadOnly = true,
+                    Font = new Font("Segoe UI", 10),
+                    BackColor = bgCard,
+                    ForeColor = fgLight,
+                    Location = new Point(40, y),
+                    Size = new Size(440, 28),
+                    BorderStyle = BorderStyle.FixedSingle
+                });
+                y += 30;
+                var hintAddr = new Label
+                {
+                    Text = "Скопируйте адрес: с него экран киоска открывает дашборд.",
+                    Font = new Font("Segoe UI", 8.5f),
+                    Location = new Point(40, y),
+                    Size = new Size(440, 20),
+                    ForeColor = fgMuted
+                };
+                this.Controls.Add(hintAddr);
+                y += 30;
+            }
 
             // --- Автозапуск ---
             _chkAutostart = new CheckBox
@@ -310,7 +364,7 @@ namespace EkranchikShared
             if (model.Url != null)
             {
                 // Киоск-вариант: автозапуск на втором мониторе без окна настроек
-                // (старая логика LauncherForm).
+                // (логика KioskForm).
                 var chkAutoLaunch = new CheckBox
                 {
                     Text = "Автозапуск на втором мониторе (без окна настроек)",
@@ -329,7 +383,7 @@ namespace EkranchikShared
             {
                 Text = host != null
                     ? "Excel, OPC UA и симуляция применяются при следующем запуске (env сервера). " +
-                      "Монитор — сразу к живому экрану. Автозапуск записывается в реестр сразу."
+                      "Автозапуск записывается в реестр сразу."
                     : "URL и монитор применяются сразу. Автозапуск записывается в реестр сразу.",
                 Font = new Font("Segoe UI", 8.5f),
                 Location = new Point(40, y),
@@ -339,9 +393,9 @@ namespace EkranchikShared
             this.Controls.Add(hint);
             y += 52;
 
-            // --- Версии, обновления и действия полного режима. Секция
-            // обновлений общая (появилась и в киоске — раньше была только в
-            // трее); версии и действия — только полный режим. ---
+            // --- Версии, обновления и действия сервера. Секция обновлений
+            // общая (появилась и в киоске — раньше была только в трее); версии
+            // и действия — только у сервера. ---
             if (_updates != null)
             {
                 var lblVerTitle = new Label
@@ -430,20 +484,8 @@ namespace EkranchikShared
 
                 if (host != null)
                 {
-                    var btnShow = new Button
-                    {
-                        Text = "Показать экран",
-                        Font = new Font("Segoe UI", 9),
-                        BackColor = bgCard,
-                        ForeColor = fgLight,
-                        FlatStyle = FlatStyle.Flat,
-                        Location = new Point(40, y),
-                        Size = new Size(210, 32),
-                        Cursor = Cursors.Hand
-                    };
-                    btnShow.FlatAppearance.BorderColor = borderGray;
-                    btnShow.Click += (s, e) => host.ShowKioskWindow();
-                    this.Controls.Add(btnShow);
+                    // «Показать экран» убрано: экран — отдельное приложение,
+                    // показывать его серверу нечем.
 
                     var btnLogs = new Button
                     {
@@ -452,8 +494,8 @@ namespace EkranchikShared
                         BackColor = bgCard,
                         ForeColor = fgLight,
                         FlatStyle = FlatStyle.Flat,
-                        Location = new Point(260, y),
-                        Size = new Size(220, 32),
+                        Location = new Point(40, y),
+                        Size = new Size(440, 32),
                         Cursor = Cursors.Hand
                     };
                     btnLogs.FlatAppearance.BorderColor = borderGray;
@@ -550,7 +592,7 @@ namespace EkranchikShared
                     _txtOpcua?.Text.Trim(),
                     _chkSim?.Checked ?? false,
                     _chkLan?.Checked ?? false,
-                    Math.Max(_cmbMonitor.SelectedIndex, 0),
+                    _cmbMonitor != null ? Math.Max(_cmbMonitor.SelectedIndex, 0) : (int?)null,
                     _chkAutostart.Checked,
                     _chkAutoLaunch?.Checked ?? false);
             }
@@ -560,8 +602,8 @@ namespace EkranchikShared
                     "Ekranchik", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            // Хост применяет монитор к живому экрану (полный режим); в
-            // киоск-вызове изменения применит окно киоска после DialogResult.OK.
+            // Сервер применяет свои настройки (env, конфиг), экран киоска —
+            // свой конфиг; перезапуск окна настроек тут ни при чём.
             _host?.OnSettingsSaved();
             this.DialogResult = DialogResult.OK;
             this.Close();
