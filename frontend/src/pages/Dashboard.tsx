@@ -38,7 +38,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeConnection } from '@/hooks/useRealtime'
 import { DASHBOARD_KEY } from '@/lib/queryKeys'
-import { colorHex } from '@/lib/domain/color'
+import { colorHex, colorName } from '@/lib/domain/color'
 import { hangerKey } from '@/lib/domain/hanger'
 import { photoUrl } from '@/lib/domain/photo'
 import { profileText } from '@/lib/domain/profile'
@@ -851,7 +851,7 @@ function DataTable({
                 }}
               >
                 <div className="inline-flex flex-col items-center max-w-[80px]">
-                  <span className="text-sm leading-tight text-center break-words">{hanger.color}</span>
+                  <span className="text-sm leading-tight text-center break-words">{colorName(hanger.color)}</span>
                   <div
                     className="w-full h-1.5 rounded-full mt-0.5"
                     style={{ backgroundColor: colorHex(hanger.color), minWidth: '50px' }}
@@ -978,7 +978,7 @@ function SidebarQueueTable({
                             <span 
                               className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-black/15 dark:border-white/15" 
                               style={{ backgroundColor: colorHex(hanger.color) }}
-                              title={hanger.color}
+                              title={colorName(hanger.color)}
                             />
                           )}
                           <span className="truncate">{displayProfile}</span>

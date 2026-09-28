@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react'
 import { useLineStatus } from '@/hooks/useLineStatus'
-import { colorAbbreviation, colorCellStyle, colorHex } from '@/lib/domain/color'
+import { colorCellStyle, colorHex, colorName } from '@/lib/domain/color'
 import { hangerKey } from '@/lib/domain/hanger'
 import { profileText } from '@/lib/domain/profile'
 import type { LineStatus } from '@/types/line'
@@ -144,7 +144,7 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
   )
 }
 
-/** Общие поля карточки ванны: подпись подвеса, профиль, аббревиатура цвета, стиль ячейки. */
+/** Общие поля карточки ванны: подпись подвеса, профиль, название цвета, стиль ячейки. */
 function bathCardFields(item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber) {
   const meta = hangerMetaByNumber[hangerKey(item.hangerNumber)]
   const profile = pickMetaValue(item.article, meta?.profile)
@@ -153,7 +153,7 @@ function bathCardFields(item: BathForecastItem, hangerMetaByNumber: HangerMetaBy
   return {
     hangerLabel: item.hangerNumber > 0 ? `№${item.hangerNumber}` : '№—',
     profileDigits: profileText(profile),
-    colorAbbr: colorAbbreviation(color),
+    colorLabel: colorName(color),
     fillStyle: colorCellStyle(colorHex(color)),
   }
 }
@@ -163,7 +163,7 @@ function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hanger
   const seconds = item.remainingTime % 60
   const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
 
-  const { hangerLabel, profileDigits, colorAbbr, fillStyle } = bathCardFields(item, hangerMetaByNumber)
+  const { hangerLabel, profileDigits, colorLabel, fillStyle } = bathCardFields(item, hangerMetaByNumber)
 
   let timeColor = 'text-green-600'
   if (item.remainingTime < 60) {
@@ -184,14 +184,14 @@ function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hanger
         <span className="opacity-55 mx-1">·</span>
         <span className="font-semibold">{profileDigits}</span>
         <span className="opacity-55 mx-1">·</span>
-        <span className="font-black text-[18px] leading-[18px] text-black">{colorAbbr}</span>
+        <span className="font-black text-[18px] leading-[18px] text-black">{colorLabel}</span>
       </div>
     </div>
   )
 }
 
 function UnloadCard({ item, hangerMetaByNumber, isCompact, unloadTimeStr }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber, isCompact: boolean, unloadTimeStr: string }) {
-  const { hangerLabel, profileDigits, colorAbbr, fillStyle } = bathCardFields(item, hangerMetaByNumber)
+  const { hangerLabel, profileDigits, colorLabel, fillStyle } = bathCardFields(item, hangerMetaByNumber)
 
   return (
     <div className="flex items-center gap-1 px-1 py-0 border-l border-r border-slate-200 dark:border-slate-800 shrink-0">
@@ -207,7 +207,7 @@ function UnloadCard({ item, hangerMetaByNumber, isCompact, unloadTimeStr }: { it
           <span className="opacity-55 mx-1">·</span>
           <span className="font-semibold">{profileDigits}</span>
           <span className="opacity-55 mx-1">·</span>
-          <span className="font-black text-[18px] leading-[18px] text-black">{colorAbbr}</span>
+          <span className="font-black text-[18px] leading-[18px] text-black">{colorLabel}</span>
         </div>
       </div>
     </div>
