@@ -37,6 +37,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 
 import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
 import { useRealtimeConnection } from '@/hooks/useRealtime'
+import { useTestRun } from '@/hooks/useTestRun'
 import { DASHBOARD_KEY } from '@/lib/queryKeys'
 import { COLOR_CATALOG, colorHex, colorName } from '@/lib/domain/color'
 import { hangerKey } from '@/lib/domain/hanger'
@@ -49,6 +50,9 @@ import type { HangerData, ProfileInfo } from '@/types/dashboard'
 import { useFullscreen } from '@/App'
 
 const FILTERS_KEY = 'ekranchik_filters'
+
+/** Рамка тестового режима: баннер убрали, подставные строки помечает заливка. */
+const TEST_FRAME = 'border-purple-500/40 bg-purple-500/5'
 
 interface Filters {
   loadingLimit: number
@@ -658,13 +662,11 @@ function DataTable({
   onPhotoClick,
   isFullscreen = false,
   showEntryExit = false,
-  headerChildren,
 }: {
   data: HangerData[]
   onPhotoClick: (url: string, name: string) => void
   isFullscreen?: boolean
   showEntryExit?: boolean
-  headerChildren?: React.ReactNode
 }) {
   const gridTemplateColumns = showEntryExit
     ? '[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px'
@@ -676,14 +678,6 @@ function DataTable({
         className="grid w-full text-sm"
         style={{ gridTemplateColumns }}
       >
-        {headerChildren && (
-          <div 
-            className="bg-background border-b border-slate-200 dark:border-slate-800 p-0"
-            style={{ gridColumn: '1 / -1' }}
-          >
-            {headerChildren}
-          </div>
-        )}
 
         {/* Шапка таблицы */}
         <div 
@@ -1197,6 +1191,9 @@ export default function Dashboard() {
   // State for "Все цвета" mode — тестовый показ справочника цветов в строках подвесов
   const [isAllColorsMode, setIsAllColorsMode] = useState(false);
 
+  // Тестовый прогон витрины: подвесы идут по ваннам и уходят в выгрузку
+  const run = useTestRun(isMockMode ? mockData : undefined)
+
   // Determine if the API should filter for loading_only rows
   const loadingOnly = !isLast100Mode;
 
@@ -1362,6 +1359,32 @@ export default function Dashboard() {
     }, metaFromRows)
   }, [data?.products, matchedEvents])
 
+  // Выгрузка: события линии, а в тестовом режиме — подвесы, сошедшие с линии по прогону.
+  const unloadRows = useMemo<HangerData[]>(() => {
+    if (isMockMode) return run.unloaded
+
+    return (matchedEvents ?? []).map(event => ({
+      number: String(event.hanger),
+      date: event.exit_date,
+      time: event.exit_time,
+      client: event.client,
+      profile: event.profile,
+      profiles_info: event.profiles_info,
+      color: event.color,
+      lamels_qty: event.lamels_qty,
+      kpz_number: event.kpz_number,
+      material_type: event.material_type,
+      entry_date: event.entry_date,
+      entry_time: event.entry_time,
+      exit_date: event.exit_date,
+      exit_time: event.exit_time,
+      current_bath: event.current_bath,
+      bath_entry_time: event.bath_entry_time,
+      bath_processing_time: event.bath_processing_time,
+      time_warning: event.time_warning,
+    }))
+  }, [isMockMode, run.unloaded, matchedEvents])
+
   const handleToggleLast100 = () => {
     // Тестовые режимы не смешиваются с «последними 100»
     if (isMockMode) setIsMockMode(false);
@@ -1399,12 +1422,8 @@ export default function Dashboard() {
       const profiles: any[] = await res.json();
 
       // Витрине цветов столько строк, сколько показывает режим: каждый цвет справочника
-      // один раз, плюс вариант без пробела для названий из латиницы — как их пишут в книге.
-      const palette = withColors
-        ? COLOR_CATALOG.flatMap((c) => (c.name.includes(' ')
-          ? [c.name, c.name.replace(/ /g, '')]
-          : [c.name]))
-        : [];
+      // один раз. Написание без пробела — та же запись из книги, второй строки быть не должно.
+      const palette = withColors ? COLOR_CATALOG.map((color) => color.name) : [];
       const rows = withColors ? profiles.slice(0, palette.length) : profiles;
 
       const mapped: HangerData[] = rows.map((p, index) => ({
@@ -1709,7 +1728,7 @@ export default function Dashboard() {
           {filters.showLoading && (
             <div className="flex flex-col gap-0">
               {renderWarning()}
-              <Card className={`border-8 ${isMockMode ? 'border-purple-500' : 'border-blue-500'} relative`}>
+              <Card className={`border-8 relative ${isMockMode ? TEST_FRAME : 'border-blue-500'}`}>
                 {hasNewRows && !isMockMode && (
                   <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
                     <span className="text-white text-3xl font-bold">Обновление</span>
@@ -1721,11 +1740,7 @@ export default function Dashboard() {
                       data={isMockMode ? mockData : (data?.products ?? [])}
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
-                      headerChildren={isMockMode ? (
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-600/10 border-b border-purple-500/40 text-[13px] font-semibold text-purple-700 dark:text-purple-300">
-                          Тестовый режим: {isAllColorsMode ? 'показан справочник цветов' : 'показаны все профили каталога'} — строк из книги учёта здесь нет
-                        </div>
-                      ) : undefined}
+
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -1749,39 +1764,20 @@ export default function Dashboard() {
               )}
 
               {/* Forecast Row - Outside the green border */}
-              {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} />}
+              {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} testRun={isMockMode ? run : undefined} />}
 
               <div className="flex flex-col gap-0">
                 {renderWarning()}
-                <Card className="border-8 border-green-500 relative">
-                  {hasNewUnloadEvents && (
+                <Card className={`border-8 relative ${isMockMode ? TEST_FRAME : 'border-green-500'}`}>
+                  {hasNewUnloadEvents && !isMockMode && (
                     <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
                       <span className="text-white text-3xl font-bold">Обновление</span>
                     </div>
                   )}
                   <CardContent className="p-0">
-                    {matchedEvents && matchedEvents.length > 0 ? (
+                    {unloadRows.length > 0 ? (
                       <DataTable
-                        data={matchedEvents.map(e => ({
-                          number: String(e.hanger),
-                          date: e.exit_date,
-                          time: e.exit_time,
-                          client: e.client,
-                          profile: e.profile,
-                          profiles_info: e.profiles_info,
-                          color: e.color,
-                          lamels_qty: e.lamels_qty,
-                          kpz_number: e.kpz_number,
-                          material_type: e.material_type,
-                          entry_date: e.entry_date,
-                          entry_time: e.entry_time,
-                          exit_date: e.exit_date,
-                          exit_time: e.exit_time,
-                          current_bath: e.current_bath,
-                          bath_entry_time: e.bath_entry_time,
-                          bath_processing_time: e.bath_processing_time,
-                          time_warning: e.time_warning,
-                        }))}
+                        data={unloadRows}
                         onPhotoClick={handlePhotoClick}
                         isFullscreen={isFullscreen}
                         showEntryExit
@@ -1800,7 +1796,7 @@ export default function Dashboard() {
         </div>
 
         <div className={`${isFullscreen ? 'col-span-1' : 'xl:col-span-1'} w-full`}>
-          <SidebarQueueTable data={recentAllData?.products} isLoading={isLoadingAll} isFullscreen={isFullscreen} />
+          <SidebarQueueTable data={isMockMode ? run.launched : recentAllData?.products} isLoading={isMockMode ? false : isLoadingAll} isFullscreen={isFullscreen} />
         </div>
       </div>
 

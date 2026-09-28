@@ -3,6 +3,7 @@ import { useLineStatus } from '@/hooks/useLineStatus'
 import { colorCellStyle, colorHex, colorName } from '@/lib/domain/color'
 import { hangerKey } from '@/lib/domain/hanger'
 import { profileText } from '@/lib/domain/profile'
+import { RUN_BATHS, type RunHanger, type RunState } from '@/lib/domain/testRun'
 import type { LineStatus } from '@/types/line'
 
 interface BathForecastItem {
@@ -17,7 +18,11 @@ interface BathForecastItem {
 
 interface BathForecastProps {
   hangerMetaByNumber?: HangerMetaByNumber
+  /** Прогон витрины вместо состояния линии: на стенде симулятора нет. */
+  testRun?: RunState
 }
+
+
 
 interface HangerMeta {
   profile?: string | null
@@ -78,14 +83,38 @@ function buildBathForecast(
   return forecast
 }
 
-export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
+/** Карточки прогноза по подвесам тестового прогона: позиция в списке — номер ванны. */
+function buildRunForecast(hangers: RunHanger[]): Map<number, BathForecastItem> {
+  const forecast: Map<number, BathForecastItem> = new Map()
+
+  hangers.slice(0, RUN_BATHS.length).forEach((hanger, index) => {
+    const bathNum = RUN_BATHS[index]
+    forecast.set(bathNum, {
+      bathNum,
+      hangerNumber: hanger.number,
+      article: normalizeMetaValue(hanger.row.profile),
+      color: normalizeMetaValue(hanger.row.color),
+      inTime: 0,
+      outTime: hanger.remainingTime,
+      remainingTime: hanger.remainingTime,
+    })
+  })
+
+  return forecast
+}
+
+export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastProps) {
   const { data: lineStatus } = useLineStatus()
   const lastKnownHangerByBathRef = useRef<Map<number, number>>(new Map())
 
+  // В тестовом режиме карточки строятся только из прогона: живые ванны сюда не подмешиваются.
   const bathData = useMemo(
-    () => buildBathForecast(lineStatus, lastKnownHangerByBathRef.current),
-    [lineStatus],
+    () => (testRun
+      ? buildRunForecast(testRun.inBaths)
+      : buildBathForecast(lineStatus, lastKnownHangerByBathRef.current)),
+    [lineStatus, testRun],
   )
+  const runMetaByNumber = testRun ? undefined : hangerMetaByNumber
 
   const sortedBaths = Array.from(bathData.values())
     .filter(b => b.bathNum !== 34)
@@ -117,7 +146,7 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
       {bath34Item && (
         <UnloadCard
           item={bath34Item}
-          hangerMetaByNumber={hangerMetaByNumber}
+          hangerMetaByNumber={runMetaByNumber}
           isCompact={isCompact}
           unloadTimeStr={unloadTimeStr}
         />
@@ -135,7 +164,7 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
             <BathCard
               key={item.bathNum}
               item={item}
-              hangerMetaByNumber={hangerMetaByNumber}
+              hangerMetaByNumber={runMetaByNumber}
             />
           ))
         ) : null}
@@ -145,8 +174,8 @@ export function BathForecast({ hangerMetaByNumber = {} }: BathForecastProps) {
 }
 
 /** Общие поля карточки ванны: подпись подвеса, профиль, название цвета, стиль ячейки. */
-function bathCardFields(item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber) {
-  const meta = hangerMetaByNumber[hangerKey(item.hangerNumber)]
+function bathCardFields(item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber | undefined) {
+  const meta = hangerMetaByNumber?.[hangerKey(item.hangerNumber)]
   const profile = pickMetaValue(item.article, meta?.profile)
   const color = pickMetaValue(item.color, meta?.color)
 
@@ -158,7 +187,7 @@ function bathCardFields(item: BathForecastItem, hangerMetaByNumber: HangerMetaBy
   }
 }
 
-function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber }) {
+function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber | undefined }) {
   const minutes = Math.floor(item.remainingTime / 60)
   const seconds = item.remainingTime % 60
   const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
@@ -190,7 +219,7 @@ function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hanger
   )
 }
 
-function UnloadCard({ item, hangerMetaByNumber, isCompact, unloadTimeStr }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber, isCompact: boolean, unloadTimeStr: string }) {
+function UnloadCard({ item, hangerMetaByNumber, isCompact, unloadTimeStr }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber | undefined, isCompact: boolean, unloadTimeStr: string }) {
   const { hangerLabel, profileDigits, colorLabel, fillStyle } = bathCardFields(item, hangerMetaByNumber)
 
   return (
