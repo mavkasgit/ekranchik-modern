@@ -20,9 +20,9 @@ export interface LineStatus {
   power_supply?: { current: number; voltage: number }
 }
 
-/** Полезная нагрузка сообщения `line_update`: только счётчики ванн из OPC UA. */
+/** Полезная нагрузка сообщения `line_update`: счётчики ванн из OPC UA. */
 export interface LineUpdatePayload {
-  baths?: Array<Pick<BathStatus, 'bath_number' | 'in_use' | 'pallete' | 'in_time' | 'out_time'>>
+  baths?: Array<Pick<BathStatus, 'bath_number' | 'in_use' | 'pallete' | 'in_time' | 'out_time' | 'd_time'>>
   timestamp?: string
   opcua_connected?: boolean
   active_hangers?: number

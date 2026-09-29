@@ -1,10 +1,11 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLineStatus } from '@/hooks/useLineStatus'
 import { colorAbbreviation, colorCellStyle, colorHex, colorName } from '@/lib/domain/color'
 import { dwellChainToExit } from '@/lib/domain/time'
 import { hangerKey } from '@/lib/domain/hanger'
 import { profileText } from '@/lib/domain/profile'
-import { CONTROL_BATH, DWELL_SECONDS, FORECAST_BATHS, LINE_BATHS, cardHangers, type RunHanger, type RunState } from '@/lib/domain/testRun'
+import { CONTROL_BATH, DWELL_SECONDS, FORECAST_BATHS, type RunHanger, type RunState } from '@/lib/domain/testRun'
+import { FORECAST_MAX_ELAPSED_MS } from '@/config/intervals'
 import type { LineStatus } from '@/types/line'
 
 interface BathForecastItem {
@@ -47,6 +48,7 @@ function pickMetaValue(primary: string | null | undefined, fallback: string | nu
 function buildBathForecast(
   lineStatus: LineStatus | undefined,
   lastKnownHangerByBath: Map<number, number>,
+  elapsedSeconds: number,
 ): Map<number, BathForecastItem> {
   const forecast: Map<number, BathForecastItem> = new Map()
 
@@ -71,19 +73,23 @@ function buildBathForecast(
     const hasUnloadSignal = isControlBath && (inTime > 0 || rawPalletNumber > 0 || fallbackPalletNumber > 0)
 
     if ((isForecastBath && rawPalletNumber > 0) || hasUnloadSignal) {
+      const inTimeNow = isControlBath ? inTime + elapsedSeconds : inTime
       forecast.set(bath.bath_number, {
         bathNum: bath.bath_number,
         hangerNumber: palletNumber,
         article: normalizeMetaValue(bath.article),
         color: normalizeMetaValue(bath.color),
-        inTime,
+        inTime: inTimeNow,
         outTime,
         // 34-я — сам сход: там остаток времени в этой ванне. Ванны
         // прогноза показывают время до схода, то есть сумму по цепочке
         // от своей ванны до 34-й, иначе выход получался одновременным.
+        // `elapsedSeconds` — секунды с последнего сообщения линии: счётчики
+        // ванн тикают сами, а приходят раз в 2 с, поэтому карточка ведёт
+        // секунды ровно и не ждёт следующего сообщения.
         remainingTime: isControlBath
-          ? Math.max(0, outTime - inTime)
-          : dwellChainToExit(baths, bath.bath_number, CONTROL_BATH),
+          ? Math.max(0, outTime - inTimeNow)
+          : dwellChainToExit(baths, bath.bath_number, CONTROL_BATH, elapsedSeconds),
       })
     }
   }
@@ -100,29 +106,44 @@ function buildRunForecast(run: RunState): Map<number, BathForecastItem> {
     hangerNumber: hanger.number,
     article: normalizeMetaValue(hanger.row.profile),
     color: normalizeMetaValue(hanger.row.color),
-    inTime: DWELL_SECONDS - hanger.remainingTime,
+    inTime: Math.max(0, DWELL_SECONDS - hanger.remainingTime),
     outTime: hanger.remainingTime,
     remainingTime: hanger.remainingTime,
   })
 
-  cardHangers(run).forEach((hanger, index) => {
-    const bathNum = LINE_BATHS[index]
-    if (hanger && bathNum !== undefined) forecast.set(bathNum, toItem(bathNum, hanger))
+  run.inBaths.forEach((hanger, index) => {
+    const bathNum = FORECAST_BATHS[index]
+    if (bathNum !== undefined) forecast.set(bathNum, toItem(bathNum, hanger))
   })
+
+  if (run.atExit) forecast.set(CONTROL_BATH, toItem(CONTROL_BATH, run.atExit))
 
   return forecast
 }
 
 export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastProps) {
-  const { data: lineStatus } = useLineStatus()
+  const { data: lineStatus, dataUpdatedAt } = useLineStatus()
   const lastKnownHangerByBathRef = useRef<Map<number, number>>(new Map())
 
+  // Секунды в карточках идут ровно: данные линии приходят раз в 2 с
+  // (`line_update`), между ними остаток домеривается на клиенте — отсюда
+  // тик раз в секунду. Домеривание ограничено FORECAST_MAX_ELAPSED_MS: за
+  // это время данные уже считаются устаревшими, и цифры замирают вместо
+  // того, чтобы уйти в ноль мимо линии.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  const elapsedSeconds = Math.min(FORECAST_MAX_ELAPSED_MS, now - dataUpdatedAt) / 1000
+
   // В тестовом режиме карточки строятся только из прогона: живые ванны сюда не подмешиваются.
+  // Прогон тикает раз в секунду сам, домеривать ему нечего.
   const bathData = useMemo(
     () => (testRun
       ? buildRunForecast(testRun)
-      : buildBathForecast(lineStatus, lastKnownHangerByBathRef.current)),
-    [lineStatus, testRun],
+      : buildBathForecast(lineStatus, lastKnownHangerByBathRef.current, elapsedSeconds)),
+    [lineStatus, testRun, elapsedSeconds],
   )
   const runMetaByNumber = testRun ? undefined : hangerMetaByNumber
 
@@ -137,10 +158,7 @@ export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastP
   const isYellow = !isRed && minTime < 300
   const isGreen = !isRed && !isYellow
 
-  const unloadDuration = bath34Item ? bath34Item.inTime : 0
-  const unloadMinutes = Math.floor(unloadDuration / 60)
-  const unloadSeconds = unloadDuration % 60
-  const unloadTimeStr = `${unloadMinutes.toString().padStart(2, '0')}:${unloadSeconds.toString().padStart(2, '0')}`
+  const unloadTimeStr = cardTime(bath34Item ? bath34Item.inTime : 0)
 
   const totalForecastItems = sortedBaths.length + (bath34Item ? 1 : 0)
   const isCompact = totalForecastItems > 2
@@ -183,6 +201,16 @@ export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastP
   )
 }
 
+/**
+ * Время карточки `мм:сс` целыми секундами. Между сообщениями линии остаток
+ * домеривается дробью секунды, и без округления на экране появлялось «00:1.93».
+ */
+function cardTime(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(whole / 60).toString().padStart(2, '0')
+  return `${minutes}:${(whole % 60).toString().padStart(2, '0')}`
+}
+
 /** Общие поля карточки ванны: подпись подвеса, профиль, цвет, стиль ячейки. */
 function bathCardFields(item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber | undefined) {
   const meta = hangerMetaByNumber?.[hangerKey(item.hangerNumber)]
@@ -199,9 +227,7 @@ function bathCardFields(item: BathForecastItem, hangerMetaByNumber: HangerMetaBy
 }
 
 function BathCard({ item, hangerMetaByNumber }: { item: BathForecastItem, hangerMetaByNumber: HangerMetaByNumber | undefined }) {
-  const minutes = Math.floor(item.remainingTime / 60)
-  const seconds = item.remainingTime % 60
-  const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+  const timeStr = cardTime(item.remainingTime)
 
   const { hangerLabel, profileDigits, colorAbbr, colorTitle, fillStyle } = bathCardFields(item, hangerMetaByNumber)
 

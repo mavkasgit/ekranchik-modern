@@ -1603,12 +1603,14 @@ export default function Dashboard() {
     return data?.products ?? []
   }, [testMode, simLoadingRows, testRows, data?.products])
 
-  // Подвесы, стоящие на ваннах, — все, кто сейчас на линии, а не по одному от
-  // карточки прогноза: боковая очередь это хвост книги учёта, и пропуск между
-  // номерами в ней читается как потерянный подвес. Номера вдоль маршрута
-  // растут, поэтому список убывает по номеру, а не по ванне.
+  // Подвесы, стоящие на ваннах, — по одному на ванну, в порядке движения по
+  // линии: 30, 31, 32, 33, 34. Боковая очередь — хвост книги учёта, и пропуск
+  // между номерами в ней читается как потерянный подвес, поэтому список
+  // упорядочен по номеру, а не по ванне.
   const onLineRows = useMemo(
-    () => run.baths.flat().map(hanger => hanger.row).sort((a, b) => Number(b.number) - Number(a.number)),
+    () => [...run.inBaths, ...(run.atExit ? [run.atExit] : [])]
+      .map(hanger => hanger.row)
+      .sort((a, b) => Number(b.number) - Number(a.number)),
     [run],
   )
 

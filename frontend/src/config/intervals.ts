@@ -15,5 +15,11 @@ export const DATA_REFRESH_INTERVAL = 10000    // 10 сек - fallback для д�
 // WebSocket обновления (реальные интервалы на бэкенде)
 export const WS_LINE_UPDATE_INTERVAL = 2000   // 2 сек - heartbeat с бэкенда (line_monitor._heartbeat_interval)
 
+// Домеривание секунд в карточке прогноза: сколько максимум времени таблица
+// дорисовывает сама между сообщениями линии. Дальше данные считаются не
+// просто «между сообщениями», а устаревшими, и цифры замирают, а не уходят
+// в ноль мимо реальности.
+export const FORECAST_MAX_ELAPSED_MS = 10000
+
 // Для отображения в UI
 export const WS_UPDATE_INTERVAL_SEC = WS_LINE_UPDATE_INTERVAL / 1000
