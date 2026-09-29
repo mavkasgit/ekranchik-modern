@@ -96,7 +96,7 @@
 
 1. `pytest` (весь `backend/tests`), `tsc -b`, `vitest`.
 2. Пересборка контейнера:
-   `docker compose -f docker-compose.prod.yml -f docker-compose.prod.local.yml up -d --build backend`.
+   `docker compose -f infra/compose/docker-compose.prod.yml up -d --build backend`.
 3. В прод-дашборде (`http://172.17.11.9:8083`): ввести путь в «Ввести путь»,
    перезапустить контейнер и убедиться, что путь сохранился — в
    `static/active_excel_prod.json`; `static/active_excel.json` при этом не

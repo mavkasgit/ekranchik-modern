@@ -81,8 +81,8 @@ async def lifespan(app: FastAPI):
             if empty:
                 logger.error(
                     f"[STARTUP] Каталог книги {book_dir} пуст: сетевой диск не смонтирован. "
-                    "На Windows прод запускается с infra/compose/docker-compose.prod.local.yml, "
-                    "на Linux диск монтирует infra/mount_and_start.sh"
+                    "Проверьте infra/compose/.env (EXCEL_VOL_TYPE=cifs на Windows) "
+                    "или infra/mount_and_start.sh на Linux"
                 )
     
     # Нумерация проходов продолжается от журнала (issue #34). Именно ДО старта

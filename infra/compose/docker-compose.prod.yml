@@ -50,7 +50,7 @@ services:
       - >-
         test -n "$$(ls -A /app/excel 2>/dev/null)" ||
         { echo "[start] /app/excel пуст: сетевой диск не смонтирован." >&2;
-        echo "[start] Linux: infra/mount_and_start.sh; Windows: infra/compose/docker-compose.prod.local.yml." >&2;
+        echo "[start] Проверьте infra/compose/.env (EXCEL_VOL_TYPE=cifs) или infra/mount_and_start.sh на Linux." >&2;
         exit 1; };
         alembic upgrade head &&
         exec uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -60,7 +60,7 @@ services:
       - ../../static:/app/static
       - ../../testdata:/app/testdata
       - ../../journal:/app/journal
-      - /mnt/ktm-disk:/app/excel:ro
+      - excel:/app/excel:ro
     networks:
       - ekranchik-prod-network
     restart: always
@@ -120,3 +120,22 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+
+
+# Каталог книги. На прод-сервере — тот же bind /mnt/ktm-disk, что и раньше
+# (значения по умолчанию), поэтому deploy_prod.sh и mount_and_start.sh не
+# затронуты. На Windows (Docker Desktop) bind-mount сетевого диска не
+# работает, и CIFS поднимает сам Docker: те же значения задаёт
+# infra/compose/.env, который compose подхватывает сам.
+#
+# Книга едет в ИМЕНОВАННЫЙ том, а не в bind-mount: с type=cifs Docker
+# монтирует шару до старта контейнера, и если диска нет, `up` падает с
+# текстом ошибки. Прежний bind-mount молча создавал пустой каталог-источник,
+# и контейнер уходил в бесконечный рестарт с «Файл не найден» при живой книге.
+volumes:
+  excel:
+    driver: local
+    driver_opts:
+      type: ${EXCEL_VOL_TYPE:-none}
+      o: ${EXCEL_VOL_OPTS:-bind,ro}
+      device: ${EXCEL_VOL_DEVICE:-/mnt/ktm-disk}

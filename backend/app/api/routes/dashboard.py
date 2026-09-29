@@ -211,7 +211,7 @@ def _not_found_detail(target: Path) -> str:
     """Ошибка «файла нет» с подсказкой, если каталог книги пуст.
 
     Пустой каталог — самый частый случай: сетевой диск не смонтирован в
-    контейнер (запуск прода на Windows без docker-compose.prod.local.yml).
+    контейнер (не заданы EXCEL_VOL_* в infra/compose/.env на Windows).
     Без подсказки оператор видит только «Файл не найден».
     """
     detail = f"Файл {target} не найден"
@@ -224,7 +224,7 @@ def _not_found_detail(target: Path) -> str:
         if empty:
             detail += (
                 f". Каталог книги {book_dir} пуст — сетевой диск не смонтирован"
-                " (на Windows прод запускается с infra/compose/docker-compose.prod.local.yml)"
+                " (проверьте infra/compose/.env: EXCEL_VOL_TYPE=cifs)"
             )
     return detail
 
