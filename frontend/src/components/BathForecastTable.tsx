@@ -3,7 +3,7 @@ import { useLineStatus } from '@/hooks/useLineStatus'
 import { colorAbbreviation, colorCellStyle, colorHex, colorName } from '@/lib/domain/color'
 import { hangerKey } from '@/lib/domain/hanger'
 import { profileText } from '@/lib/domain/profile'
-import { RUN_BATHS, type RunHanger, type RunState } from '@/lib/domain/testRun'
+import { CONTROL_BATH, DWELL_SECONDS, FORECAST_BATHS, type RunHanger, type RunState } from '@/lib/domain/testRun'
 import type { LineStatus } from '@/types/line'
 
 interface BathForecastItem {
@@ -83,22 +83,26 @@ function buildBathForecast(
   return forecast
 }
 
-/** Карточки прогноза по подвесам тестового прогона: позиция в списке — номер ванны. */
-function buildRunForecast(hangers: RunHanger[]): Map<number, BathForecastItem> {
+/** Карточки прогноза по подвесам тестового прогона: ванны прогноза плюс ванна схода. */
+function buildRunForecast(run: RunState): Map<number, BathForecastItem> {
   const forecast: Map<number, BathForecastItem> = new Map()
 
-  hangers.slice(0, RUN_BATHS.length).forEach((hanger, index) => {
-    const bathNum = RUN_BATHS[index]
-    forecast.set(bathNum, {
-      bathNum,
-      hangerNumber: hanger.number,
-      article: normalizeMetaValue(hanger.row.profile),
-      color: normalizeMetaValue(hanger.row.color),
-      inTime: 0,
-      outTime: hanger.remainingTime,
-      remainingTime: hanger.remainingTime,
-    })
+  const toItem = (bathNum: number, hanger: RunHanger): BathForecastItem => ({
+    bathNum,
+    hangerNumber: hanger.number,
+    article: normalizeMetaValue(hanger.row.profile),
+    color: normalizeMetaValue(hanger.row.color),
+    inTime: DWELL_SECONDS - hanger.remainingTime,
+    outTime: hanger.remainingTime,
+    remainingTime: hanger.remainingTime,
   })
+
+  run.inBaths.forEach((hanger, index) => {
+    const bathNum = FORECAST_BATHS[index]
+    if (bathNum !== undefined) forecast.set(bathNum, toItem(bathNum, hanger))
+  })
+
+  if (run.atExit) forecast.set(CONTROL_BATH, toItem(CONTROL_BATH, run.atExit))
 
   return forecast
 }
@@ -110,17 +114,17 @@ export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastP
   // В тестовом режиме карточки строятся только из прогона: живые ванны сюда не подмешиваются.
   const bathData = useMemo(
     () => (testRun
-      ? buildRunForecast(testRun.inBaths)
+      ? buildRunForecast(testRun)
       : buildBathForecast(lineStatus, lastKnownHangerByBathRef.current)),
     [lineStatus, testRun],
   )
   const runMetaByNumber = testRun ? undefined : hangerMetaByNumber
 
   const sortedBaths = Array.from(bathData.values())
-    .filter(b => b.bathNum !== 34)
+    .filter(b => b.bathNum !== CONTROL_BATH)
     .sort((a, b) => a.remainingTime - b.remainingTime)
 
-  const bath34Item = bathData.get(34)
+  const bath34Item = bathData.get(CONTROL_BATH)
 
   const minTime = sortedBaths.length > 0 ? sortedBaths[0].remainingTime : Infinity
   const isRed = (bath34Item !== undefined) || (minTime < 60)

@@ -1,47 +1,55 @@
-// Тестовый прогон витрины: подвесы идут по ваннам, по таймеру уходят
-// в выгрузку, в освободившуюся ванну входит следующий. Единственный владелец
-// правил прогона: страница только рисует то, что отсюда пришло.
+// Тестовый прогон витрины: подвесы идут по ваннам подряд и по таймеру сходят
+// с линии. Единственный владелец правил прогона: страница только рисует то,
+// что отсюда пришло.
+//
+// Поведение повторяет линию: подвес входит в ванну 30 из очереди загрузки,
+// проходит 31, 32, 33 и сходит с линии через ванну 34. Очередь отдаёт ровно
+// столько подвесов, сколько уходит с линии, — по одному раз в 20 секунд.
 
 import { SIDEBAR_ROW_LIMIT } from '@/config/limits'
+import { formatLocalized } from '@/lib/domain/time'
 import type { HangerData } from '@/types/dashboard'
 
-/** Ванны прогона: позиция подвеса в списке — номер ванны. */
-export const RUN_BATHS = [30, 31, 32, 33]
-/** Сколько подвес лежит в ванне до выгрузки. */
+/** Ванны, у которых на дашборде есть карточка прогноза: позиция в массиве — номер ванны. */
+export const FORECAST_BATHS = [30, 31, 32, 33]
+
+/** Ванна схода: подвес, дошедший до неё, уходит с линии. */
+export const CONTROL_BATH = 34
+
+/** Сколько подвес лежит в ванне до перехода в следующую. */
 export const DWELL_SECONDS = 20
-/** Разгон ванн на старте: с таким остатком уходит ровно один подвес каждые 5 секунд. */
-const START_COUNTDOWN = [20, 15, 10, 5]
+
 /** Строк в боковой очереди прогона: столько же, сколько тянет живая очередь. */
 export const LAUNCH_WINDOW = SIDEBAR_ROW_LIMIT
-/** Строк в таблице выгрузки: одиннадцатая вытесняет самую старую. */
-export const UNLOAD_LIMIT = 10
 
 export interface RunHanger {
   /** Сквозной номер подвеса: с 1 до сброса прогона. */
   number: number
-  /** Остаток до выгрузки, секунды. */
+  /** Остаток до перехода в следующую ванну, секунды. */
   remainingTime: number
-  /** Строка витрины: профиль, цвет, фото. */
+  /** Строка витрины с проставленным временем входа на линию. */
   row: HangerData
 }
 
 export interface RunState {
-  /** Подвесы в ваннах. Позиция в массиве — номер ванны. */
+  /** Подвесы в ваннах прогноза. Позиция в массиве — ванна из FORECAST_BATHS. */
   inBaths: RunHanger[]
+  /** Подвес в ванне схода: он следующий сойдёт с линии. */
+  atExit: RunHanger | null
   /** Запущенные подвесы для боковой очереди: новые сверху. */
   launched: HangerData[]
   /** Выгруженные подвесы: новые сверху. */
   unloaded: HangerData[]
-  /** Порядок запуска на текущий круг. */
+  /** Круг профилей: очередь загрузки и источник номеров на следующий круг. */
   pool: HangerData[]
-  /** Позиция в пуле: откуда берём следующего подвеса. */
+  /** Позиция в круге: откуда берём следующего подвеса. */
   cursor: number
   /** Следующий сквозной номер подвеса. */
   nextNumber: number
 }
 
 export function emptyRun(): RunState {
-  return { inBaths: [], launched: [], unloaded: [], pool: [], cursor: 0, nextNumber: 1 }
+  return { inBaths: [], atExit: null, launched: [], unloaded: [], pool: [], cursor: 0, nextNumber: 1 }
 }
 
 function shuffle<T>(items: T[], random: () => number): T[] {
@@ -55,86 +63,137 @@ function shuffle<T>(items: T[], random: () => number): T[] {
   return result
 }
 
-/** Выгрузка: витринное время загрузки и реальный момент схода с линии. */
-function toUnloadedRow(hanger: RunHanger, unloadTime: string): HangerData {
-  const row = hanger.row
+/** Вход на линию: строка из очереди получает номер и время, когда подвес встал в ванну. */
+function enterLine(row: HangerData, now: Date): RunHanger {
   return {
-    ...row,
-    number: String(hanger.number),
-    time: unloadTime,
-    entry_date: row.date,
-    exit_date: row.date,
-    entry_time: row.time,
-    exit_time: unloadTime,
+    number: Number(row.number),
+    remainingTime: DWELL_SECONDS,
+    row: { ...row, time: formatLocalized(now, 'ru-RU') },
   }
 }
 
-/** Старт прогона: круг перемешан, первые подвесы разведены по ваннам разгоном. */
-export function startRun(rows: HangerData[], random: () => number = Math.random): RunState {
-  const pool = shuffle(rows, random)
-  const starting = pool.slice(0, RUN_BATHS.length)
-  const inBaths: RunHanger[] = []
-  const launched: HangerData[] = []
-  let nextNumber = 1
-
-  // На старте линия уже в работе: подвес, которому осталось пять секунд, вошёл раньше
-  // того, которому осталось двадцать. Номер — по порядку входа, поэтому первым
-  // с линии сходит №1, а последним встаёт в ванну следующий.
-  const entered = START_COUNTDOWN
-    .map((remainingTime, bathIndex) => ({ remainingTime, bathIndex }))
-    .filter(({ bathIndex }) => bathIndex < starting.length)
-    .sort((a, b) => a.remainingTime - b.remainingTime)
-
-  for (const { remainingTime, bathIndex } of entered) {
-    const row = starting[bathIndex]
-    const hanger: RunHanger = { number: nextNumber, remainingTime, row }
-    nextNumber += 1
-    inBaths[bathIndex] = hanger
-    launched.unshift({ ...row, number: String(hanger.number) })
+/** Выгрузка: момент входа на линию из витрины и реальный момент схода. */
+function toUnloadedRow(hanger: RunHanger, now: Date): HangerData {
+  const exitTime = formatLocalized(now, 'ru-RU')
+  return {
+    ...hanger.row,
+    time: exitTime,
+    entry_date: hanger.row.date,
+    exit_date: hanger.row.date,
+    entry_time: hanger.row.time,
+    exit_time: exitTime,
   }
+}
 
-  return { inBaths, launched, unloaded: [], pool, cursor: entered.length, nextNumber }
+/** Новый круг: те же строки возвращаются в очередь уже под другими номерами. */
+function renumberPool(rows: HangerData[], firstNumber: number): HangerData[] {
+  return rows.map((row, offset) => ({ ...row, number: String(firstNumber + offset) }))
 }
 
 /**
- * Секундный тик: остаток у всех уменьшается, дошедшие до нуля уходят в выгрузку,
- * в их ванны входят новые. Круг кончился — порядок запуска перемешивается заново.
+ * Старт прогона: круг перемешан и пронумерован, первые подвесы разведены по ваннам.
+ * В ванну 30 встаёт самый свежий, в ванну 34 — тот, кто сойдёт с линии первым.
+ */
+export function startRun(rows: HangerData[], now: Date, random: () => number = Math.random): RunState {
+  if (rows.length === 0) return emptyRun()
+
+  const ordered = shuffle(rows, random)
+  // Номер и пустое время — как у строки загрузки в книге учёта.
+  let pool = ordered.map((row, index) => ({ ...row, number: String(index + 1), time: '' }))
+  let nextNumber = pool.length + 1
+  let cursor = 0
+
+  // Круг может быть короче блока ванн: тогда он перемешивается и нумеруется заново,
+  // иначе в ванне 33 просто некому стоять, а подвес из 32 ушёл бы сразу в 34.
+  const takeNext = (): RunHanger => {
+    if (cursor >= pool.length) {
+      pool = renumberPool(shuffle(pool, random), nextNumber)
+      nextNumber += pool.length
+      cursor = 0
+    }
+    const hanger = enterLine(pool[cursor], now)
+    cursor += 1
+    return hanger
+  }
+
+  const inBaths: RunHanger[] = []
+  const launched: HangerData[] = []
+  let atExit: RunHanger | null = null
+
+  for (let index = 0; index < FORECAST_BATHS.length + 1; index += 1) {
+    const hanger = takeNext()
+    if (index === FORECAST_BATHS.length) {
+      atExit = hanger
+    } else {
+      inBaths[index] = hanger
+    }
+    launched.unshift(hanger.row)
+  }
+
+  return { inBaths, atExit, launched, unloaded: [], pool, cursor, nextNumber }
+}
+
+/** Очередь загрузки: столько строк, сколько оператор видит в таблице загрузки. */
+export function waitingRows(state: RunState, limit: number): HangerData[] {
+  return state.pool.slice(state.cursor, state.cursor + Math.max(0, limit))
+}
+
+/**
+ * Секундный тик. Пока остаток больше секунды, ванны просто тикают. Иначе ванны
+ * поворачиваются: каждый подвес переходит в следующую ванну, сошедший с ванны
+ * 34 уходит в выгрузку, а в ванну 30 встаёт следующий из очереди загрузки.
  */
 export function advanceRun(
   state: RunState,
-  unloadTime: string,
+  now: Date,
+  unloadLimit: number,
   random: () => number = Math.random,
 ): RunState {
-  if (state.inBaths.length === 0) return state
+  const block = state.inBaths
+  if (block.length === 0 && state.atExit === null) return state
 
-  const finished: RunHanger[] = []
-  const entered: RunHanger[] = []
+  const standing = block.length > 0 ? block : [state.atExit as RunHanger]
+  const soonest = Math.min(...standing.map(hanger => hanger.remainingTime))
+
+  if (soonest > 1) {
+    return {
+      ...state,
+      inBaths: block.map(hanger => ({ ...hanger, remainingTime: hanger.remainingTime - 1 })),
+      atExit: state.atExit ? { ...state.atExit, remainingTime: state.atExit.remainingTime - 1 } : null,
+    }
+  }
+
+  let pool = state.pool
   let cursor = state.cursor
   let nextNumber = state.nextNumber
 
-  const inBaths = state.inBaths.map((hanger) => {
-    const remainingTime = hanger.remainingTime - 1
-    if (remainingTime > 0) return { ...hanger, remainingTime }
-
-    finished.push(hanger)
-    const row = state.pool[cursor % state.pool.length]
-    const refilled: RunHanger = { number: nextNumber, remainingTime: DWELL_SECONDS, row }
-    nextNumber += 1
+  /** Следующий подвес из круга: круг исчерпан — перемешиваем и нумеруем заново. */
+  const takeNext = (): RunHanger => {
+    if (cursor >= pool.length) {
+      pool = renumberPool(shuffle(pool, random), nextNumber)
+      nextNumber += pool.length
+      cursor = 0
+    }
+    const hanger = enterLine(pool[cursor], now)
     cursor += 1
-    entered.push(refilled)
-    return refilled
-  })
+    return hanger
+  }
 
-  const lapComplete = cursor >= state.pool.length
+  // Подвесы сдвигаются на ванну вперёд, освободившуюся ванну 30 занимает новый.
+  const carried = block.slice(0, -1).map(hanger => ({ ...hanger, remainingTime: DWELL_SECONDS }))
+  const arrived = takeNext()
+  const inBaths = [arrived, ...carried]
+  const atExit = { ...block[block.length - 1], remainingTime: DWELL_SECONDS }
+  const unloadedNow = state.atExit ? [state.atExit] : []
 
   return {
     inBaths,
-    launched: [...entered.reverse().map(hanger => ({ ...hanger.row, number: String(hanger.number) })), ...state.launched]
-      .slice(0, LAUNCH_WINDOW),
-    unloaded: [...finished.reverse().map(hanger => toUnloadedRow(hanger, unloadTime)), ...state.unloaded]
-      .slice(0, UNLOAD_LIMIT),
-    pool: lapComplete ? shuffle(state.pool, random) : state.pool,
-    cursor: lapComplete ? 0 : cursor,
+    atExit,
+    launched: [arrived.row, ...state.launched].slice(0, LAUNCH_WINDOW),
+    unloaded: [...unloadedNow.map(hanger => toUnloadedRow(hanger, now)), ...state.unloaded]
+      .slice(0, Math.max(0, unloadLimit)),
+    pool,
+    cursor,
     nextNumber,
   }
 }

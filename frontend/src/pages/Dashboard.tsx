@@ -40,10 +40,13 @@ import { useRealtimeConnection } from '@/hooks/useRealtime'
 import { useTestRun } from '@/hooks/useTestRun'
 import { DASHBOARD_KEY } from '@/lib/queryKeys'
 import { SIDEBAR_ROW_LIMIT } from '@/config/limits'
-import { COLOR_CATALOG, colorHex, colorName } from '@/lib/domain/color'
+import { colorHex, colorName } from '@/lib/domain/color'
+import { buildTestRows, type TestMode } from '@/lib/domain/simRows'
+import { emptyRun, waitingRows } from '@/lib/domain/testRun'
 import { hangerKey } from '@/lib/domain/hanger'
 import { photoUrl } from '@/lib/domain/photo'
 import { profileText } from '@/lib/domain/profile'
+import type { Profile } from '@/types/profile'
 import { formatClock, formatLocalized } from '@/lib/domain/time'
 import { BathForecast } from '@/components/BathForecastTable'
 import { dashboardApi } from '@/api/dashboard'
@@ -55,6 +58,8 @@ const FILTERS_KEY = 'ekranchik_filters'
 /** Рамка тестового режима: баннер убрали, подставные строки помечает заливка. */
 const TEST_FRAME = 'border-purple-500/40 bg-purple-500/5'
 
+/** Пустой прогон для витринных режимов: карточек нет, линия не подмешивается. */
+const EMPTY_RUN = emptyRun()
 interface Filters {
   loadingLimit: number
   realtimeLimit: number
@@ -1035,10 +1040,9 @@ function FiltersPanel({
   onReset,
   onToggleLast100,
   isLast100Mode,
-  onToggleMockMode,
-  isMockMode,
-  onToggleAllColors,
-  isAllColorsMode,
+  onToggleTestMode,
+  testMode,
+  testError,
 }: {
   filters: Filters
   onChange: (filters: Filters) => void
@@ -1046,12 +1050,12 @@ function FiltersPanel({
   onReset: () => void
   onToggleLast100: () => void
   isLast100Mode: boolean
-  onToggleMockMode: () => void
-  isMockMode: boolean
-  onToggleAllColors: () => void
-  isAllColorsMode: boolean
+  onToggleTestMode: (mode: TestMode) => void
+  testMode: TestMode | null
+  testError: string | null
 }) {
-  const otherFiltersDisabled = isLast100Mode || isMockMode;
+  // В режимах витрины фильтры остаются живыми: окно загрузки и выгрузки берётся из них.
+  const otherFiltersDisabled = isLast100Mode;
 
   return (
     <Card>
@@ -1142,21 +1146,33 @@ function FiltersPanel({
               </Button>
 
               <Button
-                variant={isMockMode && !isAllColorsMode ? "default" : "outline"}
-                onClick={onToggleMockMode}
-                className={isMockMode && !isAllColorsMode ? "bg-purple-600 hover:bg-purple-700" : ""}
+                variant={testMode === 'catalog' ? "default" : "outline"}
+                onClick={() => onToggleTestMode('catalog')}
+                className={testMode === 'catalog' ? "bg-purple-600 hover:bg-purple-700" : ""}
               >
-                Все профили (тест)
+                Все профили
               </Button>
 
               <Button
-                variant={isAllColorsMode ? "default" : "outline"}
-                onClick={onToggleAllColors}
-                className={isAllColorsMode ? "bg-purple-600 hover:bg-purple-700" : ""}
+                variant={testMode === 'colors' ? "default" : "outline"}
+                onClick={() => onToggleTestMode('colors')}
+                className={testMode === 'colors' ? "bg-purple-600 hover:bg-purple-700" : ""}
               >
                 Все цвета
               </Button>
+
+              <Button
+                variant={testMode === 'sim' ? "default" : "outline"}
+                onClick={() => onToggleTestMode('sim')}
+                className={testMode === 'sim' ? "bg-purple-600 hover:bg-purple-700" : ""}
+              >
+                Симуляция дашборда
+              </Button>
             </div>
+
+            {testError && (
+              <span className="text-sm text-red-600 dark:text-red-400">{testError}</span>
+            )}
 
             <div className="flex gap-2">
               <Button onClick={onApply} disabled={otherFiltersDisabled}>Применить</Button>
@@ -1197,6 +1213,8 @@ export default function Dashboard() {
   const lastModifiedRef = useRef<string | null>(null)
   const prevDataRef = useRef<HangerData[]>([])
   const prevUnloadDataRef = useRef<any[]>([])
+  const prevSimLoadingKeyRef = useRef('')
+  const prevSimUnloadKeyRef = useRef('')
   
   // Таймер автовозврата в fullscreen
   const [autoReturnCountdown, setAutoReturnCountdown] = useState<number | null>(null)
@@ -1207,15 +1225,13 @@ export default function Dashboard() {
   const [isLast100Mode, setIsLast100Mode] = useState(false);
   const [preLast100Filters, setPreLast100Filters] = useState<Filters | null>(null);
 
-  // State for "Catalog Mock" mode
-  const [isMockMode, setIsMockMode] = useState(false);
-  const [mockData, setMockData] = useState<HangerData[]>([]);
-
-  // State for "Все цвета" mode — тестовый показ справочника цветов в строках подвесов
-  const [isAllColorsMode, setIsAllColorsMode] = useState(false);
+  // Режим витрины: null — боевые данные, остальные три подменяют таблицы дашборда.
+  const [testMode, setTestMode] = useState<TestMode | null>(null);
+  const [testRows, setTestRows] = useState<HangerData[]>([]);
+  const [testError, setTestError] = useState<string | null>(null);
 
   // Тестовый прогон витрины: подвесы идут по ваннам и уходят в выгрузку
-  const run = useTestRun(isMockMode ? mockData : undefined)
+  const run = useTestRun(testMode === 'sim' ? testRows : undefined, filters.realtimeLimit)
 
   // Determine if the API should filter for loading_only rows
   const loadingOnly = !isLast100Mode;
@@ -1382,9 +1398,9 @@ export default function Dashboard() {
     }, metaFromRows)
   }, [data?.products, matchedEvents])
 
-  // Выгрузка: события линии, а в тестовом режиме — подвесы, сошедшие с линии по прогону.
+  // Выгрузка: события линии, а в режиме симуляции — подвесы, сошедшие с линии по прогону.
   const unloadRows = useMemo<HangerData[]>(() => {
-    if (isMockMode) return run.unloaded
+    if (testMode) return testMode === 'sim' ? run.unloaded : []
 
     return (matchedEvents ?? []).map(event => ({
       number: String(event.hanger),
@@ -1408,12 +1424,19 @@ export default function Dashboard() {
       time_warning_code: event.time_warning_code,
       is_defect: event.is_defect,
     }))
-  }, [isMockMode, run.unloaded, matchedEvents])
+  }, [testMode, run.unloaded, matchedEvents])
+
+  const leaveTestMode = () => {
+    setTestMode(null);
+    setTestRows([]);
+    setTestError(null);
+    prevSimLoadingKeyRef.current = '';
+    prevSimUnloadKeyRef.current = '';
+  };
 
   const handleToggleLast100 = () => {
     // Тестовые режимы не смешиваются с «последними 100»
-    if (isMockMode) setIsMockMode(false);
-    if (isAllColorsMode) setIsAllColorsMode(false);
+    if (testMode) leaveTestMode();
 
     if (isLast100Mode) {
       // Turn OFF: Restore previous filters
@@ -1434,69 +1457,50 @@ export default function Dashboard() {
     }
   };
 
-  const loadMockRows = async (withColors: boolean) => {
+  const loadTestRows = async (mode: TestMode) => {
     // Turn off "Last 100" if active
     if (isLast100Mode) {
       setIsLast100Mode(false);
       if (preLast100Filters) setFilters(preLast100Filters);
     }
 
+    setTestError(null);
+
     try {
       const res = await fetch('/api/catalog/all?limit=1000');
       if (!res.ok) throw new Error('Failed to fetch catalog');
-      const profiles: any[] = await res.json();
+      const profiles: Profile[] = await res.json();
 
-      // Витрине цветов столько строк, сколько показывает режим: каждый цвет справочника
-      // один раз. Написание без пробела — та же запись из книги, второй строки быть не должно.
-      const palette = withColors ? COLOR_CATALOG.map((color) => color.name) : [];
-      const rows = withColors ? profiles.slice(0, palette.length) : profiles;
+      const rows = buildTestRows(profiles, mode);
+      if (rows.length === 0) {
+        setTestRows([]);
+        setTestMode(null);
+        setTestError('В каталоге нет профилей с фото — витрине нечего показывать');
+        return;
+      }
 
-      const mapped: HangerData[] = rows.map((p, index) => ({
-        number: `${p.id}`,
-        date: new Date().toLocaleDateString('ru-RU'),
-        time: '12:00',
-        client: 'Тест Каталога',
-        profile: p.name,
-        canonical_name: p.name,
-        profiles_info: [], // Single profile view
-        profile_photo_thumb: p.photo_thumb,
-        profile_photo_full: p.photo_full,
-        color: withColors ? palette[index % palette.length] : 'Не указан',
-        lamels_qty: p.quantity_per_hanger ?? 0,
-        kpz_number: '—',
-        material_type: 'Тест',
-      }));
-
-      setMockData(mapped);
-      setIsMockMode(true);
+      setTestRows(rows);
+      setTestMode(mode);
     } catch (e) {
-      console.error("Error loading mock data:", e);
-      alert("Ошибка загрузки каталога");
+      console.error("Error loading catalog for test mode:", e);
+      setTestRows([]);
+      setTestMode(null);
+      setTestError('Каталог не загрузился — витрина недоступна');
     }
   };
 
-  const handleToggleMockMode = async () => {
-    if (isMockMode && !isAllColorsMode) {
-      setIsMockMode(false);
+  const handleToggleTestMode = async (mode: TestMode) => {
+    if (testMode === mode) {
+      leaveTestMode();
       return;
     }
-    setIsAllColorsMode(false);
-    await loadMockRows(false);
-  };
-
-  const handleToggleAllColors = async () => {
-    if (isAllColorsMode) {
-      setIsAllColorsMode(false);
-      setIsMockMode(false);
-      return;
-    }
-    setIsAllColorsMode(true);
-    await loadMockRows(true);
+    await loadTestRows(mode);
   };
 
 
   // Track file changes and auto-refresh
   useEffect(() => {
+    if (testMode) return
     if (fileStatus?.last_modified) {
       const newModified = fileStatus.last_modified
       if (lastModifiedRef.current && lastModifiedRef.current !== newModified) {
@@ -1544,6 +1548,7 @@ export default function Dashboard() {
 
   // Track unload events changes
   useEffect(() => {
+    if (testMode) return
     if (matchedEvents && matchedEvents.length > 0) {
       const prevUnloadData = prevUnloadDataRef.current
 
@@ -1577,6 +1582,42 @@ export default function Dashboard() {
       }
     }
   }, [matchedEvents])
+
+  // Очередь загрузки в режиме симуляции: окно фильтра, а не весь круг прогона.
+  const simLoadingRows = useMemo(
+    () => (testMode === 'sim' ? waitingRows(run, filters.loadingLimit) : []),
+    [testMode, run, filters.loadingLimit],
+  )
+
+  // Таблица загрузки: в симуляции — окно очереди прогона, в прочих тестовых режимах —
+  // строки витрины, иначе — боевая выдача.
+  const loadingRows = useMemo(() => {
+    if (testMode === 'sim') return simLoadingRows
+    if (testMode) return testRows
+    return data?.products ?? []
+  }, [testMode, simLoadingRows, testRows, data?.products])
+
+  // Плашки «Обновление» в режиме симуляции реагируют на прогон, а не на файл Excel.
+  // Ключи — состав строк: эффект перезапускается только когда состав действительно
+  // изменился, иначе трёхсекундное гашение плашки каждый тик сбрасывалось бы.
+  const simLoadingKey = simLoadingRows.map(row => row.number).join(',')
+  const simUnloadKey = run.unloaded.map(row => row.number).join(',')
+
+  useEffect(() => {
+    if (testMode !== 'sim' || simLoadingKey === prevSimLoadingKeyRef.current) return
+    prevSimLoadingKeyRef.current = simLoadingKey
+
+    setHasNewRows(true)
+    setTimeout(() => setHasNewRows(false), 3000)
+  }, [testMode, simLoadingKey])
+
+  useEffect(() => {
+    if (testMode !== 'sim' || simUnloadKey === prevSimUnloadKeyRef.current) return
+    prevSimUnloadKeyRef.current = simUnloadKey
+
+    setHasNewUnloadEvents(true)
+    setTimeout(() => setHasNewUnloadEvents(false), 3000)
+  }, [testMode, simUnloadKey])
 
   // ESC обработчик удален - не закрываем окно по ESC, чтобы работники не могли случайно закрыть киоск
 
@@ -1741,10 +1782,9 @@ export default function Dashboard() {
           onReset={() => setFilters(defaultFilters)}
           onToggleLast100={handleToggleLast100}
           isLast100Mode={isLast100Mode}
-          onToggleMockMode={handleToggleMockMode}
-          isMockMode={isMockMode}
-          onToggleAllColors={handleToggleAllColors}
-          isAllColorsMode={isAllColorsMode}
+          onToggleTestMode={handleToggleTestMode}
+          testMode={testMode}
+          testError={testError}
         />
       )}
 
@@ -1753,16 +1793,21 @@ export default function Dashboard() {
           {filters.showLoading && (
             <div className="flex flex-col gap-0">
               {renderWarning()}
-              <Card className={`border-8 relative ${isMockMode ? TEST_FRAME : 'border-blue-500'}`}>
-                {hasNewRows && !isMockMode && (
+              <Card className={`border-8 relative ${testMode && testMode !== 'sim' ? TEST_FRAME : 'border-blue-500'}`}>
+                {testMode === 'sim' && (
+                  <span className="absolute -top-3 right-3 z-50 rounded-full bg-purple-600 px-3 py-0.5 text-xs font-bold text-white shadow">
+                    СИМУЛЯЦИЯ
+                  </span>
+                )}
+                {hasNewRows && testMode !== 'catalog' && testMode !== 'colors' && (
                   <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
                     <span className="text-white text-3xl font-bold">Обновление</span>
                   </div>
                 )}
                 <CardContent className="p-0">
-                  {isLoading && !isMockMode ? <TableSkeleton /> : (isMockMode ? mockData : data?.products)?.length ? (
+                  {isLoading && !testMode ? <TableSkeleton /> : loadingRows?.length ? (
                     <DataTable
-                      data={isMockMode ? mockData : (data?.products ?? [])}
+                      data={loadingRows}
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
 
@@ -1789,12 +1834,17 @@ export default function Dashboard() {
               )}
 
               {/* Forecast Row - Outside the green border */}
-              {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} testRun={isMockMode ? run : undefined} />}
+              {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} testRun={testMode ? (testMode === 'sim' ? run : EMPTY_RUN) : undefined} />}
 
               <div className="flex flex-col gap-0">
                 {renderWarning()}
-                <Card className={`border-8 relative ${isMockMode ? TEST_FRAME : 'border-green-500'}`}>
-                  {hasNewUnloadEvents && !isMockMode && (
+                <Card className={`border-8 relative ${testMode && testMode !== 'sim' ? TEST_FRAME : 'border-green-500'}`}>
+                  {testMode === 'sim' && (
+                    <span className="absolute -top-3 right-3 z-50 rounded-full bg-purple-600 px-3 py-0.5 text-xs font-bold text-white shadow">
+                      СИМУЛЯЦИЯ
+                    </span>
+                  )}
+                  {hasNewUnloadEvents && testMode !== 'catalog' && testMode !== 'colors' && (
                     <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
                       <span className="text-white text-3xl font-bold">Обновление</span>
                     </div>
@@ -1821,7 +1871,7 @@ export default function Dashboard() {
         </div>
 
         <div className={`${isFullscreen ? 'col-span-1' : 'xl:col-span-1'} w-full`}>
-          <SidebarQueueTable data={isMockMode ? run.launched : recentAllData?.products} isLoading={isMockMode ? false : isLoadingAll} isFullscreen={isFullscreen} />
+          <SidebarQueueTable data={testMode ? (testMode === 'sim' ? run.launched : []) : recentAllData?.products} isLoading={testMode ? false : isLoadingAll} isFullscreen={isFullscreen} />
         </div>
       </div>
 
