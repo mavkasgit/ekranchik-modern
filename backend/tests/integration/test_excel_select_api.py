@@ -172,8 +172,8 @@ async def test_broken_path_is_not_found_not_a_crash(book, monkeypatch, no_share)
     assert "не найден" in response.json()["detail"]
 
 
-async def test_file_list_starts_in_the_book_folder(book):
-    """Список для выбора показывает ту же папку, куда ходит сервер."""
+async def test_files_list_endpoint_is_gone():
+    """Пикер убран: списка файлов нет, выбор книги — только вводом пути."""
     from app.main import app
 
     async with AsyncClient(
@@ -181,8 +181,4 @@ async def test_file_list_starts_in_the_book_folder(book):
     ) as client:
         response = await client.get("/api/dashboard/excel/files")
 
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["success"] is True
-    assert body["current_directory"] == str(book[0].parent.resolve())
-    assert [f["name"] for f in body["files"] if not f["is_dir"]] == ["Учет КПЗ 2026.xlsm"]
+    assert response.status_code == 404

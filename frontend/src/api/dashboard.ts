@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { DashboardResponse, FileStatus, ExcelFilesResponse, ExcelSelectResponse } from '@/types/dashboard'
+import type { DashboardResponse, FileStatus, ExcelSelectResponse } from '@/types/dashboard'
 
 export const dashboardApi = {
   getData: async (days = 7, limit = 100, unloadingLimit = 10, loadingOnly = true): Promise<DashboardResponse> => {
@@ -28,13 +28,6 @@ export const dashboardApi = {
   getOPCUAMatchedUnloadEvents: async (limit = 100): Promise<MatchedUnloadEvent[]> => {
     const { data } = await api.get<MatchedUnloadEvent[]>('/dashboard/opcua-unload-matched', {
       params: { limit },
-    })
-    return data
-  },
-
-  getExcelFiles: async (folderPath?: string): Promise<ExcelFilesResponse> => {
-    const { data } = await api.get<ExcelFilesResponse>('/dashboard/excel/files', {
-      params: folderPath ? { folder_path: folderPath } : undefined,
     })
     return data
   },

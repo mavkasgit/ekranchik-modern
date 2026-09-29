@@ -39,9 +39,7 @@ from app.schemas.dashboard import (
     DashboardResponse,
     FileStatus,
     MatchedUnloadEvent,
-    ExcelFileListResponse,
     ExcelFileSelectRequest,
-    ExcelFileInfo
 )
 from app.schemas.profile import ProfileInfo
 
@@ -206,106 +204,6 @@ async def get_file_status():
         return FileStatus(
             status_text="Ошибка",
             error=str(e)
-        )
-
-
-def format_size(bytes_size: int) -> str:
-    """Format file size in human readable units"""
-    for unit in ['Б', 'КБ', 'МБ', 'ГБ']:
-        if bytes_size < 1024:
-            return f"{bytes_size:.1f} {unit}"
-        bytes_size /= 1024
-    return f"{bytes_size:.1f} ТБ"
-
-
-@router.get("/excel/files", response_model=ExcelFileListResponse)
-async def get_excel_files(folder_path: Optional[str] = Query(default=None, description="Absolute folder path to list files in")):
-    """
-    Get list of available Excel files and directories in the requested or default path,
-    along with directory metadata and the active file absolute path.
-    """
-    try:
-        # Determine the target directory to scan
-        if folder_path:
-            current_dir = Path(folder_path).resolve()
-        else:
-            # Тот же каталог, что и для выбора по пути: смонтированная сетевая
-            # папка книги, иначе текущий каталог процесса.
-            current_dir = excel_service.directory or Path.cwd().resolve()
-                
-        if not current_dir.exists():
-            raise HTTPException(status_code=400, detail=f"Путь не существует: {current_dir}")
-        if not current_dir.is_dir():
-            raise HTTPException(status_code=400, detail=f"Путь не является папкой: {current_dir}")
-
-        files = []
-        try:
-            for item in current_dir.iterdir():
-                # Skip hidden folders / files starting with dot
-                if item.name.startswith('.'):
-                    continue
-                
-                if item.is_dir():
-                    try:
-                        stat = item.stat()
-                        mtime = datetime.fromtimestamp(stat.st_mtime)
-                    except Exception:
-                        mtime = datetime.now()
-                    files.append(ExcelFileInfo(
-                        name=item.name,
-                        path=str(item.resolve()),
-                        size_bytes=0,
-                        size_formatted="",
-                        last_modified=mtime,
-                        is_dir=True
-                    ))
-                elif item.is_file() and item.suffix.lower() in ('.xlsx', '.xls', '.xlsm') and not item.name.startswith('~$'):
-                    try:
-                        stat = item.stat()
-                        size = stat.st_size
-                        mtime = datetime.fromtimestamp(stat.st_mtime)
-                    except Exception:
-                        size = 0
-                        mtime = datetime.now()
-                    files.append(ExcelFileInfo(
-                        name=item.name,
-                        path=str(item.resolve()),
-                        size_bytes=size,
-                        size_formatted=format_size(size),
-                        last_modified=mtime,
-                        is_dir=False
-                    ))
-        except PermissionError:
-            raise HTTPException(status_code=403, detail=f"Нет доступа к папке: {current_dir}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Ошибка при чтении папки {current_dir}: {str(e)}")
-
-        # Sort: directories first (alphabetically), then files (alphabetically)
-        files.sort(key=lambda x: (not x.is_dir, x.name.lower()))
-
-        active_path = str(excel_service.current_path.resolve()) if excel_service.current_path else ""
-        parent_dir = current_dir.parent
-        parent_directory = str(parent_dir.resolve()) if parent_dir != current_dir else None
-
-        return ExcelFileListResponse(
-            success=True,
-            files=files,
-            active=active_path,
-            current_directory=str(current_dir.resolve()),
-            parent_directory=parent_directory
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[DASHBOARD API] Failed to scan Excel files: {e}", exc_info=True)
-        fallback_active = str(excel_service.current_path.resolve()) if excel_service.current_path else ""
-        return ExcelFileListResponse(
-            success=False,
-            error=str(e),
-            files=[],
-            active=fallback_active,
-            current_directory=str(Path.cwd().resolve()),
-            parent_directory=None
         )
 
 

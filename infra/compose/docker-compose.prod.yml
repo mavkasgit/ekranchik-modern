@@ -29,6 +29,10 @@ services:
       # в рабочий каталог. Перекрывает EXCEL_REAL_FILE_PATH из env_file:
       # в .env лежит UNC-путь для dev-хоста, который в контейнере не разрешается.
       - EXCEL_REAL_FILE_PATH=/app/excel/Учет КПЗ 2026.xlsm
+      # Свой файл выбора книги: static — общий каталог репозитория, и с
+      # одним именем контейнер и dev-бэкенд переписывают выбор друг друга
+      # (путь `/app/excel/…` в контейнере против UNC-пути на dev-хосте).
+      - EXCEL_ACTIVE_FILE_NAME=active_excel_prod.json
       - TZ=Europe/Moscow
     expose:
       - "8000"

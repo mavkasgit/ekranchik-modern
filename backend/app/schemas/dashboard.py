@@ -83,26 +83,6 @@ class FileStatus(BaseModel):
     seconds_since_modified: Optional[float] = None
 
 
-class ExcelFileInfo(BaseModel):
-    """Detailed information about an Excel file or directory"""
-    name: str
-    path: str
-    size_bytes: int
-    size_formatted: str
-    last_modified: datetime
-    is_dir: bool = False
-
-
-class ExcelFileListResponse(BaseModel):
-    """Response for Excel files list"""
-    success: bool = True
-    files: List[ExcelFileInfo] = []
-    active: str
-    current_directory: str
-    parent_directory: Optional[str] = None
-    error: Optional[str] = None
-
-
 class ExcelFileSelectRequest(BaseModel):
     """Request to select active Excel file"""
     file_path: Optional[str] = None

@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     # Excel file paths
     EXCEL_REAL_FILE_PATH: str = "//ktm-disk/Оператор/Учет КПЗ 2026.xlsm"
     EXCEL_TEST_FILE_PATH: str = "../testdata/Учет КПЗ 2026.xlsm"
+    # Файл с последним введённым путём к книге. Имя настраивается, потому что
+    # каталог static у dev-бэкенда и прод-контейнера — один и тот же: с общим
+    # именем выбор одной среды подменяет книгу другой (путь контейнера
+    # `/app/excel/…` против UNC-пути dev-хоста).
+    EXCEL_ACTIVE_FILE_NAME: str = "active_excel.json"
     
     # Static files
     STATIC_DIR: str = "../static"  # Relative to backend folder
@@ -128,6 +133,20 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
     THUMBNAIL_SIZE: tuple = (200, 200)
     
+    @property
+    def excel_active_file_name(self) -> str:
+        """Имя файла выбора активной книги; в симуляции — вариант с ``_sim``.
+
+        Имя задаёт конфигурация (``EXCEL_ACTIVE_FILE_NAME``), чтобы dev и
+        прод-контейнер на одной машине не переписывали выбор друг друга в
+        общем каталоге `static`. Суффикс ``_sim`` вставляется перед
+        расширением: ``active_excel_prod.json`` → ``active_excel_prod_sim.json``.
+        """
+        name = Path(self.EXCEL_ACTIVE_FILE_NAME)
+        if not self.SIMULATION_ENABLED:
+            return name.name
+        return f"{name.stem}_sim{name.suffix}"
+
     @property
     def excel_path(self) -> Path | None:
         """Get Excel file path as Path object"""

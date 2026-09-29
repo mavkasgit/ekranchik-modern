@@ -94,6 +94,8 @@ e2e/.env
 # Active Excel state files
 static/active_excel.json
 static/active_excel_sim.json
+static/active_excel_prod.json
+static/active_excel_prod_sim.json
 
 # .NET / C#
 **/bin/

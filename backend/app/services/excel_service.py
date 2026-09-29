@@ -86,9 +86,13 @@ class ExcelService:
     
     @property
     def _persistence_path(self) -> Path:
-        """Path to save persistent configuration"""
+        """Путь к файлу с последним введённым путём к книге.
+
+        Имя файла берётся из настроек, а не хардкодится: у dev и прод-контейнера
+        оно своё, иначе запись одной среды попадает в выбор другой.
+        """
         static_dir = Path(settings.STATIC_DIR)
-        filename = "active_excel_sim.json" if settings.SIMULATION_ENABLED else "active_excel.json"
+        filename = settings.excel_active_file_name
         if static_dir.exists():
             return static_dir / filename
         # Full mode (ADR 0002): static нет — хранить выбор в каталоге данных,
