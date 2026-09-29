@@ -13,6 +13,16 @@
 Физического входа в линию мы не знаем — знаем только момент обнаружения,
 поэтому расхождение ``book_time - first_seen_at`` возвращается в
 ``CycleMatch.entry_delta_sec``: по нему калибруется допуск на живой линии.
+Считается оно только для проходов, чей первый замер достоверен
+(``first_seen_source == TRUSTED_FIRST_SEEN``): после старта монитора и после
+разрыва связи замер равен моменту, когда монитор посмотрел, и расхождение по
+нему ничего не значит. Такие проходы всё равно получают строку — по номеру и
+ближайшей строке, но без дельты.
+
+Строка, время которой позже выхода прохода, кандидатом не становится вовсе:
+она описывает другой прогон. Это структурный запрет, а не оценка близости,
+поэтому подмена строки следующего прогона невозможна по построению, а не
+«возможна, но с бейджем».
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,13 +37,19 @@ from app.services.hanger_row import HangerRow
 # 15 минут помечали бейджем каждый нормальный проход.
 #
 # Ловит не бытовое расхождение, а настоящую ошибку подбора: строка
-# соседней смены отличается на часы, а не на минуты.
+# соседней смены отличается на часы, а не на минуты. По допуску ставится
+# только пометка в журнале — на экран она не выводится, пока не откалибрована
+# по живой линии (``entry_delta_sec`` пишется в журнал на каждой выгрузке).
 MAX_ENTRY_DELTA_SECONDS = 3 * 3600
 
-# Причины, по которым подбор не даёт уверенного попадания. Пустая строка —
-# строка подобрана уверенно, бейдж не показывается.
+# Достоверный первый замер: монитор наблюдал линию непрерывно. Значение
+# ставит line_monitor (``FIRST_SEEN_*``); ``start`` и ``gap`` — замер равен
+# моменту, когда монитор посмотрел на линию, а не появлению подвеса.
+TRUSTED_FIRST_SEEN = "watched"
+
+# Вердикт подбора. Пустая строка — строка подобрана; на экране живут только
+# ``NO_ROW`` и ``CYCLE_ERROR``, остальное разбирается в журнале.
 CODE_OK = ""
-CODE_SUSPECT = "SUSPECT"
 CODE_NO_ROW = "NO_ROW"
 CODE_CYCLE_ERROR = "CYCLE_ERROR"
 
@@ -48,10 +64,17 @@ class CycleMatch:
     cycle: Dict[str, Any]
     row: Optional[HangerRow]
     code: str = CODE_OK
+    # Расхождение ``book_time - first_seen_at`` в секундах; ``None`` — первый
+    # замер недостоверен или отсчёта нет, считать нечего. Поле остаётся
+    # сырыми данными для калибровки допуска по живой линии.
     entry_delta_sec: Optional[float] = None
-    # Почему подбор сомнителен: строка позже выхода этого прохода, значит
-    # она принадлежит более позднему прогону; иначе — само расхождение.
+    # Пометка для журнала: ``entry_delta`` — расхождение больше допуска.
+    # На экран не выводится, пока допуск не откалиброван.
     suspect_reason: str = ""
+    # Сколько строк этого номера отброшено как записанные позже выхода.
+    # Ноль — обычный случай; больше нуля значит, что допущение «строка не
+    # позже выхода» на этих данных не выполняется, и это видно в журнале.
+    rows_after_exit: int = 0
 
 
 def parse_excel_date(date_str: str) -> Tuple[int, int, int]:
@@ -205,18 +228,19 @@ def match_cycles_to_rows(
     первыми, но в ответе остаются там, где их передал вызывающий. Иначе только
     что сошедший подвес оказывался бы внизу таблицы выхода.
 
-    Для обычного прохода берётся неиспользованная строка того же номера,
-    ближайшая к ``first_seen_at``:
+    Кандидаты — неиспользованные строки того же номера с заполненным временем,
+    время которых НЕ позже выхода прохода. Из них берётся ближайшая к
+    ``first_seen_at``:
 
-    - бейдж не показывается;
-    - строка позже выхода этого прохода — она принадлежит более позднему
-      прогону; строка всё равно показывается, но с ``SUSPECT``;
-    - расхождение больше допуска — ``SUSPECT``: причина может быть любой,
-      решение за оператором.
+    - сколько строк отброшено по выходу — в ``rows_after_exit`` (журнал);
+    - расхождение больше допуска — ``suspect_reason``: это пометка для журнала,
+      на экран она не идёт, пока допуск не откалиброван;
+    - первый замер недостоверен (``first_seen_source`` монитора) — строка
+      подбирается по номеру и близости, а ``entry_delta_sec`` не считается.
 
-    Если строк по номеру нет вовсе — ``NO_ROW``. Проход, у которого
-    ``line_monitor`` не нашёл открытого цикла, остаётся ``CYCLE_ERROR`` и
-    строки не получает вовсе.
+    Если строк по номеру нет вовсе (или все они позже выхода) — ``NO_ROW``.
+    Проход, у которого ``line_monitor`` не нашёл открытого цикла, остаётся
+    ``CYCLE_ERROR`` и строки не получает вовсе.
     """
     matches: List[CycleMatch] = []
     # Позиция каждого подбора во входном списке — её восстановим в конце.
@@ -238,18 +262,33 @@ def match_cycles_to_rows(
 
         first_seen = _cycle_first_seen(cycle)
         exit_at = _cycle_exit(cycle)
-        candidates = [
-            row
-            for row in rows_by_hanger.get(normalize_hanger_key(cycle.get("hanger")), [])
-            if has_entry_time(row) and make_product_key(row) not in used
-        ]
+        candidates = []
+        rows_after_exit = 0
+
+        for row in rows_by_hanger.get(normalize_hanger_key(cycle.get("hanger")), []):
+            if not has_entry_time(row) or make_product_key(row) in used:
+                continue
+            # Строка позже выхода этого прохода описывает другой прогон: она
+            # не кандидат, а сколько таких — видно в журнале.
+            if exit_at and product_entry_seconds(row) > exit_at:
+                rows_after_exit += 1
+                continue
+            candidates.append(row)
 
         if not candidates:
-            matches.append(CycleMatch(cycle=cycle, row=None, code=CODE_NO_ROW))
+            matches.append(
+                CycleMatch(
+                    cycle=cycle,
+                    row=None,
+                    code=CODE_NO_ROW,
+                    rows_after_exit=rows_after_exit,
+                )
+            )
             continue
 
         # Ближайшая по модулю разности. При first_seen = 0 (нет данных о
         # начале прохода) порядок не определён — берём самую позднюю строку.
+        trusted = cycle.get("first_seen_source") == TRUSTED_FIRST_SEEN
         if first_seen == 0.0:
             best = max(candidates, key=product_entry_seconds)
             delta = None
@@ -258,27 +297,56 @@ def match_cycles_to_rows(
                 candidates,
                 key=lambda row: abs(product_entry_seconds(row) - first_seen),
             )
-            delta = product_entry_seconds(best) - first_seen
+            delta = product_entry_seconds(best) - first_seen if trusted else None
 
         used.add(make_product_key(best))
 
-        code, reason = CODE_OK, ""
-        if exit_at and product_entry_seconds(best) > exit_at:
-            code = CODE_SUSPECT
-            reason = "later_run"
-        elif delta is not None and abs(delta) > MAX_ENTRY_DELTA_SECONDS:
-            code = CODE_SUSPECT
+        reason = ""
+        if delta is not None and abs(delta) > MAX_ENTRY_DELTA_SECONDS:
             reason = "entry_delta"
 
         matches.append(
             CycleMatch(
                 cycle=cycle,
                 row=best,
-                code=code,
+                code=CODE_OK,
                 entry_delta_sec=delta,
                 suspect_reason=reason,
+                rows_after_exit=rows_after_exit,
             )
         )
 
     order = sorted(range(len(matches)), key=lambda i: positions[i])
     return [matches[i] for i in order]
+
+
+def match_log_line(match: CycleMatch, hanger: str) -> str:
+    """Строка журнала на одну выгрузку: весь проход и вердикт сопоставления.
+
+    Пишется по КАЖДОЙ выгрузке, а не только по спорной: расхождение входа
+    калибруют по распределению, а по одному хвосту границу не поставить.
+    Формат — ``ключ=значение``, чтобы строку можно было разобрать скриптом.
+    """
+    cycle = match.cycle
+
+    def clock(value: Any) -> str:
+        try:
+            return datetime.fromisoformat(value).strftime("%H:%M:%S")
+        except (TypeError, ValueError):
+            return "—"
+
+    delta = match.entry_delta_sec
+    delta_text = "—" if delta is None else f"{delta:+.0f}s({delta / 60:+.0f}m)"
+    path = " ".join(
+        f"{entry.get('bath')}@{clock(entry.get('in'))}->{clock(entry.get('out'))}"
+        for entry in cycle.get("path") or []
+    )
+    return (
+        f"[Matching] cycle={cycle.get('cycle_id')} hanger={hanger} "
+        f"code={match.code or 'OK'} source={cycle.get('first_seen_source') or '—'} "
+        f"bath={cycle.get('entry_bath')} first_seen={clock(cycle.get('first_seen_at'))} "
+        f"exit={clock(cycle.get('exit_at'))} "
+        f"row={f'{match.row.date} {match.row.time}' if match.row else '—'} "
+        f"delta={delta_text} rows_after_exit={match.rows_after_exit} "
+        f"note={match.suspect_reason or '—'} path={path or '—'}"
+    )

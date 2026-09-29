@@ -660,21 +660,18 @@ const getRowClassName = (hanger: HangerData, idx: number) => {
   return idx % 2 === 0 ? 'bg-slate-200 dark:bg-slate-800/50' : '';
 }
 
-// Причины пометки строки — разные причины требуют разных действий
-// оператора, поэтому у каждой свой бейдж, а текст причины приходит в
-// тултипе из бэкенда (app.api.routes.dashboard._warning_for).
+// Причины пометки строки — оператору показываем только то, что он может
+// понять и на что может отреагировать: долгий проход и выгрузку без прохода.
+// Текст причины приходит в тултипе из бэкенда
+// (app.api.routes.dashboard._warning_for).
 // NO_ROW бейджа не имеет: пустая строка читается сама.
 const WARNING_BADGES: Record<string, { label: string; className: string }> = {
-  SUSPECT: {
-    label: '⚠ ПРОВЕРИТЬ СТРОКУ',
-    className: 'text-amber-700 bg-amber-200 dark:text-amber-400 dark:bg-amber-950/60 border-amber-300/50',
-  },
   DELAY: {
     label: '⚠ ЗАДЕРЖКА',
     className: 'text-orange-700 bg-orange-200 dark:text-orange-400 dark:bg-orange-950/60 border-orange-300/50',
   },
   CYCLE_ERROR: {
-    label: '⚠ НАРУШЕН ЦИКЛ',
+    label: '⚠ ОШИБКА',
     className: 'text-red-700 bg-red-200 dark:text-red-400 dark:bg-red-950/60 border-red-300/50',
   },
 }

@@ -20,9 +20,9 @@ from app.services.profile_name import split_profiles
 from app.services.matching import (
     CODE_CYCLE_ERROR,
     CODE_NO_ROW,
-    CODE_SUSPECT,
     CycleMatch,
     match_cycles_to_rows,
+    match_log_line,
     normalize_hanger_key,
     parse_iso_seconds,
     product_entry_seconds,
@@ -38,19 +38,18 @@ _reported_matches: "OrderedDict[tuple, None]" = OrderedDict()
 _REPORTED_MATCHES_MAX = 1000
 
 
-def _log_match_once(key: tuple, cycle: dict, hanger_num: str, code: str,
-                    row: Optional[HangerRow]) -> None:
-    """Написать в журнал причину подбора ровно один раз на событие."""
+def _log_match_once(key: tuple, line: str) -> None:
+    """Написать в журнал результат сопоставления ровно один раз на событие.
+
+    Ответ отдаётся по HTTP, и фронтенд опрашивает его повторно — без этой
+    отметки одна выгрузка попала бы в журнал столько раз, сколько её спросили.
+    """
     if key in _reported_matches:
         return
     _reported_matches[key] = None
     while len(_reported_matches) > _REPORTED_MATCHES_MAX:
         _reported_matches.popitem(last=False)
-    logger.warning(
-        "[Matching] cycle %s hanger %s: %s (row %s)",
-        cycle.get("cycle_id"), hanger_num, code,
-        f"{row.date} {row.time}" if row else "—",
-    )
+    logger.info(line)
 
 
 from app.schemas.dashboard import (
@@ -529,13 +528,12 @@ async def get_opcua_matched_unload_events(
             cycle, row = m.cycle, m.row
             hanger_num = str(cycle.get("hanger"))
             code, warning = _warning_for(m)
-            if m.code:
-                # Диагностика в лог идёт по всем причинам, включая NO_ROW,
-                # у которого на экране пометки нет: пустая строка читается сама.
-                _log_match_once(
-                    (cycle.get("cycle_id"), cycle.get("timestamp"), m.code),
-                    cycle, hanger_num, m.code, row,
-                )
+            # Журнал получает КАЖДУЮ выгрузку, а не только спорную: по
+            # расхождению входа калибруется допуск, и нужен весь разброс.
+            _log_match_once(
+                (cycle.get("cycle_id"), cycle.get("timestamp")),
+                match_log_line(m, hanger_num),
+            )
 
             profiles_info = _build_profiles_info(row.profile if row else '', photos_map)
             matched.append(MatchedUnloadEvent(
@@ -589,41 +587,27 @@ async def get_opcua_matched_unload_events(
 
 
 def _warning_for(m: CycleMatch):
-    """Код бейджа и текст-тултип для результата подбора."""
+    """Код бейджа и текст-тултип для результата подбора.
+
+    На экране живут только метки, которые оператор может понять и на которые
+    может отреагировать: долгий проход и выгрузка без прохода. Расхождение
+    входа на экран не идёт — допуск не откалиброван, а ложная метка хуже
+    пропущенной; расхождение видно в журнале (``match_log_line``).
+    """
     if m.code == CODE_CYCLE_ERROR:
         return CODE_CYCLE_ERROR, "line_monitor не нашёл открытого цикла для этого выхода"
     if m.code == CODE_NO_ROW:
         # Пустая строка читается сама: подвес сошёл, а в книге его нет.
         # Бейдж не нужен — на экране и так видно, что данных нет.
         return None, None
-    if m.code == CODE_SUSPECT:
-        row = m.row
-        line_in = m.cycle.get("first_seen_at") or EMPTY
-        if m.suspect_reason == "later_run":
-            return CODE_SUSPECT, (
-                f"Вход линии: {_hhmm(line_in)}, найденная строка: {row.time} {row.date} — "
-                "строка позже выхода, вероятно от другого прогона"
-            )
-        delta = m.entry_delta_sec or 0
-        return CODE_SUSPECT, (
-            f"Вход линии: {_hhmm(line_in)}, в книге: {row.time} {row.date} — "
-            f"расхождение {abs(delta) / 60:.0f} мин"
-        )
 
-    # Уверенное попадание: помечаем только аномально долгий проход.
+    # Строка подобрана: помечаем только аномально долгий проход.
     row = m.row
-    if row is not None and m.entry_delta_sec is not None:
+    if row is not None:
         on_line = parse_iso_seconds(m.cycle.get("exit_at")) - product_entry_seconds(row)
         if on_line > DELAY_LIMIT_SECONDS:
             return "DELAY", f"На линии {on_line / 3600:.1f}ч при пороге 6ч"
     return "", None
-
-
-def _hhmm(iso: str) -> str:
-    try:
-        return datetime.fromisoformat(iso).strftime("%H:%M")
-    except (ValueError, TypeError):
-        return EMPTY
 
 
 # This endpoint is redundant now as the logic is in /opcua-unload-matched

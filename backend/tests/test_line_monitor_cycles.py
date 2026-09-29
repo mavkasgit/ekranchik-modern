@@ -281,6 +281,75 @@ def test_unload_events_limit_keeps_most_recent(monitor, monkeypatch):
     assert [e["hanger"] for e in events] == [7, 5]
 
 
+async def _connected() -> bool:
+    return True
+
+
+def _poll(monitor, monkeypatch, mapping):
+    """Один успешный опрос линии: связь есть, ванны отдают mapping."""
+    monkeypatch.setattr(lm.opcua_service, "ensure_connected", _connected)
+    monkeypatch.setattr(lm.opcua_service, "_connected", True)
+    monkeypatch.setattr(lm.opcua_service, "get_value", _baths(mapping))
+    asyncio.run(monitor._poll_once())
+
+
+def test_first_scan_after_start_is_untrusted(monitor, monkeypatch):
+    """Первый скан после старта: подвес застали стоящим, первый замер врёт.
+
+    Вход на линию монитор не видит. Проход, открытый на старте, получает
+    first_seen_at = момент старта, и расхождение с книгой по нему считать
+    нельзя — иначе каждый подвес, стоявший на линии в момент перезапуска,
+    получает мусорную дельту.
+    """
+    _poll(monitor, monkeypatch, {5: (True, 777)})
+
+    assert monitor._hangers[777].first_seen_source == lm.FIRST_SEEN_START
+
+
+def test_scan_after_connection_gap_is_untrusted(monitor, monkeypatch):
+    """Пауза без опросов: за неё подвес мог появиться и уйти незамеченным."""
+    _poll(monitor, monkeypatch, {5: (True, 777)})
+    monitor._last_scan_at = datetime.now() - timedelta(minutes=5)
+
+    _poll(monitor, monkeypatch, {5: (True, 777), 6: (True, 888)})
+
+    assert monitor._hangers[888].first_seen_source == lm.FIRST_SEEN_GAP
+
+
+def test_scan_on_watched_line_is_trusted(monitor, monkeypatch):
+    """Линию наблюдали непрерывно — первый замер достоверен."""
+    _poll(monitor, monkeypatch, {5: (True, 777)})
+
+    _poll(monitor, monkeypatch, {5: (True, 777), 6: (True, 888)})
+
+    assert monitor._hangers[888].first_seen_source == lm.FIRST_SEEN_WATCHED
+
+
+def test_unload_event_carries_source_and_path_times(monitor, monkeypatch):
+    """Событие выгрузки несёт источник первого замера и путь с временами.
+
+    Одну модель прохода отдают и событие, и /line/cycles: по ней в журнале
+    разбирают сопоставление со строкой книги.
+    """
+    start = datetime(2026, 9, 29, 13, 11, 0)
+    left_30 = start + timedelta(minutes=51)
+    state = lm.HangerState(id=21)
+    monitor._hangers[21] = state
+    monitor._open_cycle(state, 30, start)
+    state.current_bath = "31"
+    state.entry_time = start + timedelta(minutes=54)
+    state.path.append(lm.HangerPathEntry("30", start, left_30))
+
+    monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
+    asyncio.run(monitor._record_unload(21))
+
+    event = monitor.get_unload_events()[-1]
+    assert event["first_seen_source"] == lm.FIRST_SEEN_START
+    assert event["path"][0] == {"bath": "30", "in": start.isoformat(), "out": left_30.isoformat()}
+    assert event["path"][-1]["bath"] == "31"
+    assert event["path"][-1]["out"] == event["exit_at"], "выход прохода закрывает последнюю ванну"
+
+
 class _SilentWS:
     connection_count = 0
 

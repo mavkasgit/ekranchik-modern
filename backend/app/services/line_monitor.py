@@ -31,6 +31,17 @@ DEFAULT_MAX_BATH_SECONDS = 600  # Подстановка, пока PLC не от
 DEPARTURE_MARGIN_SECONDS = 300  # Запас сверх самой долгой ванны
 DEPARTURE_BOUND_REFRESH = 60  # Как часто пересчитывать границу, секунд
 
+# Откуда взялся первый замер прохода. Вход на линию монитор не видит: он
+# застаёт подвес уже в ванне. Достоверен только FIRST_SEEN_WATCHED — тогда
+# монитор наблюдал линию непрерывно и замер близок к появлению подвеса. При
+# старте монитора и после разрыва связи замер равен моменту, когда монитор
+# посмотрел, и по нему нельзя считать расхождение с книгой учёта.
+FIRST_SEEN_WATCHED = "watched"
+FIRST_SEEN_START = "start"
+FIRST_SEEN_GAP = "gap"
+# Пауза без успешных опросов, после которой связь считается прерванной.
+SCAN_GAP_SECONDS = 30
+
 
 # --- Data Classes ---
 @dataclass
@@ -59,6 +70,9 @@ class HangerState:
     ``unseen_since`` — с какого момента подвес не виден ни в одной ванне.
     Короткий разрыв между ваннами НЕ прерывает проход: ``current_bath``
     продолжает хранить последнюю известную ванну, а ``cycle_id`` — прежний.
+
+    ``first_seen_source`` — откуда взялся первый замер (``FIRST_SEEN_*``):
+    наблюдал ли монитор линию непрерывно или застал подвес уже стоящим.
     """
     id: int
     current_bath: Optional[str] = None
@@ -67,6 +81,7 @@ class HangerState:
     path: List[HangerPathEntry] = field(default_factory=list)
     cycle_id: Optional[int] = None
     first_seen_at: Optional[datetime] = None
+    first_seen_source: str = ""
     entry_bath: Optional[int] = None
     unseen_since: Optional[datetime] = None
 
@@ -88,6 +103,9 @@ class LineMonitorService:
         self._health_check_interval = 30  # seconds - проверка здоровья OPC UA соединения
         self._last_heartbeat = datetime.now()
         self._last_health_check = datetime.now()
+        # Время последнего успешного скана линии: по нему видно, наблюдал ли
+        # монитор линию непрерывно (см. FIRST_SEEN_*).
+        self._last_scan_at: Optional[datetime] = None
         self._consecutive_errors = 0
         self._max_consecutive_errors = 5  # После этого делаем полный reconnect
         
@@ -127,6 +145,9 @@ class LineMonitorService:
         self._register_monitored_nodes()
         
         self._running = True
+        # Линию ещё не наблюдали: первый проход, открытый после старта,
+        # получит недостоверный первый замер (FIRST_SEEN_START).
+        self._last_scan_at = None
         self._task = asyncio.create_task(self._monitor_loop())
         logger.info("[Line Monitor] Started")
         return True
@@ -178,6 +199,7 @@ class LineMonitorService:
         self._bath34_pallete = None
         self._processed_unloads.clear()
         self._unload_events.clear()
+        self._last_scan_at = None
         logger.info("[Line Monitor] All data cleared")
     
     async def _monitor_loop(self) -> None:
@@ -286,6 +308,11 @@ class LineMonitorService:
         
         # Scan all baths to update hanger states
         await self._scan_baths()
+
+        # Отметка «линию наблюдали». Проход, открытый после паузы больше
+        # SCAN_GAP_SECONDS, получает недостоверный первый замер (FIRST_SEEN_GAP):
+        # за время паузы подвес мог появиться и уйти из ванны незамеченным.
+        self._last_scan_at = datetime.now()
     
     async def _broadcast_connection_status(self, connected: bool) -> None:
         """Broadcast OPC UA connection status to all clients."""
@@ -331,6 +358,19 @@ class LineMonitorService:
                 del self._hangers[hanger_id]
             logger.warning(f"[Line Monitor] Force-cleaned {to_remove} oldest hangers (overflow protection)")
 
+    def _first_seen_source(self, now: datetime) -> str:
+        """Наблюдал ли монитор линию до этого прохода (см. ``FIRST_SEEN_*``).
+
+        Первый скан после старта и первый скан после паузы больше
+        ``SCAN_GAP_SECONDS`` дают недостоверный первый замер: подвес застают
+        уже стоящим в ванне, и замер равен моменту, когда монитор посмотрел.
+        """
+        if self._last_scan_at is None:
+            return FIRST_SEEN_START
+        if (now - self._last_scan_at).total_seconds() > SCAN_GAP_SECONDS:
+            return FIRST_SEEN_GAP
+        return FIRST_SEEN_WATCHED
+
     def _open_cycle(
         self, hanger: HangerState, bath_num: int, now: datetime
     ) -> None:
@@ -346,6 +386,7 @@ class LineMonitorService:
         self._cycle_counter += 1
         hanger.cycle_id = self._cycle_counter
         hanger.first_seen_at = now
+        hanger.first_seen_source = self._first_seen_source(now)
         hanger.entry_bath = bath_num
         hanger.path = []
         hanger.unseen_since = None
@@ -404,8 +445,20 @@ class LineMonitorService:
             "first_seen_at": hanger.first_seen_at.isoformat()
             if hanger.first_seen_at
             else None,
+            "first_seen_source": hanger.first_seen_source,
             "entry_bath": hanger.entry_bath,
             "baths_visited": [e.bath_name for e in hanger.path],
+            # Полная история прохода: ванны с временами входа и выхода. По ней
+            # разбирают сопоставление в журнале — бейдж на экране не заменяет
+            # разбора, а только зовёт оператора.
+            "path": [
+                {
+                    "bath": e.bath_name,
+                    "in": e.entry_time.isoformat() if e.entry_time else None,
+                    "out": e.exit_time.isoformat() if e.exit_time else None,
+                }
+                for e in hanger.path
+            ],
         }
 
     async def _scan_baths(self) -> None:
@@ -610,15 +663,13 @@ class LineMonitorService:
             # принадлежит текущему проходу, а не первому за всё время.
             total_time_sec = (now - hanger.first_seen_at).total_seconds()
             event = {
+                # Одна модель прохода с /line/cycles: список полей не должен
+                # расходиться между событием и снапшотом.
+                **self.cycle_snapshot(hanger),
                 "type": "unload",
                 "reason": None,
-                "cycle_id": hanger.cycle_id,
-                "hanger": hanger_id,
-                "first_seen_at": hanger.first_seen_at.isoformat(),
-                "entry_bath": hanger.entry_bath,
                 "exit_at": now.isoformat(),
                 "total_time_sec": total_time_sec,
-                "baths_visited": [e.bath_name for e in hanger.path],
                 "time": now.strftime("%H:%M:%S"),
                 "date": now.strftime("%d.%m.%Y"),
                 "timestamp": now.isoformat(),

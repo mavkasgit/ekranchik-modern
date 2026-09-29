@@ -8,7 +8,12 @@
 - проход без открытого цикла в line_monitor даёт CYCLE_ERROR и не получает
   строку (в том числе никакой строки с total_time = 0 «задним числом»);
 - отсутствие строк по номеру даёт NO_ROW;
-- строка позже выхода прохода помечается SUSPECT, но показывается.
+- строка позже выхода прохода кандидатом не становится: она описывает другой
+  прогон, и сколько таких строк отброшено — видно в rows_after_exit;
+- расхождение входа больше допуска — пометка в журнале (suspect_reason),
+  а не на экране;
+- первый замер недостоверен (монитор застал подвес уже стоящим) — строка
+  подбирается, но entry_delta_sec не считается.
 """
 from datetime import datetime, timedelta
 
@@ -17,9 +22,10 @@ from app.services.matching import (
     CODE_CYCLE_ERROR,
     CODE_NO_ROW,
     CODE_OK,
-    CODE_SUSPECT,
     MAX_ENTRY_DELTA_SECONDS,
+    TRUSTED_FIRST_SEEN,
     match_cycles_to_rows,
+    match_log_line,
 )
 
 DAY_1 = "28.09.2026"
@@ -35,17 +41,19 @@ def _row(number, date, time, profile):
     )
 
 
-def _cycle(hanger, first_seen, exit_at, cycle_id=1, type_="unload"):
+def _cycle(hanger, first_seen, exit_at, cycle_id=1, type_="unload", source=TRUSTED_FIRST_SEEN):
     return {
         "type": type_,
         "reason": None,
         "cycle_id": cycle_id,
         "hanger": hanger,
         "first_seen_at": first_seen,
+        "first_seen_source": source,
         "entry_bath": 3,
         "exit_at": exit_at,
         "total_time_sec": None,
         "baths_visited": None,
+        "path": None,
     }
 
 
@@ -144,20 +152,41 @@ def test_no_rows_for_hanger_yields_no_row_code():
     assert m.row is None
 
 
-def test_row_after_exit_is_suspect_but_shown():
-    """Единственная строка номера позже выхода: показываем, но помечаем."""
+def test_row_after_exit_is_not_a_candidate():
+    """Единственная строка номера позже выхода — не кандидат: подмены нет."""
     rows = {"6": [_row(6, NIGHT, "21:55:00", "СЛЕДУЮЩИЙ-ПРОГОН")]}
     cycles = [_cycle(6, _iso(NIGHT, "18:47:00"), _iso(NIGHT, "20:51:00"), cycle_id=7)]
 
     [m] = match_cycles_to_rows(cycles, rows)
 
-    assert m.row is not None
-    assert m.code == CODE_SUSPECT
-    assert m.suspect_reason == "later_run"
+    assert m.row is None
+    assert m.code == CODE_NO_ROW
+    assert m.rows_after_exit == 1
 
 
-def test_row_far_beyond_tolerance_is_suspect():
-    """Строка соседней смены: расхождение больше допуска — решает оператор."""
+def test_earlier_row_wins_when_later_row_is_after_exit():
+    """Из двух строк берётся своя: та, что позже выхода, отброшена."""
+    rows = {
+        "6": [
+            _row(6, NIGHT, "18:50:00", "СВОЯ"),
+            _row(6, NIGHT, "21:55:00", "СЛЕДУЮЩИЙ-ПРОГОН"),
+        ]
+    }
+    cycles = [_cycle(6, _iso(NIGHT, "18:47:00"), _iso(NIGHT, "20:51:00"), cycle_id=7)]
+
+    [m] = match_cycles_to_rows(cycles, rows)
+
+    assert m.row.profile == "СВОЯ"
+    assert m.code == CODE_OK
+    assert m.rows_after_exit == 1
+
+
+def test_row_far_beyond_tolerance_is_flagged_in_journal():
+    """Строка соседней смены: расхождение больше допуска — пометка в журнале.
+
+    На экран она не идёт: допуск не откалиброван, а ложная метка хуже
+    пропущенной. Строка при этом показывается.
+    """
     first_seen = datetime(2026, 9, 29, 22, 0, 0)
     # Заведомо за пределами допуска: на линии подвес проводит около трёх
     # часов, а такая строка принадлежит другой смене.
@@ -167,8 +196,48 @@ def test_row_far_beyond_tolerance_is_suspect():
 
     [m] = match_cycles_to_rows(cycles, rows)
 
-    assert m.code == CODE_SUSPECT
+    assert m.row is not None
+    assert m.code == CODE_OK
     assert m.suspect_reason == "entry_delta"
+
+
+def test_untrusted_first_seen_gives_row_without_delta():
+    """Монитор застал подвес уже стоящим: строка своя, дельта не считается.
+
+    После старта монитора и после разрыва связи первый замер равен моменту,
+    когда монитор посмотрел, а не появлению подвеса — расхождение по нему
+    ничего не значит (см. line_monitor.FIRST_SEEN_*).
+    """
+    rows = {"8": [_row(8, NIGHT, "13:14:00", "СВОЯ")]}
+    cycles = [
+        _cycle(8, _iso(NIGHT, "16:17:36"), _iso(NIGHT, "16:31:18"), cycle_id=9, source="start")
+    ]
+
+    [m] = match_cycles_to_rows(cycles, rows)
+
+    assert m.row is not None
+    assert m.entry_delta_sec is None
+    assert m.suspect_reason == ""
+
+
+def test_log_line_carries_cycle_history_and_verdict():
+    """Строка журнала: проход целиком (ванны с временами), строка книги, дельта."""
+    rows = {"21": [_row(21, NIGHT, "13:14:00", "ЮП-3658")]}
+    cycle = _cycle(21, _iso(NIGHT, "13:11:00"), _iso(NIGHT, "16:31:18"), cycle_id=8)
+    cycle["path"] = [
+        {"bath": "30", "in": _iso(NIGHT, "13:11:00"), "out": _iso(NIGHT, "14:02:00")},
+        {"bath": "31", "in": _iso(NIGHT, "14:05:00"), "out": None},
+    ]
+
+    [m] = match_cycles_to_rows([cycle], rows)
+    line = match_log_line(m, "21")
+
+    assert "cycle=8" in line
+    assert "hanger=21" in line
+    assert f"source={TRUSTED_FIRST_SEEN}" in line
+    assert "row=29.09.2026 13:14:00" in line
+    assert "delta=+180s(+3m)" in line
+    assert "path=30@13:11:00->14:02:00 31@14:05:00->—" in line
 
 
 def test_line_length_delta_is_not_suspect():
