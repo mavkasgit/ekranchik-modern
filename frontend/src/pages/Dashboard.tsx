@@ -511,6 +511,10 @@ function StatusBar({
       ? 'bg-green-500'
       : 'bg-destructive'
 
+  // Полный путь: имя файла его не содержит, а оператору нужен — по нему
+  // видно, что сервер читает действительно тот файл и с сетевого диска.
+  const filePath = fileStatus?.file_path || activeFile
+
   return (
     <Card>
       <CardContent className="py-3">
@@ -532,6 +536,14 @@ function StatusBar({
               {fileStatus?.last_modified && (
                 <span className="text-muted-foreground text-xs">
                   ({new Date(fileStatus.last_modified).toLocaleString('ru')})
+                </span>
+              )}
+              {filePath && (
+                <span
+                  className="text-muted-foreground text-xs font-mono truncate max-w-[420px]"
+                  title={filePath}
+                >
+                  {filePath}
                 </span>
               )}
               

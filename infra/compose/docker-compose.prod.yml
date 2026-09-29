@@ -21,6 +21,10 @@ services:
       - ENVIRONMENT=production
       - DEBUG=false
       - SIMULATION_ENABLED=false
+      # Путь к книге учёта внутри контейнера, где сетевой диск смонтирован
+      # в рабочий каталог. Перекрывает EXCEL_REAL_FILE_PATH из env_file:
+      # в .env лежит UNC-путь для dev-хоста, который в контейнере не разрешается.
+      - EXCEL_REAL_FILE_PATH=/app/excel/Учет КПЗ 2026.xlsm
       - TZ=Europe/Moscow
     expose:
       - "8000"

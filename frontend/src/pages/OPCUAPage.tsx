@@ -316,6 +316,19 @@ export function OPCUAPage() {
                 </div>
               </div>
 
+              {/* Путь к книге учёта (то, что реально видит сервер) */}
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-3">Книга учёта</h3>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                    <span className="text-gray-600 shrink-0">Путь на сервере:</span>
+                    <span className="font-mono text-sm text-gray-900 text-right break-all">
+                      {settings?.excel_path || 'не задан'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               {/* Connection Info */}
               <div>
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Connection</h3>

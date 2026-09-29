@@ -187,6 +187,7 @@ async def get_file_status():
             return FileStatus(
                 is_open=False,
                 file_name=path.name,
+                file_path=str(path),
                 status_text="Файл не найден",
                 error=f"Файл не найден: {path}"
             )
@@ -215,6 +216,7 @@ async def get_file_status():
             is_open=is_open,
             last_modified=mtime_dt,
             file_name=path.name,
+            file_path=str(path),
             status_text=status_text,
             seconds_since_modified=seconds_since_modified
         )
