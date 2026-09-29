@@ -30,7 +30,7 @@ function seededRandom(seed: number): () => number {
 }
 
 describe('buildTestRows', () => {
-  it('берёт только профили, у которых есть фото для строки дашборда', () => {
+  it('профиль без фото — обычная строка, а не повод его выкинуть', () => {
     const withGaps = [
       catalogProfile(1),
       catalogProfile(2, null),
@@ -40,10 +40,12 @@ describe('buildTestRows', () => {
 
     const rows = buildTestRows(withGaps, 'catalog', seededRandom(7))
 
-    expect(rows.map(row => row.profile).sort()).toEqual(['10101', '10104'])
+    expect(rows.map(row => row.profile).sort()).toEqual(['10101', '10102', '10103', '10104'])
+    const withoutPhoto = rows.find(row => row.profile === '10102')!
+    expect(withoutPhoto.profile_photo_thumb).toBeUndefined()
   })
 
-  it('в режиме каталога показывает каждый профиль с фото', () => {
+  it('в режиме каталога показывает каждый профиль каталога', () => {
     const rows = buildTestRows(CATALOG, 'catalog', seededRandom(7))
 
     expect(rows).toHaveLength(CATALOG.length)
@@ -113,11 +115,9 @@ describe('buildTestRows', () => {
     expect(new Set(rows.map(row => row.color)).size).toBeGreaterThan(1)
   })
 
-  it('каталогу без профилей с фото нечего показывать в любом режиме', () => {
-    const withoutPhoto = [catalogProfile(1, null)]
-
-    expect(buildTestRows(withoutPhoto, 'sim', seededRandom(7))).toEqual([])
-    expect(buildTestRows(withoutPhoto, 'colors', seededRandom(7))).toEqual([])
-    expect(buildTestRows(withoutPhoto, 'catalog', seededRandom(7))).toEqual([])
+  it('пустому каталогу нечего показывать в любом режиме', () => {
+    expect(buildTestRows([], 'sim', seededRandom(7))).toEqual([])
+    expect(buildTestRows([], 'colors', seededRandom(7))).toEqual([])
+    expect(buildTestRows([], 'catalog', seededRandom(7))).toEqual([])
   })
 })

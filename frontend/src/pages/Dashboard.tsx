@@ -1479,7 +1479,7 @@ export default function Dashboard() {
       if (rows.length === 0) {
         setTestRows([]);
         setTestMode(null);
-        setTestError('В каталоге нет профилей с фото — витрине нечего показывать');
+        setTestError('В каталоге нет профилей — витрине нечего показывать');
         return;
       }
 

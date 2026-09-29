@@ -1,6 +1,8 @@
 // Строки витрины из каталога профилей. Три режима дашборда берут строки отсюда:
-// профили случайные из тех, у кого есть фото, — так же, как их берёт боевая
-// выдача. Номер подвеса и время ставит прогон, когда подвес встаёт на линию.
+// профили случайные из всего каталога, — так же, как их берёт боевая выдача:
+// строка книги есть независимо от того, есть ли фото у профиля, а пустая ячейка
+// «Фото» у такой строки — обычное дело. Номер подвеса и время ставит прогон,
+// когда подвес встаёт на линию.
 
 import { COLOR_CATALOG } from '@/lib/domain/color'
 import { formatLocalized } from '@/lib/domain/time'
@@ -26,10 +28,11 @@ function shuffle<T>(items: T[], random: () => number): T[] {
   return result
 }
 
-/** Профиль годится в строку дашборда, если у него есть фото — того же предиката, что и на боевом пути. */
-function hasPhoto(profile: Profile): boolean {
-  return Boolean(profile.photo_thumb)
-}
+/**
+ * Строка витрины: профиль, у которого нет фото, — обычная строка, а не повод
+ * отбрасывать профиль. Боевая выдача так же оставляет строку книги и просто
+ * оставляет ячейку «Фото» пустой, поэтому витрина ведёт себя так же.
+ */
 
 function toRow(profile: Profile, color: string, number: number, now: Date): HangerData {
   return {
@@ -56,21 +59,20 @@ function toRow(profile: Profile, color: string, number: number, now: Date): Hang
 
 /**
  * Строки витрины. `colors` — по одной на каждый цвет справочника, остальные
- * режимы — весь круг профилей с фото в случайном порядке, и цвет каждой строки
- * тоже случайный из справочника: в каталоге цвета нет, он живёт в книге учёта.
+ * режимы — весь каталог в случайном порядке, и цвет каждой строки тоже
+ * случайный из справочника: в каталоге цвета нет, он живёт в книге учёта.
  */
 export function buildTestRows(
   profiles: Profile[],
   mode: TestMode,
   random: () => number = Math.random,
 ): HangerData[] {
-  const withPhoto = profiles.filter(hasPhoto)
-  if (withPhoto.length === 0) return []
+  const ordered = shuffle(profiles, random)
+  if (ordered.length === 0) return []
 
   // Один момент на всю витрину: время входа у строк общее, а в режиме симуляции
   // прогон переставит его каждому подвесу, когда тот встанет в ванну.
   const now = new Date()
-  const ordered = shuffle(withPhoto, random)
   if (mode === 'colors') {
     return COLOR_CATALOG.map((color, index) => {
       const profile = ordered[index % ordered.length]
