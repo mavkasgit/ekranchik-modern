@@ -107,6 +107,22 @@ class Settings(BaseSettings):
             if url.startswith(prefix):
                 return Path(url[len(prefix):]).parent
         return default_data_dir() or Path("./data")
+
+    # Журнал подвесов (issue #34): файл с историей проходов по линии.
+    # Каталог выводится из data_dir_path, то есть в контейнере это
+    # примонтированный том, а в exe — каталог данных. Отдельно
+    # переопределяется только если каталог данных не подходит.
+    JOURNAL_DIR: Optional[str] = None
+    JOURNAL_RETENTION_DAYS: int = 30
+    JOURNAL_MAX_FILE_BYTES: int = 32 * 1024 * 1024
+    JOURNAL_FLUSH_INTERVAL: int = 30
+
+    @property
+    def journal_dir_path(self) -> Path:
+        """Каталог файлов журнала подвесов (создаётся при первой записи)."""
+        if self.JOURNAL_DIR:
+            return Path(self.JOURNAL_DIR)
+        return self.data_dir_path / "journal"
     
     # Photo upload
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB

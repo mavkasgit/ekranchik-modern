@@ -17,6 +17,10 @@ services:
     environment:
       - DATABASE_URL=sqlite+aiosqlite:////app/static/ekranchik.db
       - STATIC_DIR=/app/static
+      # Журнал подвесов лежит ОТДЕЛЬНО от /app/static: /static раздаётся
+      # nginx наружу, а журнал — внутренний разбор проходов. Свой том нужен
+      # ещё и потому, что пересоздание контейнера иначе унесёт файл.
+      - JOURNAL_DIR=/app/journal
       - IMAGES_DIR=/app/static/images
       - ENVIRONMENT=production
       - DEBUG=false
@@ -31,6 +35,7 @@ services:
     volumes:
       - ../../static:/app/static
       - ../../testdata:/app/testdata
+      - ../../journal:/app/journal
       - /mnt/ktm-disk:/app/excel:ro
     networks:
       - ekranchik-prod-network

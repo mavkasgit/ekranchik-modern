@@ -10,6 +10,7 @@ except AttributeError:
     # time.tzset() is not available on Windows
     pass
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,13 +22,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.version import get_app_version
-from app.api.routes import dashboard_router, catalog_router, signal_router
+from app.api.routes import dashboard_router, catalog_router, signal_router, journal_router
 from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
 from app.services.excel_watcher import excel_watcher
 from app.db.startup import ensure_data_dirs, run_startup_migrations
 from app.services.line_monitor import line_monitor
 from app.services.opcua_service import opcua_service
+from app.services.journal_writer import journal_writer
 from app.services.websocket_manager import websocket_manager
 
 # Configure logging
@@ -73,12 +75,21 @@ async def lifespan(app: FastAPI):
     if settings.OPCUA_ENABLED:
         await opcua_service.start()
         logger.info("[STARTUP] OPC UA Service started")
-        
+
         # Line Monitor - unified OPC UA monitoring
         await line_monitor.start()
         logger.info("[STARTUP] LineMonitor started")
     else:
         logger.info("[STARTUP] OPC UA disabled (OPCUA_ENABLED=False)")
+
+    # Журнал подвесов (issue #34): фоновый писатель. Запускается вместе с
+    # монитором и пишет проходы, даже когда дашборд никто не открывал.
+    journal_writer.load_written_keys()
+    journal_writer.prune()
+    journal_task = asyncio.create_task(
+        journal_writer.run_forever(line_monitor, settings.JOURNAL_FLUSH_INTERVAL)
+    )
+    logger.info(f"[STARTUP] Journal writer started: {settings.journal_dir_path}")
     
     yield
     
@@ -87,6 +98,12 @@ async def lifespan(app: FastAPI):
     
     # Stop background services
     excel_watcher.stop()
+    if journal_task:
+        journal_task.cancel()
+        try:
+            await journal_task
+        except asyncio.CancelledError:
+            pass
     if line_monitor.is_running:
         await line_monitor.stop()
     if opcua_service.is_connected:
@@ -118,6 +135,7 @@ app.include_router(catalog_router, prefix="/api")
 app.include_router(signal_router, prefix="/api")
 app.include_router(opcua_router, prefix="/api")
 app.include_router(websocket_router)
+app.include_router(journal_router, prefix="/api")
 
 # Mount static files - use project root static folder
 # In development: ../static (relative to backend folder)

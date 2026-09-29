@@ -2,7 +2,6 @@
 Dashboard API routes.
 """
 import logging
-from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -22,7 +21,6 @@ from app.services.matching import (
     CODE_NO_ROW,
     CycleMatch,
     match_cycles_to_rows,
-    match_log_line,
     normalize_hanger_key,
     parse_iso_seconds,
     product_entry_seconds,
@@ -30,26 +28,6 @@ from app.services.matching import (
 
 # Аномально долгий проход по линии — предупреждение, подбор не меняет.
 DELAY_LIMIT_SECONDS = 6 * 3600
-
-# Событие выгрузки неизменяемо, а страница опрашивает подбор каждые
-# несколько секунд. Без этого ключи повторялись бы в журнале десятки раз за
-# минуту на каждое событие, и настоящая причина тонула бы в шуме.
-_reported_matches: "OrderedDict[tuple, None]" = OrderedDict()
-_REPORTED_MATCHES_MAX = 1000
-
-
-def _log_match_once(key: tuple, line: str) -> None:
-    """Написать в журнал результат сопоставления ровно один раз на событие.
-
-    Ответ отдаётся по HTTP, и фронтенд опрашивает его повторно — без этой
-    отметки одна выгрузка попала бы в журнал столько раз, сколько её спросили.
-    """
-    if key in _reported_matches:
-        return
-    _reported_matches[key] = None
-    while len(_reported_matches) > _REPORTED_MATCHES_MAX:
-        _reported_matches.popitem(last=False)
-    logger.info(line)
 
 
 from app.schemas.dashboard import (
@@ -528,12 +506,6 @@ async def get_opcua_matched_unload_events(
             cycle, row = m.cycle, m.row
             hanger_num = str(cycle.get("hanger"))
             code, warning = _warning_for(m)
-            # Журнал получает КАЖДУЮ выгрузку, а не только спорную: по
-            # расхождению входа калибруется допуск, и нужен весь разброс.
-            _log_match_once(
-                (cycle.get("cycle_id"), cycle.get("timestamp")),
-                match_log_line(m, hanger_num),
-            )
 
             profiles_info = _build_profiles_info(row.profile if row else '', photos_map)
             matched.append(MatchedUnloadEvent(
