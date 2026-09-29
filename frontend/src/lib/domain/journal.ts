@@ -30,12 +30,12 @@ export interface JournalPass {
   total_time_sec?: number | null
   type?: string | null
   reason?: string | null
-  // Четыре момента прохода: по линии и по книге учёта. В книге ведётся
-  // только загрузка в линию, поэтому book_exit_at всегда пуст.
+  // Моменты прохода по источнику: по линии — оба, по книге — только
+  // вход. Выхода по книге нет и не будет: книга ведёт лишь загрузку
+  // в линию, поэтому и поля такого нет.
   line_entry_at?: string | null
   line_exit_at?: string | null
   book_entry_at?: string | null
-  book_exit_at?: string | null
   path: Array<{ bath: string; in?: string | null; out?: string | null }>
   row_date?: string | null
   row_time?: string | null
@@ -216,8 +216,12 @@ function joinBookDateTime(date: string | null | undefined, time: string | null |
  * Сутки в моменте показываются только когда они разные: ночная смена
  * грузит подвес в 23:55, а монитор видит его в 00:04 уже следующих
  * суток, и без даты эти два момента читаются как полчаса вместо суток.
- * Порядок — как в цеху: сначала книга (заказали и загрузили), потом
- * линия (замерили и выгрузили).
+ * Порядок — как в цеху: сначала книга (загрузили), потом линия
+ * (замерили и выгрузили).
+ *
+ * Выхода по книге в списке нет: книга ведёт только загрузку в линию.
+ * Пустая строка «выход» на его месте читалась бы как «оператор не
+ * вписал», а на самом деле такой колонки нет.
  */
 export function passTimes(pass: JournalPass): PassTime[] {
   // Запасной путь: записи, сделанные до появления полей line_*/book_*,
@@ -228,7 +232,6 @@ export function passTimes(pass: JournalPass): PassTime[] {
     ['книга', 'вход', bookEntry],
     ['линия', 'вход', pass.line_entry_at ?? pass.first_seen_at],
     ['линия', 'выход', pass.line_exit_at ?? pass.exit_at],
-    ['книга', 'выход', pass.book_exit_at],
   ]
   const present = moments
     .filter(([, , at]) => !!at)
