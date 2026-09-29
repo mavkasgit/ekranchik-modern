@@ -18,6 +18,36 @@ from app.services.matching import normalize_hanger_key, select_latest_candidate
 
 logger = logging.getLogger(__name__)
 
+
+def _hanger_payload(hanger) -> Dict[str, Any]:
+    """Подвес в том виде, в каком его видят и таблица, и блок активных.
+
+    Кроме номера и ванны отдаём момент первого замера ТЕКУЩЕГО прохода и
+    сам номер прохода: номера подвесов на линии повторяются от смены к
+    смене, и без ``cycle_id`` два прогона одного подвеса неразличимы, а
+    без ``line_entry_at`` не видно, сколько он уже в линии.
+    """
+    return {
+        "number": hanger.id,
+        "current_bath": (
+            int(hanger.current_bath)
+            if hanger.current_bath and hanger.current_bath.isdigit()
+            else None
+        ),
+        "baths_visited": [
+            int(entry.bath_name) if entry.bath_name.isdigit() else entry.bath_name
+            for entry in hanger.path
+        ],
+        "cycle_id": hanger.cycle_id,
+        "line_entry_at": (
+            hanger.first_seen_at.isoformat(timespec="seconds")
+            if hanger.first_seen_at
+            else None
+        ),
+        "entry_bath": hanger.entry_bath,
+    }
+
+
 router = APIRouter(prefix="/opcua", tags=["opcua"])
 
 
@@ -425,14 +455,10 @@ async def scan_hangers():
 @router.get("/hangers")
 async def get_all_hangers():
     """Получить все подвесы."""
-    hangers = line_monitor._hangers.values()
+    hangers = list(line_monitor._hangers.values())
     return {
         "total": len(hangers),
-        "hangers": [{
-            "number": h.id, 
-            "current_bath": int(h.current_bath) if h.current_bath and h.current_bath.isdigit() else None, 
-            "baths_visited": [int(entry.bath_name) if entry.bath_name.isdigit() else entry.bath_name for entry in h.path]
-        } for h in hangers]
+        "hangers": [_hanger_payload(h) for h in hangers]
     }
 
 
@@ -442,11 +468,7 @@ async def get_active_hangers():
     hangers = [h for h in line_monitor._hangers.values() if h.current_bath is not None]
     return {
         "total": len(hangers),
-        "hangers": [{
-            "number": h.id, 
-            "current_bath": int(h.current_bath) if h.current_bath and h.current_bath.isdigit() else None, 
-            "baths_visited": [int(entry.bath_name) if entry.bath_name.isdigit() else entry.bath_name for entry in h.path]
-        } for h in hangers]
+        "hangers": [_hanger_payload(h) for h in hangers]
     }
 
 
@@ -456,11 +478,7 @@ async def get_hanger(hanger_number: int):
     hanger = line_monitor._hangers.get(hanger_number)
     if not hanger:
         raise HTTPException(status_code=404, detail=f"Hanger {hanger_number} not found")
-    return {
-        "number": hanger.id, 
-        "current_bath": int(hanger.current_bath) if hanger.current_bath and hanger.current_bath.isdigit() else None, 
-        "baths_visited": [int(entry.bath_name) if entry.bath_name.isdigit() else entry.bath_name for entry in hanger.path]
-    }
+    return _hanger_payload(hanger)
 
 
 @router.get("/baths/{bath_number}/hanger")

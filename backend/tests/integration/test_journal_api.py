@@ -6,6 +6,8 @@
   оператор должен знать, куда смотреть на диске и в контейнере;
 - сбой чтения каталога — пустая страница, а не 500: вкладка журнала не
   должна ронять приложение из-за недоступного диска.
+- вместе с проходом отдаются четыре момента входа и выхода — по линии и
+  по книге учёта, — иначе оператор не может сверить проход с записью;
 """
 import json
 from pathlib import Path
@@ -26,6 +28,10 @@ def _record(hanger=5, cycle_id=42, exit_at="2026-09-29T20:16:03", profile="10104
         "entry_bath": 3,
         "first_seen_at": "2026-09-29T17:04:00",
         "exit_at": exit_at,
+        "line_entry_at": "2026-09-29T17:04:00",
+        "line_exit_at": exit_at,
+        "book_entry_at": "2026-09-28T18:31:00",
+        "book_exit_at": None,
         "total_time_sec": 11523.0,
         "row_date": "28.09.2026",
         "row_time": "18:31",
@@ -98,6 +104,23 @@ async def test_passes_endpoint_tells_where_the_files_live(journal):
     assert [f["name"] for f in body["files"]] == ["hanger-passes-2026-09-29.jsonl"]
     assert body["retention_days"] == journal.retention_days
     assert body["files"][0]["size_bytes"] > 0
+
+
+async def test_passes_endpoint_returns_all_four_times(journal):
+    """Отдаём все четыре момента: интерфейсу нечего дособирать самому.
+
+    Таблица сверяет проход по линии с записью оператора, поэтому она
+    показывает время загрузки в линию по книге рядом с первым замером и
+    выгрузкой. Пересчитывать это на клиенте нельзя: там нет ни строки
+    книги, ни прохода — только готовая запись журнала.
+    """
+    body = await _get({"limit": 1})
+    item = body["items"][0]
+
+    assert item["line_entry_at"] == "2026-09-29T17:04:00"
+    assert item["line_exit_at"] == "2026-09-29T16:00:00"
+    assert item["book_entry_at"] == "2026-09-28T18:31:00"
+    assert item["book_exit_at"] is None, "выхода в книге нет"
 
 
 async def test_passes_endpoint_reports_unreadable_journal_as_empty(monkeypatch):

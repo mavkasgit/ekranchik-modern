@@ -30,6 +30,12 @@ export interface JournalPass {
   total_time_sec?: number | null
   type?: string | null
   reason?: string | null
+  // Четыре момента прохода: по линии и по книге учёта. В книге ведётся
+  // только загрузка в линию, поэтому book_exit_at всегда пуст.
+  line_entry_at?: string | null
+  line_exit_at?: string | null
+  book_entry_at?: string | null
+  book_exit_at?: string | null
   path: Array<{ bath: string; in?: string | null; out?: string | null }>
   row_date?: string | null
   row_time?: string | null
@@ -169,4 +175,69 @@ export function formatBytes(bytes: number): string {
 export function formatBookRow(pass: JournalPass): string {
   if (!pass.row_date || !pass.row_time) return '—'
   return `${pass.row_date} ${pass.row_time.slice(0, 5)}`
+}
+
+/** Откуда момент: линия (монитор) или книга учёта (запись оператора). */
+export type PassTimeSource = 'линия' | 'книга'
+
+/** Один момент прохода: откуда он и вход это или выход. */
+export interface PassTime {
+  source: PassTimeSource
+  role: 'вход' | 'выход'
+  at: string
+}
+
+/** Сутки и время момента: ``28.09 18:31``. */
+function stamp(iso: string): string {
+  const day = /^\d{4}-(\d{2})-(\d{2})/.exec(iso)
+  const clock = /T(\d{2}:\d{2})/.exec(iso)
+  if (!clock) return '—'
+  return day ? `${day[2]}.${day[1]} ${clock[1]}` : clock[1]
+}
+
+/**
+ * Все моменты прохода одним списком — по линии и по книге.
+ *
+ * Сутки в моменте показываются только когда они разные: ночная смена
+ * грузит подвес в 23:55, а монитор видит его в 00:04 уже следующих
+ * суток, и без даты эти два момента читаются как полчаса вместо суток.
+ * Порядок — как в цеху: сначала книга (заказали и загрузили), потом
+ * линия (замерили и выгрузили).
+ */
+export function passTimes(pass: JournalPass): PassTime[] {
+  const moments: Array<[PassTimeSource, 'вход' | 'выход', string | null | undefined]> = [
+    ['книга', 'вход', pass.book_entry_at],
+    ['линия', 'вход', pass.line_entry_at],
+    ['линия', 'выход', pass.line_exit_at],
+    ['книга', 'выход', pass.book_exit_at],
+  ]
+  const present = moments
+    .filter(([, , at]) => !!at)
+    .map(([source, role, at]) => ({ source, role, at: at as string }))
+  if (present.length <= 1) return present.map(({ source, role, at }) => ({ source, role, at: stamp(at) }))
+
+  const days = new Set(present.map(({ at }) => at.slice(0, 10)))
+  const showDay = days.size > 1
+  return present.map(({ source, role, at }) => ({
+    source,
+    role,
+    at: showDay ? stamp(at) : stamp(at).split(' ').pop() as string,
+  }))
+}
+
+/**
+ * Сколько подвес простоял на линии: от первого замера до ``now``.
+ *
+ * Больше суток показывается как «>1сут»: это не «долго стоит», а «данные
+ * старые» — монитор не видел подвес сутки, и точная цифра врёт.
+ */
+export function formatInLine(iso: string | null | undefined, now: Date): string {
+  if (!iso) return '—'
+  const since = new Date(iso).getTime()
+  if (Number.isNaN(since)) return '—'
+  const minutes = Math.floor((now.getTime() - since) / 60000)
+  if (minutes < 0) return '—'
+  if (minutes >= 24 * 60) return '>1сут'
+  const hours = Math.floor(minutes / 60)
+  return hours > 0 ? `${hours}ч ${minutes % 60}м` : `${minutes}м`
 }

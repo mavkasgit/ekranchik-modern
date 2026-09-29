@@ -23,9 +23,39 @@ from app.services.hanger_journal import (
     JournalStore,
     journal_store,
 )
-from app.services.matching import CycleMatch, match_cycles_to_rows, match_log_line
+from app.services.matching import (
+    CycleMatch,
+    match_cycles_to_rows,
+    match_log_line,
+    parse_excel_date,
+    parse_excel_time,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _book_entry_at(row) -> str | None:
+    """Момент загрузки в линию по книге учёта как ISO-метка.
+
+    В книге есть только ОДНО время на проход — «Время», то есть фактический
+    момент загрузки в линию. Выхода подвеса книга не ведёт: колонки выгрузки
+    в ней нет, поэтому ``book_exit_at`` остаётся пустым, и подставлять туда
+    линию нельзя — тогда пропала бы сама сверка, ради которой эти поля и
+    нужны.
+
+    Дату берём у строки книги, а не у прохода: загрузка всегда была ДО
+    того, как монитор увидел подвес, то есть накануне (ночная смена).
+    """
+    if row is None:
+        return None
+    year, month, day = parse_excel_date(str(row.date))
+    hour, minute, second = parse_excel_time(str(row.time))
+    if not (year and month and day):
+        return None
+    return datetime(year, month, day, hour, minute, second).isoformat(
+        timespec="seconds"
+    )
+
 
 # Как часто фоновая задача смотрит, не появились ли новые проходы, задаётся
 # настройкой JOURNAL_FLUSH_INTERVAL.
@@ -50,6 +80,12 @@ def record_from_match(match: CycleMatch) -> Dict[str, Any]:
     плюс поля строки книги: из них собираются колонки таблицы журнала.
     Пустая книга учёта записывается как ``None``, а не как ``—``: в файле
     «нет значения», и так его читает и ``grep``, и разбор.
+
+    Четыре момента прохода лежат рядом и под своими именами — по линии
+    (``line_*``) и по книге учёта (``book_*``). Оператор сверяет проход
+    с записью оператора, и без общего списка этих времён он читает
+    вход и выход из разных колонок таблицы, где легко перепутать
+    «загрузили» с «замерили».
     """
     cycle = match.cycle
     row = match.row
@@ -60,6 +96,11 @@ def record_from_match(match: CycleMatch) -> Dict[str, Any]:
         "code": match.code,
         "source": cycle.get("first_seen_source"),
         "entry_bath": cycle.get("entry_bath"),
+        "line_entry_at": cycle.get("first_seen_at"),
+        "line_exit_at": cycle.get("exit_at"),
+        "book_entry_at": _book_entry_at(row),
+        # Выхода в книге учёта нет: ведёт она только загрузку в линию.
+        "book_exit_at": None,
         "first_seen_at": cycle.get("first_seen_at"),
         "exit_at": cycle.get("exit_at"),
         "total_time_sec": cycle.get("total_time_sec"),

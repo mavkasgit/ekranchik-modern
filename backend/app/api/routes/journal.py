@@ -39,6 +39,12 @@ class JournalPass(BaseModel):
     entry_bath: Optional[int] = None
     first_seen_at: Optional[str] = None
     exit_at: Optional[str] = None
+    # Четыре момента прохода рядом: по линии и по книге учёта. Интерфейс
+    # показывает их вместе, ничего не дособирая у себя.
+    line_entry_at: Optional[str] = None
+    line_exit_at: Optional[str] = None
+    book_entry_at: Optional[str] = None
+    book_exit_at: Optional[str] = None
     total_time_sec: Optional[float] = None
     type: Optional[str] = None
     reason: Optional[str] = None

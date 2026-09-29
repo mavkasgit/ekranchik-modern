@@ -4,11 +4,13 @@ import {
   formatBookRow,
   formatBytes,
   formatDelta,
+  formatInLine,
   formatPath,
   journalQueryParams,
   pageCount,
   passClock,
   passDay,
+  passTimes,
   toggleSort,
   withFilter,
   type JournalPass,
@@ -120,5 +122,79 @@ describe('formatPath / formatBookRow / formatBytes', () => {
     expect(formatBytes(512)).toBe('512 Б')
     expect(formatBytes(2048)).toBe('2.0 КБ')
     expect(formatBytes(5 * 1024 * 1024)).toBe('5.0 МБ')
+  })
+})
+
+describe('passTimes', () => {
+  it('вход и выход показываются вместе — по линии и по книге', () => {
+    const pass: JournalPass = {
+      code: '',
+      path: [],
+      line_entry_at: '2026-09-29T17:04:00',
+      line_exit_at: '2026-09-29T20:16:03',
+      book_entry_at: '2026-09-28T18:31:00',
+      book_exit_at: null,
+    }
+    // Порядок хронологический: сначала книга (загрузили), потом линия
+    // (замерили, потом выгрузили) — проход читается как рассказ.
+    expect(passTimes(pass)).toEqual([
+      { source: 'книга', role: 'вход', at: '28.09 18:31' },
+      { source: 'линия', role: 'вход', at: '29.09 17:04' },
+      { source: 'линия', role: 'выход', at: '29.09 20:16' },
+    ])
+  })
+
+  it('выхода по книге нет и в списке не значится пустым временем', () => {
+    // Книга ведёт только загрузку в линию. Пустая строка «выход» в таблице
+    // читалась бы как «оператор не вписал», а на самом деле колонки нет.
+    const times = passTimes({ code: '', path: [], book_entry_at: '2026-09-28T18:31:00' })
+    expect(times.map(t => t.role)).toEqual(['вход'])
+    expect(times[0].source).toBe('книга')
+  })
+
+  it('сутки показываются только когда момент переходит в другой день', () => {
+    // Ночная смена: загрузили 28-го в 23:55, монитор увидел 29-го в 00:04.
+    // Если разные сутки не показать, «00:04» читается как замер в 00:04
+    // этого же дня — то есть на шесть часов позже загрузки.
+    const times = passTimes({
+      code: '',
+      path: [],
+      book_entry_at: '2026-09-28T23:55:00',
+      line_entry_at: '2026-09-29T00:04:00',
+    })
+    expect(times.map(t => t.at)).toEqual(['28.09 23:55', '29.09 00:04'])
+  })
+
+  it('на одних сутках моменты читаются часами, порядок — по источнику', () => {
+    // Порядок не хронологический, а по источнику: сначала книга, потом
+    // линия. Иначе вход по книге (18:31) встал бы между замером (17:04)
+    // и выгрузкой (20:16), и «книга» рассыпалась бы по строке.
+    const times = passTimes({
+      code: '',
+      path: [],
+      book_entry_at: '2026-09-29T18:31:00',
+      line_entry_at: '2026-09-29T17:04:00',
+      line_exit_at: '2026-09-29T20:16:00',
+    })
+    expect(times.map(t => t.at)).toEqual(['18:31', '17:04', '20:16'])
+  })
+})
+
+describe('formatInLine', () => {
+  it('сколько подвес в линии считается от первого замера', () => {
+    const now = new Date('2026-09-29T20:16:03')
+    expect(formatInLine('2026-09-29T17:04:00', now)).toBe('3ч 12м')
+    expect(formatInLine('2026-09-29T20:10:00', now)).toBe('6м')
+  })
+
+  it('без времени замера на линии простоя нет — прочерк', () => {
+    expect(formatInLine(null, new Date())).toBe('—')
+  })
+
+  it('подвес не может стоять на линии дольше суток', () => {
+    // Монитор мог не видеть подвеса сутки (разрыв связи, авария). Показывать
+    // «26ч» оператору незачем: это не «много стоит», это «данные старые».
+    const now = new Date('2026-09-30T20:00:00')
+    expect(formatInLine('2026-09-29T18:00:00', now)).toBe('>1сут')
   })
 })

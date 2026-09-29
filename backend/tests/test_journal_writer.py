@@ -80,6 +80,47 @@ def test_pass_record_carries_path_and_verdict():
     assert record["kpz_number"] == "151"
 
 
+
+def test_record_keeps_line_and_book_times_side_by_side():
+    """В записи лежат оба времени входа и оба выхода — рядом, а не вперемешку.
+
+    Оператор сверяет проход по линии с записью оператора, и для этого нужны
+    четыре момента в одной строке: вход по линии (первый замер), выход по
+    линии (выгрузка), вход по книге (фактическое время загрузки в линию)
+    и выход по книге. Последнего в книге нет — колонки выгрузки в ней не
+    существует, — поэтому он остаётся пустым, а не выдумывается.
+    """
+    record = record_from_match(_match())
+
+    assert record["line_entry_at"] == "2026-09-29T17:04:00", "вход по линии"
+    assert record["line_exit_at"] == "2026-09-29T20:16:03", "выход по линии"
+    assert record["book_entry_at"] == "2026-09-28T18:31:00", "вход по книге"
+    assert record["book_exit_at"] is None, "выхода в книге нет — выдумывать нельзя"
+
+
+def test_book_entry_time_keeps_the_day_the_row_names():
+    """Дату входа по книге берём у строки, а не у прохода.
+
+    Строка книги — это когда подвес ЗАГРУЗИЛИ, то есть до того, как монитор
+    его увидел: это всегда предыдущие сутки ночной смены. Если взять дату
+    прохода, вход по книге и вход по линии совпали бы в записях, где
+    проход длится через полночь, а разойтись — там, где разница важна.
+    """
+    row = _row(date="28.09.2026", time="23:55")
+    record = record_from_match(_match(row=row))
+
+    assert record["book_entry_at"].startswith("2026-09-28T23:55")
+    assert record["line_entry_at"].startswith("2026-09-29T")
+
+
+def test_record_without_book_row_has_no_book_times():
+    """Проходу без строки книги неоткуда взять время загрузки в линию."""
+    record = record_from_match(_match(row=None, code=CODE_NO_ROW, delta=None))
+
+    assert record["line_entry_at"] is not None, "линия знает и вход, и выход"
+    assert record["book_entry_at"] is None
+    assert record["book_exit_at"] is None
+
 def test_pass_without_book_row_records_the_code_only():
     """Прохода без строки книги в книге нет: пустые поля, а не выдуманные."""
     record = record_from_match(_match(row=None, code=CODE_NO_ROW, delta=None))
