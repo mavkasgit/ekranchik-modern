@@ -16,8 +16,8 @@ export function useJournal(query: JournalQuery) {
     queryKey: [...JOURNAL_KEY, query],
     queryFn: () => journalApi.getPasses(query),
     refetchInterval: DATA_REFRESH_INTERVAL,
-    // Историю не гоняем по кругу, пока оператор её читает: сортировка и
-    // фильтры должны остаться там, где их поставили.
+    // Пока вкладка не видна, опрос не идёт: журнал лежит на диске и переживает
+    // перезапуск, а оператор вернётся к тем же фильтрам.
     refetchIntervalInBackground: false,
     placeholderData: previous => previous,
   })

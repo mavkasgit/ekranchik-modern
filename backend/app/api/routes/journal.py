@@ -10,10 +10,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.services.hanger_journal import (
     DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
     JournalFile,
     journal_store,
 )
@@ -42,6 +43,7 @@ class JournalPass(BaseModel):
     type: Optional[str] = None
     reason: Optional[str] = None
     path: List[Dict[str, Any]] = []
+    baths_visited: List[str] = []
     row_date: Optional[str] = None
     row_time: Optional[str] = None
     row_number: Optional[str] = None
@@ -84,7 +86,7 @@ async def get_journal_passes(
     date_to: str = Query(default="", description="Сутки по (YYYY-MM-DD)"),
     sort: str = Query(default="exit_at", description="Колонка сортировки"),
     direction: str = Query(default="desc", description="asc или desc"),
-    limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=500),
+    limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     offset: int = Query(default=0, ge=0),
 ):
     """Проходы подвесов из файла журнала: поиск, даты, сортировка, страница.
@@ -111,7 +113,7 @@ async def get_journal_passes(
         return JournalResponse(items=[], total=0, limit=limit, offset=offset)
 
     return JournalResponse(
-        items=[JournalPass(**item) for item in page.items],
+        items=_passes(page.items),
         total=page.total,
         limit=page.limit,
         offset=page.offset,
@@ -119,6 +121,31 @@ async def get_journal_passes(
         files=files,
         retention_days=retention,
     )
+
+
+def _passes(records: list[dict]) -> list[JournalPass]:
+    """Записи страницы в форме ответа; негодные пропускаются.
+
+    Файл журнала лежит на диске: его может поправить человек, он может
+    остаться от прежней версии приложения или там может оказаться мусор.
+    Запись без времени выхода проходом не является — иначе она молча
+    превратилась бы в пустую строку таблицы, где оператор ищет проход.
+    Лишние поля, наоборот, терпятся: запись от более новой версии
+    приложения показывается теми полями, что эта версия знает.
+    """
+    passes: list[JournalPass] = []
+    for record in records:
+        if not record.get("exit_at"):
+            logger.warning(
+                "[Journal] Skipped record without exit_at — это не проход: "
+                f"{str(record)[:120]}"
+            )
+            continue
+        try:
+            passes.append(JournalPass(**record))
+        except ValidationError as error:
+            logger.warning(f"[Journal] Skipped record with unexpected fields: {error}")
+    return passes
 
 
 def _file_info(journal_file: JournalFile) -> JournalFileInfo:

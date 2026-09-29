@@ -7,6 +7,7 @@
 - сбой чтения каталога — пустая страница, а не 500: вкладка журнала не
   должна ронять приложение из-за недоступного диска.
 """
+import json
 from pathlib import Path
 
 import pytest
@@ -115,3 +116,27 @@ async def test_passes_endpoint_reports_unreadable_journal_as_empty(monkeypatch):
 
     assert body["items"] == []
     assert body["total"] == 0
+
+
+async def test_passes_endpoint_skips_line_that_is_not_a_pass(journal, caplog):
+    """Мусор в файле журнала не превращается в пустую строку таблицы.
+
+    Файл журнала лежит на диске: его может поправить человек, и в него
+    может попасть строка не из приложения. Такая запись пропускается с
+    записью в лог, а настоящие проходы страницы остаются на месте.
+    """
+    import logging
+
+    path = journal.files()[0].path
+    path.write_text(
+        json.dumps({"совсем": "другая запись"}, ensure_ascii=False)
+        + "\n"
+        + path.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.api.routes.journal"):
+        body = await _get({"limit": 10})
+
+    assert len(body["items"]) == 7, "настоящие проходы страницы на месте"
+    assert "Skipped record without exit_at" in caplog.text

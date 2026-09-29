@@ -20,6 +20,7 @@
 import json
 import logging
 import re
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -39,6 +40,9 @@ DEFAULT_MAX_FILE_BYTES = 32 * 1024 * 1024
 # тысяч строк, и тянуть их все в ответ нельзя.
 DEFAULT_PAGE_SIZE = 100
 MAX_PAGE_SIZE = 500
+# Сколько файлов журнала держим разобранными в памяти. Сутки хранится 30,
+# плюс докатки по размеру — запас втрое перекрывает худший случай.
+CACHE_FILES_MAX = 90
 
 # Колонки, по которым разрешена сортировка. Ключ — имя поля записи,
 # значение — функция, достающая из записи ключ сравнения. Сортировка по
@@ -128,12 +132,15 @@ class JournalStore:
         self.directory = Path(directory)
         self.retention_days = retention_days
         self.max_file_bytes = max_file_bytes
-        # Индекс файлов той же сутки, который пишется прямо сейчас:
-        # пересчитывать каталог на каждый проход незачем, а сутки на
-        # файл может смениться в любой момент.
         self._today: Optional[str] = None
         self._current: Optional[Path] = None
         self._current_size = 0
+        # Разобранные записи файлов, помеченные размером и временем, на
+        # которых они прочитаны. Таблица опрашивается каждые 10 секунд, а
+        # журнал за месяц — десятки тысяч строк: без этого каждый опрос
+        # заново разбирал бы весь каталог. Файл меняется только дописыванием,
+        # поэтому «размер не изменился» достаточно для признака актуальности.
+        self._cache: "OrderedDict[str, tuple]" = OrderedDict()
 
     # --- Запись ---
     def append(self, record: Dict[str, Any]) -> Path:
@@ -245,9 +252,13 @@ class JournalStore:
         # «от большего к меньшему» на −inf оказывалось бы в начале.
         missing_last = sort == "entry_delta_sec"
 
+        needle = search.strip().lower()
         records: List[Dict[str, Any]] = []
         for journal_file in self._files_for_range(date_from or "", date_to or "￿"):
-            records.extend(self._read_file(journal_file, search))
+            parsed = self._file_records(journal_file)
+            if needle:
+                parsed = [record for record in parsed if needle in _haystack(record)]
+            records.extend(parsed)
 
         if missing_last:
             # Записи без расхождения всегда в конце, а порядок между
@@ -266,14 +277,22 @@ class JournalStore:
             offset=offset,
         )
 
-    def _read_file(self, journal_file: JournalFile, search: str) -> List[Dict[str, Any]]:
-        """Записи одного файла, прошедшие поиск.
+    def _file_records(self, journal_file: JournalFile) -> List[Dict[str, Any]]:
+        """Разобранные записи файла; при неизменном размере — из кэша.
 
-        Битая строка пропускается с записью в лог: файл мог дописаться
-        при обрыве питания, и одна такая строка не должна ронять всю
-        выборку журнала.
+        Кэш живёт в памяти процесса и сбрасывается по размеру файла: запись
+        только дописывает, поэтому изменился размер — изменилось содержимое.
+        Без кэша каждый опрос таблицы (раз в 10 секунд) разбирал бы весь
+        месяц журнала заново.
+
+        Битая строка пропускается с записью в лог: файл мог дописаться при
+        обрыве питания, и одна такая строка не должна ронять выборку.
         """
-        needle = search.strip().lower()
+        cached = self._cache.get(journal_file.name)
+        if cached and cached[0] == journal_file.size_bytes:
+            self._cache.move_to_end(journal_file.name)
+            return cached[1]
+
         records: List[Dict[str, Any]] = []
         try:
             with journal_file.path.open("r", encoding="utf-8") as handle:
@@ -282,18 +301,20 @@ class JournalStore:
                     if not line:
                         continue
                     try:
-                        record = json.loads(line)
+                        records.append(json.loads(line))
                     except json.JSONDecodeError as error:
                         logger.warning(
                             f"[Journal] Skipped unreadable line {number} of "
                             f"{journal_file.name}: {error}"
                         )
-                        continue
-                    if needle and needle not in _haystack(record):
-                        continue
-                    records.append(record)
         except OSError as error:
             logger.warning(f"[Journal] Could not read {journal_file.name}: {error}")
+            return records
+
+        self._cache[journal_file.name] = (journal_file.size_bytes, records)
+        self._cache.move_to_end(journal_file.name)
+        while len(self._cache) > CACHE_FILES_MAX:
+            self._cache.popitem(last=False)
         return records
 
     def prune(self) -> List[Path]:

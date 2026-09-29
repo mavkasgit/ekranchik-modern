@@ -177,6 +177,70 @@ def test_writer_logs_the_match_line_once(writer, caplog):
     assert json.dumps(records[0], ensure_ascii=False), "запись читается как JSON"
 
 
+def test_pass_visible_to_the_monitor_is_never_written_twice(tmp_path):
+    """Проход, который монитор ещё показывает, не переписывается за все дни.
+
+    Писатель помнит ограниченное число записанных проходов. Если память
+    об этом числе заканчивается, вытеснение должно уносить самые старые
+    ключи: вытеснив ключ прохода, который монитор всё ещё показывает,
+    писатель записал бы его в файл второй раз.
+    """
+    from app.services.journal_writer import RECENT_KEYS_MAX
+
+    writer = JournalWriter(
+        JournalStore(tmp_path / "journal"), rows_provider=dict
+    )
+    monitor = _monitor_with([])
+
+    total = RECENT_KEYS_MAX + 50
+    for index in range(total):
+        monitor._events.append(
+            _cycle(cycle_id=1000 + index, hanger=5, exit_at=f"2026-09-29T{index % 24:02d}:{index % 60:02d}:00")
+        )
+        asyncio.run(writer.flush(line_monitor=monitor))
+
+    lines = [
+        line
+        for journal_file in writer.store.files()
+        for line in journal_file.path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    assert len(lines) == total, "каждый проход записан ровно один раз"
+
+
+def test_retention_is_applied_while_the_server_runs(tmp_path):
+    """Срок хранения наступает и без перезапуска сервера.
+
+    Ротация по сроку только при старте не работает: сервер на заводской
+    машине месяцами не перезапускают, и старые файлы копились бы вечно.
+    """
+    import app.services.journal_writer as writer_module
+
+    store = JournalStore(tmp_path / "journal", retention_days=30)
+    writer = JournalWriter(store, rows_provider=dict)
+    stale = store.directory / "hanger-passes-2000-01-01.jsonl"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("{}\n", encoding="utf-8")
+
+    async def run_task():
+        # Опрос без пауз: писатель убирает старый файл за первый же тик.
+        task = asyncio.create_task(writer.run_forever(_monitor_with([]), interval=0))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    original = writer_module.PRUNE_INTERVAL_SECONDS
+    writer_module.PRUNE_INTERVAL_SECONDS = 0
+    try:
+        asyncio.run(run_task())
+    finally:
+        writer_module.PRUNE_INTERVAL_SECONDS = original
+
+    assert not stale.exists()
+
+
+
 def _monitor_with(events):
     """Монитор линии, у которого видны заданные проходы."""
 

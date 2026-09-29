@@ -13,24 +13,34 @@
 """
 import asyncio
 import logging
-from datetime import datetime
+from collections import OrderedDict
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
-from app.services.hanger_journal import JournalStore, journal_store
+from app.services.hanger_journal import (
+    MAX_PAGE_SIZE,
+    JournalStore,
+    journal_store,
+)
 from app.services.matching import CycleMatch, match_cycles_to_rows, match_log_line
 
 logger = logging.getLogger(__name__)
 
-# Как часто фоновая задача смотрит, не появились ли новые проходы.
-FLUSH_INTERVAL_SECONDS = 5
-# Сколько последних проходов монитора разбираем за один опрос. Хватает с
-# запасом: между опросами линия успевает отработать несколько выходов, а
-# разбор месяца строк каждый раз — это работа ради пустого результата.
-LOOKBACK_EVENTS = 200
-# Сколько уже записанных проходов помним, чтобы не принять старый проход
-# за новый после перезапуска.
-RECENT_KEYS_MAX = 2000
+# Как часто фоновая задача смотрит, не появились ли новые проходы, задаётся
+# настройкой JOURNAL_FLUSH_INTERVAL.
+# Сколько последних проходов монитора разбираем за один опрос — ровно столько,
+# сколько монитор вообще помнит (``line_monitor.MAX_UNLOAD_EVENTS``). Меньше
+# нельзя: проход, отложенный из-за недоступной книги учёта, выпал бы из окна
+# и потерялся бы, а не дождался книги.
+LOOKBACK_EVENTS = 500
+# Сколько уже записанных проходов помним. Держим всё окно flush и ещё
+# столько же: пока проход виден монитору, его ключ обязан помниться, иначе
+# он запишется в файл второй раз (см. JournalWriter._remember).
+RECENT_KEYS_MAX = 2 * LOOKBACK_EVENTS
+# Как часто убираются файлы старше срока хранения, секунд. Раз в сутки
+# достаточно: суточный файл и так создаётся по одному.
+PRUNE_INTERVAL_SECONDS = 24 * 3600
 
 
 def record_from_match(match: CycleMatch) -> Dict[str, Any]:
@@ -103,19 +113,30 @@ class JournalWriter:
     ):
         self.store = store
         self.rows_provider = rows_provider
-        # Ключи уже записанных проходов. Наполняется чтением журнала при
-        # старте — иначе после перезапуска последние проходы записались бы
-        # в файл повторно.
-        self._written: set = set()
+        # Ключи уже записанных проходов, в порядке записи. Наполняется
+        # чтением журнала при старте — иначе после перезапуска последние
+        # проходы записались бы в файл повторно.
+        self._written: "OrderedDict[tuple, None]" = OrderedDict()
 
-    def load_written_keys(self, days: int = 2) -> None:
+    def load_written_keys(self) -> None:
         """Пометить уже записанные проходы как записанные.
 
-        Читаются последние сутки журнала: старше монитор всё равно не
-        показывает, а читать месяц файлов ради handful ключей незачем.
+        Берутся вчерашние и сегодняшние сутки: файл назван по суткам
+        САМОГО прохода, поэтому проход, вышедший в 23:50 вчерашнего дня,
+        лежит во вчерашнем файле, а монитор после полуночи его ещё видит.
+        Порядок — от ранних к поздним, чтобы вытеснение уносило самые
+        старые ключи (см. ``_remember``).
         """
-        today = datetime.now().strftime("%Y-%m-%d")
-        for record in self.store.query(date_from=today, date_to=today, limit=500).items:
+        today = datetime.now()
+        yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        page = self.store.query(
+            date_from=yesterday,
+            date_to=today.strftime("%Y-%m-%d"),
+            sort="exit_at",
+            direction="desc",
+            limit=MAX_PAGE_SIZE,
+        )
+        for record in reversed(page.items):
             self._remember(_record_key(record))
 
     async def flush(self, line_monitor) -> int:
@@ -151,29 +172,39 @@ class JournalWriter:
         return written
 
     def _remember(self, key: tuple) -> None:
-        self._written.add(key)
+        """Запомнить ключ прохода, вытесняя самый старый.
+
+        Вытеснение строго по порядку записи: проход, который вытеснили
+        раньше, чем его перестал показывать монитор, записался бы в файл
+        второй раз. Поэтому помнится всё окно ``flush`` и ещё столько же.
+        """
+        self._written[key] = None
         while len(self._written) > RECENT_KEYS_MAX:
-            self._written.pop()
+            self._written.popitem(last=False)
 
     def prune(self) -> List[Path]:
         """Удалить файлы старше срока хранения (с записью в лог)."""
         return self.store.prune()
 
-    async def run_forever(
-        self, line_monitor, interval: int = FLUSH_INTERVAL_SECONDS
-    ) -> None:
-        """Фоновая задача: раз в ``interval`` секунд дописывает новые проходы.
+    async def run_forever(self, line_monitor, interval: int) -> None:
+        """Фоновая задача: дописывает новые проходы и убирает старые файлы.
 
         Ошибка одного прохода не роняет задачу: иначе одна битая запись
-        молча прекращала бы журнал до перезапуска сервера.
+        молча прекращала бы журнал до перезапуска сервера. Ротация по сроку
+        идёт здесь же, а не только при старте: сервер может не перезапускаться
+        месяцами, и срок хранения без неё не наступал бы никогда.
         """
+        last_prune = asyncio.get_running_loop().time()
         while True:
             try:
                 await self.flush(line_monitor)
+                if asyncio.get_running_loop().time() - last_prune >= PRUNE_INTERVAL_SECONDS:
+                    self.prune()
+                    last_prune = asyncio.get_running_loop().time()
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                logger.error(f"[Journal] Flush failed: {error}", exc_info=True)
+                logger.error(f"[Journal] Journal task failed: {error}", exc_info=True)
             await asyncio.sleep(interval)
 
 
