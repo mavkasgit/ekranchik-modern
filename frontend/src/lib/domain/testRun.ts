@@ -1,16 +1,12 @@
-// Тестовый прогон витрины: подвесы идут по ваннам подряд и по таймеру сходят
-// с линии. Единственный владелец правил прогона: страница только рисует то,
-// что отсюда пришло.
+// Тестовый прогон витрины: подвесы стоят в ванне и по таймеру сходят с линии.
+// Единственный владелец правил прогона: страница только рисует то, что отсюда
+// пришло.
 //
-// Поведение повторяет линию: подвес входит в ванну 30 из очереди загрузки,
-// проходит 31, 32, 33 и сходит с линии через ванну 34. В ванне — одно место,
-// как на линии: подвес занимает его на DWELL_SECONDS, и следующий входит в ванну
-// только когда предыдущий ушёл. Отсюда шаг линии равен времени обработки: в
-// выгрузку приходит строка раз в DWELL_SECONDS, а не чаще.
-//
-// Номера вдоль маршрута растут, как в книге учёта: кто встал раньше, тот дальше
-// по линии и сойдёт первым. Очередь и таблицы показывают строки свежими сверху,
-// по убыванию номера, — так же, как на линии.
+// Подвес не идёт по ваннам 30…33: ванна одна, подвесы стоят в ней очередью и
+// сразу уходят в ванну схода. Четыре карточки 30…33 — это четыре места одной
+// ванны в порядке выхода: тот, кто уйдёт последним, стоит в 30-й, ближайший к
+// сходу — в 33-й. Поэтому остатки на карточках всегда 20, 15, 10 и 5 секунд,
+// а не «сколько осталось в своей ванне».
 
 import { formatLocalized } from '@/lib/domain/time'
 import type { HangerData } from '@/types/dashboard'
@@ -21,27 +17,42 @@ export const FORECAST_BATHS = [30, 31, 32, 33]
 /** Ванна схода: подвес, дошедший до неё, уходит с линии. */
 export const CONTROL_BATH = 34
 
-/** Ванны линии по порядку движения подвеса: позиция в массиве — номер ванны. */
-export const LINE_BATHS = [...FORECAST_BATHS, CONTROL_BATH]
+/** Сколько секунд подвес идёт от входа на линию до схода. */
+export const LINE_SECONDS = 20
 
-/** Сколько подвес лежит в ванне до перехода в следующую. */
-export const DWELL_SECONDS = 20
-
+/**
+ * Секунд между выходами. Карточек прогноза четыре, и каждую секунду подвес
+ * становится на одну ближе к сходу — то есть шаг лесенки равен
+ * ``LINE_SECONDS / FORECAST_BATHS.length``. Ванна вмещает ровно столько
+ * подвесов, сколько карточек, поэтому очередь в ванне никогда не пустует.
+ */
+export const EXIT_INTERVAL_SECONDS = LINE_SECONDS / FORECAST_BATHS.length
 
 export interface RunHanger {
   /** Сквозной номер подвеса: с 1 до сброса прогона. */
   number: number
-  /** Остаток до перехода в следующую ванну, секунды. */
+  /** Сколько секунд подвесу осталось до схода с линии. */
   remainingTime: number
   /** Строка витрины с проставленным временем входа на линию. */
   row: HangerData
 }
 
+/** Подвес в ванне схода: он уже сошёл, карточка «Вышел» считает, сколько он там стоит. */
+export interface ExitedHanger extends RunHanger {
+  /** Сколько секунд подвес простоял в ванне схода. */
+  stoodSeconds: number
+}
+
 export interface RunState {
-  /** Подвесы в ваннах прогноза. Позиция в массиве — ванна из FORECAST_BATHS. */
-  inBaths: RunHanger[]
-  /** Подвес в ванне схода: он следующий сойдёт с линии. */
-  atExit: RunHanger | null
+  /**
+   * Подвесы в ванне, от того кто уйдёт последним, к тому кто уйдёт первым:
+   * нулевой элемент рисуется в ``FORECAST_BATHS[0]``, последний — в последней
+   * ванне прогноза. Порядок не меняется, пока подвес на линии, поэтому карточки
+   * всегда идут лесенкой остатков.
+   */
+  line: RunHanger[]
+  /** Подвес, который только что сошёл с линии: он же верхняя строка выгрузки. */
+  atExit: ExitedHanger | null
   /** Выгруженные подвесы: свежие сверху, по убыванию номера. */
   unloaded: HangerData[]
   /** Круг профилей: очередь загрузки и источник номеров на следующий круг. */
@@ -53,7 +64,7 @@ export interface RunState {
 }
 
 export function emptyRun(): RunState {
-  return { inBaths: [], atExit: null, unloaded: [], pool: [], cursor: 0, nextNumber: 1 }
+  return { line: [], atExit: null, unloaded: [], pool: [], cursor: 0, nextNumber: 1 }
 }
 
 function shuffle<T>(items: T[], random: () => number): T[] {
@@ -67,11 +78,11 @@ function shuffle<T>(items: T[], random: () => number): T[] {
   return result
 }
 
-/** Вход на линию: строка из очереди получает номер и время, когда подвес встал в ванну. */
+/** Вход на линию: строка из очереди получает номер, полный остаток и время входа. */
 function enterLine(row: HangerData, now: Date): RunHanger {
   return {
     number: Number(row.number),
-    remainingTime: DWELL_SECONDS,
+    remainingTime: LINE_SECONDS,
     row: { ...row, time: formatLocalized(now, 'ru-RU') },
   }
 }
@@ -95,27 +106,23 @@ function renumberPool(rows: HangerData[], firstNumber: number): HangerData[] {
 }
 
 /**
- * Старт прогона: круг перемешан и пронумерован, первые подвесы разведены по
- * ваннам. Первый подвес из круга встаёт дальше всех по маршруту — в ванну
- * схода, — поэтому номера вдоль линии растут и сходятся по порядку.
- *
- * Остаток у всех один: в ванне одно место, подвес занимает его на
- * ``DWELL_SECONDS``, и следующий входит в ванну только после ухода предыдущего.
- * Отсюда всё остальное: ванны поворачиваются вместе, выгрузка получает строку
- * раз в ``DWELL_SECONDS``, а выход каждые 5 секунд при одном подвесе на ванне
- * невозможен — для него на линии должно стоять двадцать подвесов.
+ * Старт прогона: круг перемешан и пронумерован, ванна заполнена целиком —
+ * витрина открывается на середине прогона, а не на его первой секунде.
+ * Подвесы разведены по остаткам так, как если бы вход шёл раз в
+ * ``EXIT_INTERVAL_SECONDS``: первый подвес из круга уже сошёл и стоит в ванне
+ * схода, последний только что встал в ванну. Номера вдоль маршрута растут.
  */
 export function startRun(rows: HangerData[], now: Date, random: () => number = Math.random): RunState {
   if (rows.length === 0) return emptyRun()
 
   // Время входа витринной строки сохраняется: пока подвес в очереди, видно время,
-  // которым его нарисовали; при входе в ванну enterLine переставит своё.
+  // которым его нарисовали; при входе на линию enterLine переставит своё.
   let pool = shuffle(rows, random).map((row, index) => ({ ...row, number: String(index + 1) }))
   let cursor = 0
   let nextNumber = pool.length + 1
 
-  // Круг может быть короче блока ванн: тогда он перемешивается и нумеруется заново,
-  // иначе в ванне 33 просто некому стоять, а подвес из 32 ушёл бы сразу в 34.
+  // Круг может быть короче ванны: тогда он перемешивается и нумеруется заново,
+  // иначе в ванне просто некому стоять, а очередь загрузки пустеет.
   const takeNext = (at: Date): RunHanger => {
     if (cursor >= pool.length) {
       pool = renumberPool(shuffle(pool, random), nextNumber)
@@ -127,21 +134,31 @@ export function startRun(rows: HangerData[], now: Date, random: () => number = M
     return hanger
   }
 
-  const inBaths: RunHanger[] = []
-  let atExit: RunHanger | null = null
+  // Подвес, который уже сошёл: карточка «Вышел» сразу на месте, и в выгрузке
+  // есть строка, чтобы витрина не открылась пустой. Он забирает первый номер
+  // круга — он дальше всех прошёл по линии.
+  const atExit: ExitedHanger = { ...takeNext(now), remainingTime: 0, stoodSeconds: 0 }
 
-  for (let step = 0; step < LINE_BATHS.length; step += 1) {
-    const hanger = takeNext(now)
-    // Шаг 0 — самая дальняя ванна, шаг 4 — ванна 30: номера вдоль маршрута растут.
-    const slot = LINE_BATHS.length - 1 - step
-    if (slot === LINE_BATHS.length - 1) {
-      atExit = hanger
-    } else {
-      inBaths[slot] = hanger
+  // Ванна заполнена целиком. Места перечислены от того, кто уйдёт последним, к
+  // тому кто уйдёт первым, поэтому на каждом шаге остаток меньше на
+  // EXIT_INTERVAL_SECONDS, карточки идут лесенкой, а нулевой элемент `line` —
+  // это ванна FORECAST_BATHS[0]. Заполняем с конца: номера вдоль линии растут.
+  const line: RunHanger[] = new Array(FORECAST_BATHS.length)
+  for (let bathIndex = FORECAST_BATHS.length - 1; bathIndex >= 0; bathIndex -= 1) {
+    line[bathIndex] = {
+      ...takeNext(now),
+      remainingTime: LINE_SECONDS - bathIndex * EXIT_INTERVAL_SECONDS,
     }
   }
 
-  return { inBaths, atExit, unloaded: [], pool, cursor, nextNumber }
+  return {
+    line,
+    atExit,
+    unloaded: [toUnloadedRow(atExit, now)],
+    pool,
+    cursor,
+    nextNumber,
+  }
 }
 
 /**
@@ -154,15 +171,12 @@ export function waitingRows(state: RunState, limit: number): HangerData[] {
 }
 
 /**
- * Секундный тик. Пока остаток больше секунды, ванны просто тикают. Иначе
- * освободившиеся ванны поворачиваются: дошедший до нуля подвес переходит в
- * следующую ванну с полным остатком, сошедший с ванны схода уходит в выгрузку,
- * а в ванну 30 встаёт следующий из очереди загрузки.
+ * Секундный тик. Остатки тают у всех; на нуле подвес уходит в ванну схода и в
+ * выгрузку, а в ванну встаёт следующий из очереди загрузки. Выход получается
+ * раз в ``EXIT_INTERVAL_SECONDS`` — чаще при одной ванне не выйдет.
  *
- * Ванны обходятся от схода к загрузке: место назначения к этому моменту уже
- * освободилось — и при разгоне, и когда ванны поворачиваются вместе. Если место
- * всё же занято (такого темпа прогон не даёт), подвес остаётся на своём месте с
- * нулевым остатком и уйдёт следующим тиком.
+ * Подвес в ванне схода никуда не идёт, но время на карточке «Вышел» идёт
+ * вверх: карточка показывает, сколько он там простоял, а не остаток до чего-то.
  */
 export function advanceRun(
   state: RunState,
@@ -170,53 +184,40 @@ export function advanceRun(
   unloadLimit: number,
   random: () => number = Math.random,
 ): RunState {
-  if (state.inBaths.length === 0 && state.atExit === null) return state
+  if (state.line.length === 0) return state
 
-  const slots: (RunHanger | null)[] = [...state.inBaths, state.atExit]
-  const ticking = slots.map(hanger => (
-    hanger ? { ...hanger, remainingTime: Math.max(0, hanger.remainingTime - 1) } : null
-  ))
+  const line = state.line.map(hanger => ({
+    ...hanger,
+    remainingTime: Math.max(0, hanger.remainingTime - 1),
+  }))
+  const atExit = state.atExit
+    ? { ...state.atExit, stoodSeconds: state.atExit.stoodSeconds + 1 }
+    : null
 
-  const unloadedNow: RunHanger[] = []
-  const lastIndex = LINE_BATHS.length - 1
-
-  for (let index = lastIndex; index >= 0; index -= 1) {
-    const hanger = ticking[index]
-    if (!hanger || hanger.remainingTime > 0) continue
-
-    if (index === lastIndex) {
-      unloadedNow.push(hanger)
-      ticking[index] = null
-    } else if (ticking[index + 1] === null) {
-      ticking[index + 1] = { ...hanger, remainingTime: DWELL_SECONDS }
-      ticking[index] = null
-    }
+  const leaving = line[line.length - 1]
+  if (leaving.remainingTime > 0) {
+    return { ...state, line, atExit }
   }
 
   let pool = state.pool
   let cursor = state.cursor
   let nextNumber = state.nextNumber
 
-  if (ticking[0] === null) {
-    if (cursor >= pool.length) {
-      pool = renumberPool(shuffle(pool, random), nextNumber)
-      nextNumber += pool.length
-      cursor = 0
-    }
-    const hanger = enterLine(pool[cursor], now)
-    cursor += 1
-    ticking[0] = hanger
+  if (cursor >= pool.length) {
+    pool = renumberPool(shuffle(pool, random), nextNumber)
+    nextNumber += pool.length
+    cursor = 0
   }
 
-  const inBaths = ticking.slice(0, lastIndex) as RunHanger[]
+  const entered = enterLine(pool[cursor], now)
+  cursor += 1
 
   return {
-    inBaths,
-    atExit: ticking[lastIndex],
+    line: [entered, ...line.slice(0, -1)],
+    atExit: { ...leaving, remainingTime: 0, stoodSeconds: 0 },
     // Свежая строка сверху, прежние остаются под ней: по убыванию номера, как
     // на линии, где книга дописывается сверху.
-    unloaded: [...unloadedNow.map(hanger => toUnloadedRow(hanger, now)), ...state.unloaded]
-      .slice(0, Math.max(0, unloadLimit)),
+    unloaded: [toUnloadedRow(leaving, now), ...state.unloaded].slice(0, Math.max(0, unloadLimit)),
     pool,
     cursor,
     nextNumber,

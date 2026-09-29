@@ -4,7 +4,7 @@ import { colorAbbreviation, colorCellStyle, colorHex, colorName } from '@/lib/do
 import { dwellChainToExit } from '@/lib/domain/time'
 import { hangerKey } from '@/lib/domain/hanger'
 import { profileText } from '@/lib/domain/profile'
-import { CONTROL_BATH, DWELL_SECONDS, FORECAST_BATHS, type RunHanger, type RunState } from '@/lib/domain/testRun'
+import { CONTROL_BATH, FORECAST_BATHS, LINE_SECONDS, type RunHanger, type RunState } from '@/lib/domain/testRun'
 import { FORECAST_MAX_ELAPSED_MS } from '@/config/intervals'
 import type { LineStatus } from '@/types/line'
 
@@ -14,7 +14,6 @@ interface BathForecastItem {
   article: string
   color: string
   inTime: number
-  outTime: number
   remainingTime: number
 }
 
@@ -80,7 +79,6 @@ function buildBathForecast(
         article: normalizeMetaValue(bath.article),
         color: normalizeMetaValue(bath.color),
         inTime: inTimeNow,
-        outTime,
         // 34-я — сам сход: там остаток времени в этой ванне. Ванны
         // прогноза показывают время до схода, то есть сумму по цепочке
         // от своей ванны до 34-й, иначе выход получался одновременным.
@@ -106,17 +104,22 @@ function buildRunForecast(run: RunState): Map<number, BathForecastItem> {
     hangerNumber: hanger.number,
     article: normalizeMetaValue(hanger.row.profile),
     color: normalizeMetaValue(hanger.row.color),
-    inTime: Math.max(0, DWELL_SECONDS - hanger.remainingTime),
-    outTime: hanger.remainingTime,
+    inTime: LINE_SECONDS - hanger.remainingTime,
     remainingTime: hanger.remainingTime,
   })
 
-  run.inBaths.forEach((hanger, index) => {
-    const bathNum = FORECAST_BATHS[index]
-    if (bathNum !== undefined) forecast.set(bathNum, toItem(bathNum, hanger))
+  FORECAST_BATHS.forEach((bathNum, bathIndex) => {
+    const hanger = run.line[bathIndex]
+    if (hanger) forecast.set(bathNum, toItem(bathNum, hanger))
   })
 
-  if (run.atExit) forecast.set(CONTROL_BATH, toItem(CONTROL_BATH, run.atExit))
+  if (run.atExit) {
+    forecast.set(CONTROL_BATH, {
+      ...toItem(CONTROL_BATH, run.atExit),
+      inTime: run.atExit.stoodSeconds,
+      remainingTime: 0,
+    })
+  }
 
   return forecast
 }
