@@ -1599,6 +1599,20 @@ export default function Dashboard() {
     return data?.products ?? []
   }, [testMode, simLoadingRows, testRows, filters.loadingLimit, data?.products])
 
+  // Подвесы, стоящие на ваннах, в порядке движения по линии: 30, 31, 32, 33, 34.
+  const onLineRows = useMemo(
+    () => [...run.inBaths.map(hanger => hanger.row), ...(run.atExit ? [run.atExit.row] : [])],
+    [run],
+  )
+
+  // Боковая очередь — общий список подвесов, как последние строки книги учёта:
+  // сверху очередь загрузки, ниже кто стоит на ваннах, ниже кто уже сошёл.
+  const sidebarRows = useMemo(() => {
+    if (!testMode) return recentAllData?.products
+    if (testMode !== 'sim') return []
+    return [...simLoadingRows, ...onLineRows, ...run.unloaded].slice(0, SIDEBAR_ROW_LIMIT)
+  }, [testMode, simLoadingRows, onLineRows, run.unloaded, recentAllData?.products])
+
   // Плашки «Обновление» в режиме симуляции реагируют на прогон, а не на файл Excel.
   // Ключи — состав строк: эффект перезапускается только когда состав действительно
   // изменился, иначе трёхсекундное гашение плашки каждый тик сбрасывалось бы.
@@ -1873,7 +1887,7 @@ export default function Dashboard() {
         </div>
 
         <div className={`${isFullscreen ? 'col-span-1' : 'xl:col-span-1'} w-full`}>
-          <SidebarQueueTable data={testMode ? (testMode === 'sim' ? run.launched : []) : recentAllData?.products} isLoading={testMode ? false : isLoadingAll} isFullscreen={isFullscreen} />
+          <SidebarQueueTable data={sidebarRows} isLoading={testMode ? false : isLoadingAll} isFullscreen={isFullscreen} />
         </div>
       </div>
 

@@ -22,7 +22,7 @@ function catalogRow(index: number): HangerData {
   return {
     number: `cat-${index}`,
     date: '28.09.2026',
-    time: '',
+    time: '12:00:00',
     client: 'Тест Каталога',
     profile: `1010${index}`,
     profiles_info: [],
@@ -79,19 +79,19 @@ describe('startRun', () => {
     expect(state.atExit?.remainingTime).toBe(20)
   })
 
+  it('очередь загрузки сохраняет время витрины, а на линии время своё', () => {
+    const start = started()
+
+    expect(waitingRows(start, 6).every(row => row.time === '12:00:00')).toBe(true)
+    expect(start.launched.every(row => row.time !== '12:00:00')).toBe(true)
+  })
+
   it('запускает подвесы по порядку очереди, в ванну 34 — того, кто сойдёт первым', () => {
     const state = started()
 
     expect(state.inBaths.map(hanger => hanger.number)).toEqual([1, 2, 3, 4])
     expect(state.atExit?.number).toBe(5)
     expect(state.inBaths.every(hanger => PALETTE.includes(hanger.row.color))).toBe(true)
-  })
-
-  it('в очереди загрузки время пустое, а ушедшему на линию время уже проставлено', () => {
-    const state = started()
-
-    expect(waitingRows(state, 6).every(row => row.time === '')).toBe(true)
-    expect(state.launched.every(row => row.time !== '')).toBe(true)
   })
 
   it('подвес, вставший в ванну 30 позже, встал на линию позже того, кто стоит в ванне 34', () => {

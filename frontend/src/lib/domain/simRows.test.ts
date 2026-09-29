@@ -69,10 +69,10 @@ describe('buildTestRows', () => {
     expect(new Set(rows.map(row => row.profile)).size).toBe(COLOR_CATALOG.length)
   })
 
-  it('время пустое, а номер подвеса уже проставлен — как у строки загрузки', () => {
+  it('время входа на линии настоящее, а номер подвеса проставлен сразу', () => {
     const rows = buildTestRows(CATALOG, 'sim', seededRandom(7))
 
-    expect(rows.every(row => row.time === '')).toBe(true)
+    expect(rows.every(row => /^\d{2}:\d{2}:\d{2}$/.test(row.time))).toBe(true)
     expect(rows.map(row => row.number)).toEqual(rows.map((_, index) => String(index + 1)))
   })
 

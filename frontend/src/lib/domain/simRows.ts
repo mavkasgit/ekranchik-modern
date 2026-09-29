@@ -3,6 +3,7 @@
 // выдача. Номер подвеса и время ставит прогон, когда подвес встаёт на линию.
 
 import { COLOR_CATALOG } from '@/lib/domain/color'
+import { formatLocalized } from '@/lib/domain/time'
 import type { HangerData } from '@/types/dashboard'
 import type { Profile } from '@/types/profile'
 
@@ -30,13 +31,14 @@ function hasPhoto(profile: Profile): boolean {
   return Boolean(profile.photo_thumb)
 }
 
-function toRow(profile: Profile, color: string, number: number): HangerData {
+function toRow(profile: Profile, color: string, number: number, now: Date): HangerData {
   return {
-    // Номер подвеса есть уже у строки загрузки. В режиме симуляции его
-    // переставит прогон, в витринных режимах он остаётся таким.
+    // Номер подвеса есть уже у строки загрузки. В режиме симуляции номер и
+    // время переставит прогон, когда подвес действительно встанет в ванну,
+    // в витринных режимах остаются те, что проставлены здесь.
     number: String(number),
-    date: new Date().toLocaleDateString('ru-RU'),
-    time: '',
+    date: now.toLocaleDateString('ru-RU'),
+    time: formatLocalized(now, 'ru-RU'),
     client: TEST_CLIENT,
     profile: profile.name,
     canonical_name: profile.name,
@@ -63,15 +65,18 @@ export function buildTestRows(
   const withPhoto = profiles.filter(hasPhoto)
   if (withPhoto.length === 0) return []
 
+  // Один момент на всю витрину: время входа у строк общее, а в режиме симуляции
+  // прогон переставит его каждому подвесу, когда тот встанет в ванну.
+  const now = new Date()
   const ordered = shuffle(withPhoto, random)
   if (mode === 'colors') {
     return COLOR_CATALOG.map((color, index) => {
       const profile = ordered[index % ordered.length]
-      return toRow(profile, color.name, index + 1)
+      return toRow(profile, color.name, index + 1, now)
     })
   }
 
   return ordered.map((profile, index) => (
-    toRow(profile, COLOR_CATALOG[Math.floor(random() * COLOR_CATALOG.length)].name, index + 1)
+    toRow(profile, COLOR_CATALOG[Math.floor(random() * COLOR_CATALOG.length)].name, index + 1, now)
   ))
 }

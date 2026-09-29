@@ -98,8 +98,9 @@ export function startRun(rows: HangerData[], now: Date, random: () => number = M
   if (rows.length === 0) return emptyRun()
 
   const ordered = shuffle(rows, random)
-  // Номер и пустое время — как у строки загрузки в книге учёта.
-  let pool = ordered.map((row, index) => ({ ...row, number: String(index + 1), time: '' }))
+  // Время входа витринной строки сохраняется: пока подвес в очереди, видно время,
+  // которым его нарисовали; при входе в ванну enterLine переставит своё.
+  let pool = ordered.map((row, index) => ({ ...row, number: String(index + 1) }))
   let nextNumber = pool.length + 1
   let cursor = 0
 
