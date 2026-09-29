@@ -2,6 +2,7 @@
 Dashboard API routes.
 """
 import logging
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -29,6 +30,28 @@ from app.services.matching import (
 
 # Аномально долгий проход по линии — предупреждение, подбор не меняет.
 DELAY_LIMIT_SECONDS = 6 * 3600
+
+# Событие выгрузки неизменяемо, а страница опрашивает подбор каждые
+# несколько секунд. Без этого ключи повторялись бы в журнале десятки раз за
+# минуту на каждое событие, и настоящая причина тонула бы в шуме.
+_reported_matches: "OrderedDict[tuple, None]" = OrderedDict()
+_REPORTED_MATCHES_MAX = 1000
+
+
+def _log_match_once(key: tuple, cycle: dict, hanger_num: str, code: str,
+                    row: Optional[HangerRow]) -> None:
+    """Написать в журнал причину подбора ровно один раз на событие."""
+    if key in _reported_matches:
+        return
+    _reported_matches[key] = None
+    while len(_reported_matches) > _REPORTED_MATCHES_MAX:
+        _reported_matches.popitem(last=False)
+    logger.warning(
+        "[Matching] cycle %s hanger %s: %s (row %s)",
+        cycle.get("cycle_id"), hanger_num, code,
+        f"{row.date} {row.time}" if row else "—",
+    )
+
 
 from app.schemas.dashboard import (
     DashboardResponse,
@@ -507,10 +530,9 @@ async def get_opcua_matched_unload_events(
             if m.code:
                 # Диагностика в лог идёт по всем причинам, включая NO_ROW,
                 # у которого на экране пометки нет: пустая строка читается сама.
-                logger.warning(
-                    "[Matching] cycle %s hanger %s: %s (row %s)",
-                    cycle.get("cycle_id"), hanger_num, m.code,
-                    f"{row.date} {row.time}" if row else "—",
+                _log_match_once(
+                    (cycle.get("cycle_id"), cycle.get("timestamp"), m.code),
+                    cycle, hanger_num, m.code, row,
                 )
 
             profiles_info = _build_profiles_info(row.profile if row else '', photos_map)

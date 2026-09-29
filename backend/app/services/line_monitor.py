@@ -22,6 +22,14 @@ CLEANUP_INTERVAL = timedelta(minutes=5)  # How often to run the cleanup task
 MAX_HANGERS = 500  # Максимум отслеживаемых подвесов
 MAX_PATH_LENGTH = 100  # Максимум записей в пути подвеса
 MAX_UNLOAD_EVENTS = 500  # Максимум событий выгрузки в памяти
+# Между ваннами подвес не виден ни в одной, и на этой линии переход
+# занимает минуты. Порог «не видно N секунд → сошёл с линии» берём из PLC:
+# максимальное dTime по линии (остаток обработки самой долгой ванны) плюс
+# запас на переход. На 29.09.2026 max dTime был 2200 с (ванна 31), то есть
+# граница ~42 мин вместо прежних 5 с.
+DEFAULT_MAX_BATH_SECONDS = 600  # Подстановка, пока PLC не отдал ни одного dTime
+DEPARTURE_MARGIN_SECONDS = 300  # Запас сверх самой долгой ванны
+DEPARTURE_BOUND_REFRESH = 60  # Как часто пересчитывать границу, секунд
 
 
 # --- Data Classes ---
@@ -47,6 +55,10 @@ class HangerState:
     ЛЮБОЙ ванне этого прохода, а не доказанный физический вход в линию.
     ``entry_bath`` — ванна, в которой он появился; нужна, чтобы измерить
     систематическое смещение относительно времени в книге учёта.
+
+    ``unseen_since`` — с какого момента подвес не виден ни в одной ванне.
+    Короткий разрыв между ваннами НЕ прерывает проход: ``current_bath``
+    продолжает хранить последнюю известную ванну, а ``cycle_id`` — прежний.
     """
     id: int
     current_bath: Optional[str] = None
@@ -56,7 +68,7 @@ class HangerState:
     cycle_id: Optional[int] = None
     first_seen_at: Optional[datetime] = None
     entry_bath: Optional[int] = None
-
+    unseen_since: Optional[datetime] = None
 
 
 class LineMonitorService:
@@ -90,6 +102,13 @@ class LineMonitorService:
         # (номер, минута) для аварийного, у которого цикла нет.
         self._processed_unloads: Deque[object] = deque(maxlen=1000)
         self._last_cleanup_time = datetime.now()
+
+        # Граница «подвес сошёл с линии». Считается по dTime ванн (остаток
+        # обработки) и кэшируется: дергать 39 узлов раз в секунду незачем.
+        self._departure_bound = timedelta(
+            seconds=DEFAULT_MAX_BATH_SECONDS + DEPARTURE_MARGIN_SECONDS
+        )
+        self._last_bound_refresh = datetime.now()
 
         # Unload events cache (deque для O(1) операций)
         self._unload_events: deque = deque(maxlen=MAX_UNLOAD_EVENTS)
@@ -317,16 +336,65 @@ class LineMonitorService:
     ) -> None:
         """Открыть новый физический проход подвеса по линии.
 
-        Вызывается каждый раз, когда подвес появляется в линии: и когда его
-        видят впервые, и когда он вернулся с новым прогоном под тем же
-        номером. Всё, что относится к прошлому проходу, отбрасывается —
-        накопленный path в том числе.
+        Вызывается только когда открытого прохода действительно нет: подвес
+        увиден впервые либо вернулся на линию после закрытого прохода.
+        Простое исчезновение из ванн проход не закрывает — иначе переход
+        между ваннами рвал бы его на куски (см. ``_departure_bound``).
+        Всё, что относится к прошлому проходу, отбрасывается — накопленный
+        path в том числе.
         """
         self._cycle_counter += 1
         hanger.cycle_id = self._cycle_counter
         hanger.first_seen_at = now
         hanger.entry_bath = bath_num
         hanger.path = []
+        hanger.unseen_since = None
+
+    def _close_cycle(self, hanger: HangerState, reason: str) -> None:
+        """Закрыть проход, не дожидаясь выгрузки с 34-й ванны."""
+        logger.warning(
+            f"[Line Monitor] Hanger {hanger.id} cycle {hanger.cycle_id} "
+            f"closed ({reason}): unseen for "
+            f"{(datetime.now() - hanger.last_seen).total_seconds():.0f}s, "
+            f"last bath {hanger.current_bath}."
+        )
+        hanger.cycle_id = None
+        hanger.current_bath = None
+        hanger.entry_time = None
+        hanger.unseen_since = None
+
+    def _refresh_departure_bound(self) -> None:
+        """Пересчитать границу «сошёл с линии» по dTime ванн.
+
+        dTime — остаток обработки ванны в секундах, то есть верхняя оценка
+        того, сколько подвес может в ней простоять. Максимум по линии плюс
+        запас на переход между ваннами и даёт границу невидимости. Ноль и
+        мусор (у счётчика ванны, перешедшего сутки, dTime уходит в минус)
+        игнорируются, а при пустом чтении держится предыдущее значение —
+        иначе кратковременный сбой PLC обнулил бы границу.
+        """
+        longest = 0
+        for bath_num in range(1, 40):
+            raw = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].dTime")
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > longest:
+                longest = value
+
+        if longest <= 0:
+            return  # PLC молчит — держим предыдущую границу
+
+        bound = timedelta(seconds=longest + DEPARTURE_MARGIN_SECONDS)
+        if bound != self._departure_bound:
+            logger.info(
+                f"[Line Monitor] Departure bound: longest bath dTime "
+                f"{longest:.0f}s + {DEPARTURE_MARGIN_SECONDS}s margin "
+                f"= {bound.total_seconds():.0f}s"
+            )
+            self._departure_bound = bound
+        self._last_bound_refresh = datetime.now()
 
     def cycle_snapshot(self, hanger: HangerState) -> Dict:
         """Общее представление прохода для события выгрузки и /line/cycles."""
@@ -363,23 +431,35 @@ class LineMonitorService:
                 hangers_seen_in_scan.add(hanger_id)
                 hanger_state = self._hangers.get(hanger_id)
 
-                # --- New Cycle Detection ---
-                # Номера подвесов повторяются от смены к смене, поэтому
-                # появление подвеса в линии — это ВСЕГДА новый физический
-                # проход: свои cycle_id, first_seen_at, entry_bath и пустой
-                # path. Путь прошлого прохода не наследуется — иначе path[0]
-                # указывал бы на первый проход за всё время жизни записи,
-                # а total_time_sec суммировал бы все проходы подряд.
+                # --- Cycle lifetime ---
+                # Проход открыт, если подвес на линии и проход не закрыт.
+                # current_bath обнуляется только выгрузкой или уходом с
+                # линии (см. ``_close_cycle``), поэтому None — это однозначно
+                # «подвес не на линии», и новый проход начинается именно там.
+                # Переход между ваннами current_bath не трогает, поэтому
+                # проход на нём не рвётся.
+                opened = False
                 if not hanger_state:
                     hanger_state = HangerState(id=hanger_id)
                     self._hangers[hanger_id] = hanger_state
                     self._open_cycle(hanger_state, bath_num, now)
+                    opened = True
                 elif hanger_state.current_bath is None:
-                    self._open_cycle(hanger_state, bath_num, now)
-                logger.info(
-                    f"Hanger {hanger_id} cycle {hanger_state.cycle_id} opened: "
-                    f"first seen at bath {hanger_state.entry_bath}."
-                )
+                    # Подвес, только что выгруженный, ещё стоит в 34-й ванне:
+                    # выгрузка срабатывает по ПРИХОДУ в неё. Это то же самое
+                    # присутствие, а не новый проход, иначе на каждый выход
+                    # заводился бы фантомный проход с нулём на линии.
+                    if bath_num != CONTROL_BATH:
+                        self._open_cycle(hanger_state, bath_num, now)
+                        opened = True
+                else:
+                    hanger_state.unseen_since = None
+
+                if opened:
+                    logger.info(
+                        f"Hanger {hanger_id} cycle {hanger_state.cycle_id} opened: "
+                        f"first seen at bath {hanger_state.entry_bath}."
+                    )
 
                 # --- State Update ---
                 # If hanger moved to a new bath
@@ -408,23 +488,26 @@ class LineMonitorService:
             except Exception as e:
                 logger.error(f"[Line Monitor] Error scanning bath {bath_name}: {e}")
 
-        # --- Handle hangers that are no longer seen in ANY bath ---
-        # НЕ удаляем сразу — transient read error может пропустить узел на 1-2 цикла.
-        # Даём grace period: если подвес не виден > 5 секунд — считаем его ушедшим.
-        HANGER_MISSING_GRACE = timedelta(seconds=5)
+        # --- Hangers no longer visible in ANY bath ---
+        # Между ваннами подвес не виден ни в одной — это нормальный переход,
+        # а не уход с линии. Проход закрываем только когда невидимость
+        # превысила границу, посчитанную по dTime ванн (см.
+        # ``_refresh_departure_bound``). Прежние 5 секунд на этой линии
+        # срабатывали на каждом переходе и рвали проход.
+        if now - self._last_bound_refresh > timedelta(
+            seconds=DEPARTURE_BOUND_REFRESH
+        ):
+            self._refresh_departure_bound()
+
         for hanger_id, state in list(self._hangers.items()):
-            if state.current_bath is None:
-                continue  # Уже неактивен (выгружен)
+            if state.cycle_id is None:
+                continue  # Прохода нет — подвес уже вне линии
             if hanger_id in hangers_seen_in_scan:
                 continue  # Виден в текущем скане
-            # Подвес не найден ни в одной ванне
-            time_missing = now - state.last_seen
-            if time_missing > HANGER_MISSING_GRACE:
-                logger.info(
-                    f"[Line Monitor] Hanger {hanger_id} missing for {time_missing.total_seconds():.0f}s "
-                    f"(was at bath {state.current_bath}). Marking inactive."
-                )
-                state.current_bath = None
+            if state.unseen_since is None:
+                state.unseen_since = now
+            if now - state.unseen_since > self._departure_bound:
+                self._close_cycle(state, "left the line")
 
     async def _check_unload(self) -> None:
         """Check Bath[34] for unload events."""
@@ -460,13 +543,17 @@ class LineMonitorService:
             now = datetime.now()
             hanger = self._hangers.get(hanger_id)
 
-            # Открытого прохода нет: состояние потеряно (рестарт сервера,
-            # давний простой, вытеснение при переполнении) либо подвес уже
-            # помечен ушедшим. Это ошибка монитора, и она НЕ должна
-            # выглядеть как нормальный выход с total_time_sec = 0.
-            # cycle_id задним числом не создаём — иначе ошибка снова станет
-            # валидным проходом.
-            if hanger is None or hanger.current_bath is None:
+            # Прохода нет — состояние потеряно (рестарт сервера, давний
+            # простой, вытеснение при переполнении). Это ошибка монитора, и
+            # она НЕ должна выглядеть как нормальный выход с
+            # total_time_sec = 0. cycle_id задним числом не создаём.
+            #
+            # Важно: судим по cycle_id, а НЕ по current_bath. Подвес,
+            # который минуту назад переходил между ваннами, не виден ни в
+            # одной, но его проход цел. Прежняя проверка current_bath
+            # выбрасывала такие проходы в CYCLE_ERROR, и вся таблица выхода
+            # оставалась пустой.
+            if hanger is None or hanger.cycle_id is None:
                 # Дедупликация по (номер, минута): цикла, к которому можно
                 # было бы привязаться, здесь нет, а дрожание датчика 0→N
                 # иначе даёт неограниченный поток одинаковых cycle_error.
@@ -477,7 +564,7 @@ class LineMonitorService:
                 reason = "unload_without_open_cycle"
                 logger.error(
                     f"[Line Monitor] {reason}: hanger {hanger_id} "
-                    f"(state={'missing' if hanger is None else 'not_on_line'}, "
+                    f"(state={'missing' if hanger is None else 'no_cycle'}, "
                     f"cycle={hanger.cycle_id if hanger else None})"
                 )
                 await self._publish(
@@ -504,11 +591,15 @@ class LineMonitorService:
                 return
             self._processed_unloads.append(hanger.cycle_id)
 
-            # Замыкаем последний шаг — ванну выгрузки.
+            # Замыкаем последний шаг — ванну выгрузки. current_bath здесь
+            # может быть последней известной ванной перехода, а не 34-й:
+            # подвес выгружается по факту появления в 34-й, но скан успевает
+            # не увидеть его в ванне. Номер 34 в этом случае врёт, поэтому
+            # оставляем фактически известную ванну.
             if hanger.entry_time:
                 hanger.path.append(
                     HangerPathEntry(
-                        bath_name=hanger.current_bath,
+                        bath_name=hanger.current_bath or str(CONTROL_BATH),
                         entry_time=hanger.entry_time,
                         exit_time=now,
                         duration=(now - hanger.entry_time).total_seconds(),
@@ -533,15 +624,18 @@ class LineMonitorService:
                 "timestamp": now.isoformat(),
             }
 
-            # Mark hanger as inactive
-            hanger.current_bath = None
-            hanger.entry_time = None
-            hanger.last_seen = now
+            # cycle_id НЕ обнуляем: он идентифицирует проход и по нему же
+            # отсекается повторная обработка того же выхода при дрожании
+            # датчика. Признак «подвес не на линии» — это current_bath.
             logger.info(
                 f"Hanger {hanger_id} cycle {hanger.cycle_id} unloaded "
                 f"after {total_time_sec / 60:.1f} min, "
                 f"{len(hanger.path)} baths."
             )
+            hanger.current_bath = None
+            hanger.entry_time = None
+            hanger.last_seen = now
+            hanger.unseen_since = None
 
             await self._publish(event, now, hanger_id)
 
@@ -571,10 +665,17 @@ class LineMonitorService:
                 await asyncio.sleep(0.1)
     
     def get_unload_events(self, limit: int = 100) -> List[dict]:
-        """Get recent unload events."""
-        # Конвертируем deque в list для API
+        """Последние выходы с линии, новые сверху.
+
+        deque хранит события в порядке появления, то есть новый выход
+        встаёт в конец. Таблица выхода читается сверху вниз, поэтому
+        возвращаем новые сверху — иначе только что сошедший подвес
+        появлялся бы снизу, под уже ушедшими. Порядок тот же, что у
+        /line/cycles.
+        """
         events = list(self._unload_events)
-        return events[-limit:] if limit < len(events) else events
+        recent = events[-limit:] if limit < len(events) else events
+        return recent[::-1]
     
     def get_hanger_state(self, hanger_num: int) -> Optional[HangerState]:
         """Get current state of a hanger."""

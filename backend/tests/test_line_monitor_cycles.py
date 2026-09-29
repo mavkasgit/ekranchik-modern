@@ -137,23 +137,148 @@ def test_duplicate_processing_of_same_cycle_dropped(monitor, monkeypatch):
     assert events[0]["type"] == "unload"
 
 
-def test_duplicate_processing_of_same_cycle_dropped(monitor, monkeypatch):
-    """Повторная обработка одного прохода второго события не создаёт."""
-    state = lm.HangerState(id=1)
-    monitor._hangers[1] = state
-    monitor._open_cycle(state, 3, datetime.now() - timedelta(minutes=30))
+def test_transit_gap_does_not_break_cycle(monitor, monkeypatch):
+    """Переход между ваннами — не новый проход.
+
+    На линии подвес минутами не виден ни в одной ванне: он едет между
+    ними. Прежний порог в 5 секунд считал это уходом с линии, обнулял
+    first_seen_at и path, а следующий выход уходил в CYCLE_ERROR — из-за
+    чего таблица выхода оставалась пустой.
+    """
+    monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 1)}))
+    asyncio.run(monitor._scan_baths())
+    state = monitor._hangers[1]
+    opened_at = state.first_seen_at
+    cycle_id = state.cycle_id
+    assert state.entry_bath == 30
+
+    # Подвес пропал из ванн на 10 минут — едет между ними.
+    monitor._departure_bound = timedelta(minutes=42)
+    seen = monitor._hangers[1]
+    seen.unseen_since = datetime.now() - timedelta(minutes=10)
+    monkeypatch.setattr(lm.opcua_service, "get_value", _baths({31: (True, 1)}))
+    asyncio.run(monitor._scan_baths())
+
+    assert state.cycle_id == cycle_id, "переход не открывает новый проход"
+    assert state.first_seen_at == opened_at, "first_seen_at не обнуляется переходом"
+    assert state.entry_bath == 30, "ванна входа остаётся той, где подвес появился"
+    # path хранит завершённые ванны, текущая ванна — отдельно.
+    assert [e.bath_name for e in state.path] == ["30"]
+    assert state.current_bath == "31"
+
+
+def test_unload_during_transit_keeps_cycle(monitor, monkeypatch):
+    """Выгрузка в разрыве видимости — нормальный выход, а не CYCLE_ERROR."""
+    monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 46)}))
+    asyncio.run(monitor._scan_baths())
+    state = monitor._hangers[46]
+    cycle_id = state.cycle_id
+
+    # Подвес не виден ни в одной ванне (скан не успел), но проход цел.
+    state.unseen_since = datetime.now() - timedelta(minutes=1)
+    state.last_seen = datetime.now() - timedelta(minutes=1)
+    monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
+    asyncio.run(monitor._record_unload(46))
+
+    event = monitor.get_unload_events()[-1]
+    assert event["type"] == "unload", "валидный проход нельзя выбрасывать"
+    assert event["cycle_id"] == cycle_id
+    assert event["entry_bath"] == 30
+
+
+def test_unloaded_hanger_parked_at_control_bath_starts_no_cycle(monitor, monkeypatch):
+    """Выгруженный подвес ещё стоит в 34-й — нового прохода это не начинает."""
+    monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
+    state = lm.HangerState(id=7)
+    monitor._hangers[7] = state
+    monitor._open_cycle(state, 30, datetime.now() - timedelta(minutes=15))
     state.current_bath = "34"
     state.entry_time = datetime.now()
-    state.path.append(lm.HangerPathEntry("3", datetime.now() - timedelta(minutes=30)))
-    state.current_bath = None
+    asyncio.run(monitor._record_unload(7))
+    cycle_after_unload = state.cycle_id
 
+    # Скан видит подвеса в 34-й: это то же самое присутствие после выгрузки.
+    monkeypatch.setattr(lm.opcua_service, "get_value", _baths({34: (True, 7)}))
+    asyncio.run(monitor._scan_baths())
+
+    assert state.cycle_id == cycle_after_unload, "фантомный проход не заводится"
+    assert monitor.get_unload_events()[-1]["type"] == "unload"
+
+
+def test_hanger_leaving_line_closes_cycle(monitor, monkeypatch):
+    """Подвес, пропавший заведомо дольше границы, проход закрывает."""
+    monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 3)}))
+    asyncio.run(monitor._scan_baths())
+    state = monitor._hangers[3]
+
+    monitor._departure_bound = timedelta(minutes=42)
+    state.unseen_since = datetime.now() - timedelta(minutes=43)
+    state.last_seen = datetime.now() - timedelta(minutes=43)
+    monkeypatch.setattr(lm.opcua_service, "get_value", _baths({}))
+    asyncio.run(monitor._scan_baths())
+
+    assert state.cycle_id is None, "проход закрыт"
+    assert state.current_bath is None, "подвес больше не на линии"
+
+
+def test_departure_bound_comes_from_longest_bath(monitor, monkeypatch):
+    """Граница невидимости считается по самой долгой ванне, а не константой."""
+    values = {
+        "ns=4;s=Bath[1].dTime": 60,
+        "ns=4;s=Bath[2].dTime": 2200,   # самая долгая ванна
+        "ns=4;s=Bath[3].dTime": 90,
+        "ns=4;s=Bath[4].dTime": -448,   # счётчик ванны перешёл сутки
+    }
+    monkeypatch.setattr(lm.opcua_service, "get_value", lambda node: values.get(node))
+    monitor._refresh_departure_bound()
+    assert monitor._departure_bound == timedelta(
+        seconds=2200 + lm.DEPARTURE_MARGIN_SECONDS
+    )
+
+    # Молчащий PLC не должен обнулять границу.
+    monkeypatch.setattr(lm.opcua_service, "get_value", lambda node: 0)
+    monitor._refresh_departure_bound()
+    assert monitor._departure_bound == timedelta(
+        seconds=2200 + lm.DEPARTURE_MARGIN_SECONDS
+    ), "предыдущая граница держится, пока PLC не отдаёт dTime"
+
+
+def test_unload_events_returned_newest_first(monitor, monkeypatch):
+    """Таблица выхода читается сверху вниз, поэтому новый выход сверху.
+
+    deque хранит события по порядку появления, то есть новый выход встаёт
+    в конец списка. Без разворота только что сошедший подвес появлялся бы
+    снизу, под уже ушедшими, и оператор его не видел.
+    """
     monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
-    asyncio.run(monitor._record_unload(1))
-    # повтор: current_bath уже None, но cycle_id тот же — событие не должно
-    # ни появиться, ни превратиться в cycle_error второй раз
-    asyncio.run(monitor._record_unload(1))
+    for number, minutes_ago in ((2, 30), (3, 20), (5, 10)):
+        state = lm.HangerState(id=number)
+        monitor._hangers[number] = state
+        seen = datetime.now() - timedelta(minutes=minutes_ago)
+        monitor._open_cycle(state, 30, seen)
+        state.current_bath = "34"
+        state.entry_time = datetime.now()
+        asyncio.run(monitor._record_unload(number))
 
-    assert len(monitor.get_unload_events()) == 1
+    events = monitor.get_unload_events()
+
+    assert [e["hanger"] for e in events] == [5, 3, 2], "новый выход сверху"
+
+
+def test_unload_events_limit_keeps_most_recent(monitor, monkeypatch):
+    """limit режет самые старые, а не новые."""
+    monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
+    for number in (2, 3, 5, 7):
+        state = lm.HangerState(id=number)
+        monitor._hangers[number] = state
+        monitor._open_cycle(state, 30, datetime.now() - timedelta(minutes=10))
+        state.current_bath = "34"
+        state.entry_time = datetime.now()
+        asyncio.run(monitor._record_unload(number))
+
+    events = monitor.get_unload_events(limit=2)
+
+    assert [e["hanger"] for e in events] == [7, 5]
 
 
 class _SilentWS:

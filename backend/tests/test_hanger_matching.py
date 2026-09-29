@@ -96,6 +96,32 @@ def test_repeated_number_cycles_take_their_own_rows():
     assert all(m.code == CODE_OK for m in matches)
 
 
+def test_result_order_follows_caller_not_matching_order():
+    """Ответ сохраняет порядок вызывающего, а не порядок подбора строк.
+
+    Подбор обязан разбирать проходы от ранних к поздним, иначе ранний
+    проход заберёт строку более позднего прогона. Но вызывающий передаёт
+    выходы новыми сверху (таблица читается сверху вниз), и этот порядок
+    обязан дойти до ответа — иначе свежий выход оказывался внизу.
+    """
+    rows = {
+        "1": [_row(1, NIGHT, "20:00:00", "ПРОГОН-1")],
+        "2": [_row(2, NIGHT, "20:10:00", "ПРОГОН-2")],
+    }
+    # Вызывающий отдал новые сверху: проход 2 (поздний) идёт первым.
+    cycles = [
+        _cycle(2, _iso(NIGHT, "20:10:00"), _iso(NIGHT, "23:00:00"), cycle_id=2),
+        _cycle(1, _iso(NIGHT, "20:00:00"), _iso(NIGHT, "22:50:00"), cycle_id=1),
+    ]
+
+    matches = match_cycles_to_rows(cycles, rows)
+
+    assert [m.cycle["cycle_id"] for m in matches] == [2, 1], "порядок вызывающего"
+    by_cycle = {m.cycle["cycle_id"]: m for m in matches}
+    assert by_cycle[1].row.profile == "ПРОГОН-1", "подбор всё равно верный"
+    assert by_cycle[2].row.profile == "ПРОГОН-2"
+
+
 def test_cycle_without_open_cycle_yields_no_row():
     """Ошибка line_monitor: строки не подбираем вовсе, cycle_id не создаём."""
     rows = {"4": [_row(4, NIGHT, "20:00:00", "ЧУЖАЯ")]}
@@ -130,14 +156,31 @@ def test_row_after_exit_is_suspect_but_shown():
     assert m.suspect_reason == "later_run"
 
 
-def test_far_from_line_entry_is_suspect():
-    """Расхождение больше допуска — причина неизвестна, решает оператор."""
-    rows = {"7": [_row(7, NIGHT, "23:10:00", "ДАЛЕКО")]}
-    cycles = [_cycle(7, _iso(NIGHT, "22:00:00"), _iso(DAY_2, "01:00:00"), cycle_id=8)]
+def test_row_far_beyond_tolerance_is_suspect():
+    """Строка соседней смены: расхождение больше допуска — решает оператор."""
+    first_seen = datetime(2026, 9, 29, 22, 0, 0)
+    # Заведомо за пределами допуска: на линии подвес проводит около трёх
+    # часов, а такая строка принадлежит другой смене.
+    book_time = first_seen + timedelta(seconds=MAX_ENTRY_DELTA_SECONDS + 3600)
+    rows = {"7": [_row(7, DAY_2, book_time.strftime("%H:%M:%S"), "ДАЛЕКО")]}
+    cycles = [_cycle(7, first_seen.isoformat(), _iso(DAY_2, "05:00:00"), cycle_id=8)]
+
     [m] = match_cycles_to_rows(cycles, rows)
 
     assert m.code == CODE_SUSPECT
     assert m.suspect_reason == "entry_delta"
+
+
+def test_line_length_delta_is_not_suspect():
+    """Расхождение размером с проход по линии — это норма, а не подозрение."""
+    first_seen = datetime(2026, 9, 29, 10, 51, 0)
+    rows = {"2": [_row(2, NIGHT, "08:33:00", "ПОСЛЕДНИЕ-2-ЧАСА")]}
+    cycles = [_cycle(2, first_seen.isoformat(), _iso(NIGHT, "11:14:02"), cycle_id=8)]
+
+    [m] = match_cycles_to_rows(cycles, rows)
+
+    assert m.row is not None
+    assert m.code == CODE_OK, "подвес на линии около трёх часов — бейдж не нужен"
 
 
 def test_row_without_time_is_not_a_candidate():
