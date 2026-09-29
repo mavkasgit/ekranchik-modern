@@ -13,7 +13,6 @@ export type TestMode = 'catalog' | 'colors' | 'sim'
 const TEST_CLIENT = 'Тест Каталога'
 const TEST_MATERIAL = 'Тест'
 const NO_VALUE = '—'
-const NO_COLOR = 'Не указан'
 
 function shuffle<T>(items: T[], random: () => number): T[] {
   const result = [...items]
@@ -53,7 +52,8 @@ function toRow(profile: Profile, color: string, number: number): HangerData {
 
 /**
  * Строки витрины. `colors` — по одной на каждый цвет справочника, остальные
- * режимы — весь круг профилей с фото в случайном порядке.
+ * режимы — весь круг профилей с фото в случайном порядке, и цвет каждой строки
+ * тоже случайный из справочника: в каталоге цвета нет, он живёт в книге учёта.
  */
 export function buildTestRows(
   profiles: Profile[],
@@ -62,13 +62,16 @@ export function buildTestRows(
 ): HangerData[] {
   const withPhoto = profiles.filter(hasPhoto)
   if (withPhoto.length === 0) return []
+
+  const ordered = shuffle(withPhoto, random)
   if (mode === 'colors') {
-    const picked = shuffle(withPhoto, random)
     return COLOR_CATALOG.map((color, index) => {
-      const profile = picked[index % picked.length]
+      const profile = ordered[index % ordered.length]
       return toRow(profile, color.name, index + 1)
     })
   }
 
-  return shuffle(withPhoto, random).map((profile, index) => toRow(profile, NO_COLOR, index + 1))
+  return ordered.map((profile, index) => (
+    toRow(profile, COLOR_CATALOG[Math.floor(random() * COLOR_CATALOG.length)].name, index + 1)
+  ))
 }

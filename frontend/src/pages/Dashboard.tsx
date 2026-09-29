@@ -1589,13 +1589,15 @@ export default function Dashboard() {
     [testMode, run, filters.loadingLimit],
   )
 
-  // Таблица загрузки: в симуляции — окно очереди прогона, в прочих тестовых режимах —
-  // строки витрины, иначе — боевая выдача.
+  // Таблица загрузки: в симуляции — окно очереди прогона, в «Все цвета» — вся
+  // палитра (режим и есть палитра), в «Все профили» — витрина под потолок
+  // «Загрузка», иначе она льёт в таблицу весь каталог.
   const loadingRows = useMemo(() => {
     if (testMode === 'sim') return simLoadingRows
-    if (testMode) return testRows
+    if (testMode === 'colors') return testRows
+    if (testMode) return testRows.slice(0, filters.loadingLimit)
     return data?.products ?? []
-  }, [testMode, simLoadingRows, testRows, data?.products])
+  }, [testMode, simLoadingRows, testRows, filters.loadingLimit, data?.products])
 
   // Плашки «Обновление» в режиме симуляции реагируют на прогон, а не на файл Excel.
   // Ключи — состав строк: эффект перезапускается только когда состав действительно

@@ -96,6 +96,23 @@ describe('buildTestRows', () => {
     expect(rows.every(row => row.profile_photo_full && !row.profile_photo_full.includes('-thumb'))).toBe(true)
   })
 
+  it('в режиме симуляции и каталога цвет каждой строки — из справочника, а не «Не указан»', () => {
+    const names = COLOR_CATALOG.map(color => color.name)
+
+    for (const mode of ['sim', 'catalog'] as const) {
+      const rows = buildTestRows(CATALOG, mode, seededRandom(11))
+
+      expect(rows.every(row => names.includes(row.color))).toBe(true)
+      expect(rows.every(row => row.color !== 'Не указан')).toBe(true)
+    }
+  })
+
+  it('цвета в симуляции не все одинаковые — витрина крашена по-разному', () => {
+    const rows = buildTestRows(CATALOG, 'sim', seededRandom(11))
+
+    expect(new Set(rows.map(row => row.color)).size).toBeGreaterThan(1)
+  })
+
   it('каталогу без профилей с фото нечего показывать в любом режиме', () => {
     const withoutPhoto = [catalogProfile(1, null)]
 
