@@ -25,8 +25,11 @@ COMPOSE_FILES=(-f compose/docker-compose.prod.yml)
 
 # Windows (Docker Desktop): bind-mount сетевого диска с хоста не работает, CIFS
 # монтирует сам контейнер — локальный оверрайд подключается только там.
+# Windows_NT — это не MINGW/MSYS: так `uname -s` отвечает в части окружений
+# (например, в MSYS2-клоне), и без этой ветки локальный оверрайд молча не
+# подключался, а контейнер падал на несуществующем /mnt/ktm-disk.
 case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) COMPOSE_FILES+=(-f compose/docker-compose.prod.local.yml) ;;
+    MINGW*|MSYS*|CYGWIN*|Windows_NT*) COMPOSE_FILES+=(-f compose/docker-compose.prod.local.yml) ;;
 esac
 
 fail() {

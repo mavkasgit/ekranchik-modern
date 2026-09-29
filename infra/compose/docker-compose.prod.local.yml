@@ -18,9 +18,14 @@ services:
     cap_add:
       - SYS_ADMIN
 
+    # Список томов переопределён целиком: точка монтирования книги уехала
+    # внутрь контейнера (CIFS), но остальные тома обязаны остаться — в том
+    # числе журнал подвесов. Без него /app/journal жил бы внутри контейнера
+    # и пропал бы при пересоздании, а на заводском Linux-сервере он монтируется.
     volumes: !override
       - ../../static:/app/static
       - ../../testdata:/app/testdata
+      - ../../journal:/app/journal
 
     # cifs-utils не ставится: его mount.cifs — отдельная программа, которая
     # в контейнере падает с «Unable to apply new capability set». Ядро
