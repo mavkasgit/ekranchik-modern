@@ -527,7 +527,7 @@ export function HangerTracking() {
                     </td>
                     <td className="py-1 px-2 font-mono text-gray-500 truncate max-w-[280px]">
                       {hanger.baths_visited?.length
-                        ? hanger.baths_visited.map(b => `Ванна[${b}]`).join(' → ')
+                        ? hanger.baths_visited.join(' → ')
                         : '—'}
                     </td>
                     <td className="py-1 px-2 text-right font-mono text-gray-500">

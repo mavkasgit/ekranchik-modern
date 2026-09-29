@@ -46,6 +46,7 @@ static/ekranchik_backup_*.db
 # Журнал подвесов: пишется приложением, в git не попадает
 static/journal/
 journal/
+journal-dev/
 
 # Data folders
 # static/images/*

@@ -38,6 +38,16 @@ json-лога: 30 суток × 32 МБ на файл держит прилож�
 (`app/services/hanger_journal.py`, срок и потолок — `JOURNAL_RETENTION_DAYS`,
 `JOURNAL_MAX_FILE_BYTES`).
 
+Каталог задаётся переменной `JOURNAL_DIR`, и у среды он свой: прод-контейнер
+пишет в `/app/journal` (bind `../../journal`, перекрывает `.env`), dev-хост — в
+`../journal-dev` (`backend/.env`). Общего файла у сред нет: dev смотрит ту же
+линию по тому же OPC UA, но разбор проходов ведёт в свой каталог.
+
+Каталог по умолчанию — `<каталог данных>/journal`, а каталог данных dev-хоста —
+это `static/`, который прод-nginx раздаёт наружу (`/static/`). Поэтому для
+dev-хоста `JOURNAL_DIR` задан явно: в `static/journal` внутренний разбор
+проходов был виден всем, кто открывает `http://<хост>/static/journal/…`.
+
 Правила, за которыми журнал дописывается (`app/services/journal_writer.py`):
 
 - пишет фоновая задача `journal_writer.run_forever`, а не роут: проход попадает
