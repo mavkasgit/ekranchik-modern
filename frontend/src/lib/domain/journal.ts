@@ -40,6 +40,9 @@ export interface JournalPass {
   row_date?: string | null
   row_time?: string | null
   row_number?: string | null
+  // Номер строки ЛИСТА в книге учёта: оператор встаёт на неё прямо в
+  // книге. Не путать с row_number — это «№ по порядку» из самой строки.
+  sheet_row?: number | null
   profile?: string | null
   color?: string | null
   kpz_number?: string | null

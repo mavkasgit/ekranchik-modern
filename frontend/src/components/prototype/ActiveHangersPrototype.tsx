@@ -67,13 +67,13 @@ function VariantA({ hangers, now }: { hangers: PrototypeHanger[]; now: Date }) {
               key={hanger.number}
               className="border-b border-gray-100 odd:bg-green-50/60 hover:bg-green-50"
             >
-              <td className="py-1 px-2 font-mono font-semibold text-gray-900 whitespace-nowrap">
-                {hangerLabel(hanger.number)}
+              <td className="py-1 px-2 font-mono text-gray-900 whitespace-nowrap">
                 {hanger.cycle_id != null && (
-                  <span className="ml-1 text-[10px] font-normal text-gray-400">
-                    проход {hanger.cycle_id}
+                  <span className="mr-1 text-[10px] font-normal text-gray-400">
+                    ID {hanger.cycle_id}
                   </span>
                 )}
+                <span className="font-semibold">{hangerLabel(hanger.number)}</span>
               </td>
               <td className="py-1 px-2 font-mono text-gray-700 whitespace-nowrap">
                 {passClock(hanger.line_entry_at)}

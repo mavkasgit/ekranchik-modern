@@ -48,7 +48,7 @@ interface Column {
 }
 
 const COLUMNS: Column[] = [
-  { title: 'Времена прохода', sort: 'exit_at' },
+  { title: 'Времена подвеса', sort: 'exit_at' },
   { title: 'Подвес', sort: 'hanger' },
   { title: 'Строка книги' },
   { title: 'Профиль', sort: 'profile' },
@@ -219,7 +219,7 @@ export function HangerTracking() {
       {/* Журнал проходов: файл, а не память монитора (issue #34) */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold text-gray-900">Журнал проходов</h3>
+          <h3 className="text-lg font-semibold text-gray-900">Журнал подвесов</h3>
           <span className="text-xs text-gray-500">
             {journal.data?.total ?? 0} записей
           </span>
@@ -235,7 +235,7 @@ export function HangerTracking() {
           >
             <div>
               <label htmlFor="journal-search" className="block text-xs text-gray-600 mb-1">
-                Поиск: подвес, проход, код, строка
+                Поиск: подвес, ID, код, строка
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -299,7 +299,7 @@ export function HangerTracking() {
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
             <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
             <p className="text-gray-600 font-medium mb-1">
-              {journal.isLoading ? 'Читаем журнал…' : 'Проходов в журнале нет'}
+              {journal.isLoading ? 'Читаем журнал…' : 'Подвесов в журнале нет'}
             </p>
             <p className="text-sm text-gray-500">
               {journal.isError
@@ -363,13 +363,13 @@ export function HangerTracking() {
                           </div>
                         ))}
                       </td>
-                      <td className="py-3 px-3 font-mono font-semibold text-gray-900">
-                        {pass.hanger ?? '—'}
+                      <td className="py-3 px-3 font-mono text-gray-900 whitespace-nowrap">
                         {pass.cycle_id != null && (
-                          <span className="ml-2 text-xs font-normal text-gray-500">
-                            проход {pass.cycle_id}
+                          <span className="mr-2 text-xs font-normal text-gray-400">
+                            ID {pass.cycle_id}
                           </span>
                         )}
+                        <span className="font-semibold">{pass.hanger ?? '—'}</span>
                       </td>
                       <td className="py-3 px-3 text-gray-700">
                         {pass.code ? (
@@ -378,7 +378,19 @@ export function HangerTracking() {
                             {CODE_LABELS[pass.code] ?? pass.code}
                           </span>
                         ) : (
-                          formatBookRow(pass)
+                          <span className="flex items-baseline gap-2">
+                            <span className="font-mono text-gray-700">
+                              {formatBookRow(pass)}
+                            </span>
+                            {pass.sheet_row != null && (
+                              <span
+                                className="font-mono text-xs text-gray-400"
+                                title="Номер строки в листе «Подвесы» книги учёта"
+                              >
+                                лист {pass.sheet_row}
+                              </span>
+                            )}
+                          </span>
                         )}
                       </td>
                       <td className="py-3 px-3 text-gray-700">
@@ -465,13 +477,15 @@ export function HangerTracking() {
                   <div key={hanger.number} className="bg-green-50 border border-green-200 rounded-lg p-4">
                     <div className="flex items-start justify-between mb-2">
                       <div>
-                        <div className="font-mono font-semibold text-gray-900">
-                          Подвес #{String(hanger.number).padStart(3, '0')}
+                        <div className="font-mono text-gray-900">
                           {hanger.cycle_id != null && (
-                            <span className="ml-2 text-xs font-normal text-gray-500">
-                              проход {hanger.cycle_id}
+                            <span className="mr-2 text-xs font-normal text-gray-400">
+                              ID {hanger.cycle_id}
                             </span>
                           )}
+                          <span className="font-semibold">
+                            Подвес #{String(hanger.number).padStart(3, '0')}
+                          </span>
                         </div>
                         <div className="text-sm text-gray-600 mt-1">
                           Сейчас в ванне #{hanger.current_bath}

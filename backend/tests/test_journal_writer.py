@@ -20,11 +20,11 @@ from app.services.journal_writer import JournalWriter, record_from_match
 from app.services.matching import CODE_NO_ROW, CycleMatch, TRUSTED_FIRST_SEEN
 
 
-def _row(number=5, date="28.09.2026", time="18:31", profile="10104") -> HangerRow:
+def _row(number=5, date="28.09.2026", time="18:31", profile="10104", sheet_row=15830) -> HangerRow:
     return HangerRow(
         number=str(number), date=date, time=time, profile=profile,
         client="РП", color="серебро", lamels_qty=86, kpz_number="151",
-        material_type="Пороги", is_defect=False,
+        material_type="Пороги", is_defect=False, sheet_row=sheet_row,
     )
 
 
@@ -95,6 +95,25 @@ def test_record_keeps_line_and_book_times_side_by_side():
     assert record["line_entry_at"] == "2026-09-29T17:04:00", "вход по линии"
     assert record["line_exit_at"] == "2026-09-29T20:16:03", "выход по линии"
     assert "book_exit_at" not in record, "выхода по книге не будет вообще"
+
+
+def test_record_keeps_the_excel_row_to_find_the_hanger_in_the_book():
+    """В записи лежит номер строки листа — по нему оператор её находит.
+
+    Книга лежит на сетевом диске, и искать подвес перебором строк бессмысленно:
+    их тысячи. Нужен прямой адрес строки, чтобы открыть лист и встать на неё.
+    """
+    record = record_from_match(_match())
+
+    assert record["sheet_row"] == 15830
+    assert record["row_number"] == "5", "это «№ по порядку» из самой строки"
+
+
+def test_record_without_book_row_has_no_sheet_row():
+    """Нет строки книги — нечего и показывать в листе."""
+    record = record_from_match(_match(row=None, code=CODE_NO_ROW, delta=None))
+
+    assert record["sheet_row"] is None
 
 
 def test_book_entry_time_keeps_the_day_the_row_names():

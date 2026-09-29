@@ -37,7 +37,7 @@ def _row(number, date, time, profile):
     return HangerRow(
         number=str(number), date=date, time=time, profile=profile,
         client="РП", color="серебро", lamels_qty=86, kpz_number="151",
-        material_type="Пороги", is_defect=False,
+        material_type="Пороги", is_defect=False, sheet_row=1,
     )
 
 

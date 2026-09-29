@@ -110,6 +110,10 @@ def record_from_match(match: CycleMatch) -> Dict[str, Any]:
         "row_date": str(row.date) if row else None,
         "row_time": str(row.time) if row else None,
         "row_number": str(row.number) if row else None,
+        # Номер строки ЛИСТА в книге: по нему оператор встаёт на строку
+        # прямо в книге. ``row_number`` выше — это «№ по порядку» из
+        # самой строки, другое число и другое назначение.
+        "sheet_row": row.sheet_row if row else None,
         "profile": str(row.profile) if row else None,
         "color": str(row.color) if row else None,
         "kpz_number": str(row.kpz_number) if row else None,

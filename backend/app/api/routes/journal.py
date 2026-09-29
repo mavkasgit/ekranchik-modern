@@ -53,6 +53,9 @@ class JournalPass(BaseModel):
     row_date: Optional[str] = None
     row_time: Optional[str] = None
     row_number: Optional[str] = None
+    # Номер строки ЛИСТА в книге учёта: оператор встаёт на неё прямо в
+    # книге. Не путать с row_number — это «№ по порядку» из самой строки.
+    sheet_row: Optional[int] = None
     profile: Optional[str] = None
     color: Optional[str] = None
     kpz_number: Optional[str] = None
