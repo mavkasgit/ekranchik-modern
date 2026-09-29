@@ -58,3 +58,21 @@ async def test_active_hanger_carries_its_entry_time(monitor_with_active):
         monitor_with_active.first_seen_at.strftime("%Y-%m-%dT%H:%M")
     )
     assert hanger["entry_bath"] == 4, "ванна, в которой подвес замечен"
+
+
+async def test_active_hanger_says_how_trusted_its_first_measurement_is(monitor_with_active):
+    """Подвес, замеченный при старте сервера, отдаёт источник замера.
+
+    Монитор не видит входа подвеса в линию: он застаёт его уже в ванне. При
+    старте сервера это происходит со всеми, кто уже стоит, поэтому момент
+    замера равен времени старта, а не появлению подвеса. На экране по такому
+    моменту «в линии» показывать нельзя — показывают прочерк.
+    """
+    from app.services import line_monitor as lm
+
+    body = await _active()
+    assert body["hangers"][0]["first_seen_source"] == lm.FIRST_SEEN_WATCHED
+
+    monitor_with_active.first_seen_source = lm.FIRST_SEEN_START
+    body = await _active()
+    assert body["hangers"][0]["first_seen_source"] == lm.FIRST_SEEN_START

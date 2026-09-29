@@ -45,6 +45,10 @@ def _hanger_payload(hanger) -> Dict[str, Any]:
             else None
         ),
         "entry_bath": hanger.entry_bath,
+        # Насколько моменту замера можно верить: монитор не видит входа
+        # подвеса в линию, а при старте сервера застаёт уже стоящих. По
+        # такому моменту «в линии» показывать нельзя.
+        "first_seen_source": hanger.first_seen_source,
     }
 
 

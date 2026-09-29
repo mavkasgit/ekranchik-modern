@@ -34,6 +34,7 @@ interface Hanger {
   cycle_id: number | null
   line_entry_at: string | null
   entry_bath: number | null
+  first_seen_source: string
 }
 
 interface OPCUAStatus {

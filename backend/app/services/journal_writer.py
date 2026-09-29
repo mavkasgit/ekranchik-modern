@@ -130,14 +130,21 @@ def record_from_match(match: CycleMatch) -> Dict[str, Any]:
 def _event_key(cycle: Dict[str, Any]) -> tuple:
     """Ключ прохода для дедупликации.
 
-    У нормального прохода он есть — ``cycle_id`` монотонен и не
-    переиспользуется. У аварийного события (``cycle_error``) прохода нет,
-    и ключом служит номер подвеса с временем выхода.
+    Ключ — пара «номер прохода + момент выхода», а не один номер. Счётчик
+    проходов живёт в памяти монитора и после перезапуска сервера начинается
+    заново с единицы, а журнал живёт 30 суток: новый проход получает номер,
+    который в файле за сегодня уже есть, и по одному номеру писатель счёл бы
+    его записанным — молча потерял бы проход. Время выхода у одного и того же
+    прохода не меняется, поэтому от дрожания датчика защита остаётся.
+
+    У аварийного события (``cycle_error``) прохода нет: ключом служит номер
+    подвеса с временем выхода.
     """
     cycle_id = cycle.get("cycle_id")
+    exit_at = cycle.get("exit_at")
     if cycle_id is not None:
-        return ("cycle", cycle_id)
-    return ("event", cycle.get("hanger"), cycle.get("exit_at"))
+        return ("cycle", cycle_id, exit_at)
+    return ("event", cycle.get("hanger"), exit_at)
 
 
 class JournalWriter:
@@ -253,9 +260,14 @@ class JournalWriter:
 
 
 def _record_key(record: Dict[str, Any]) -> tuple:
-    """Ключ прохода из уже записанной записи журнала."""
+    """Ключ прохода из уже записанной записи журнала.
+
+    Строится по тем же полям, что и ключ события (см. ``_event_key``), иначе
+    чтение журнала при старте помечало бы не те проходы и повторная запись
+    проходила бы, а потерянные — нет.
+    """
     if record.get("cycle_id") is not None:
-        return ("cycle", record["cycle_id"])
+        return ("cycle", record["cycle_id"], record.get("exit_at"))
     return ("event", record.get("hanger"), record.get("exit_at"))
 
 

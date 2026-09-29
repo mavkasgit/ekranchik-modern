@@ -213,4 +213,15 @@ describe('formatInLine', () => {
     const now = new Date('2026-09-30T20:00:00')
     expect(formatInLine('2026-09-29T18:00:00', now)).toBe('>1сут')
   })
+
+  it('по моменту, взятому при старте сервера, простоя не показываем', () => {
+    // При старте сервера монитор застаёт в линии всех, кто уже стоит, и
+    // момент замера у них равен времени старта. Показать «3ч» — значит
+    // отдать оператору время работы сервера вместо времени подвеса.
+    const now = new Date('2026-09-29T20:16:03')
+    const iso = '2026-09-29T17:04:00'
+    expect(formatInLine(iso, now, 'start')).toBe('—')
+    expect(formatInLine(iso, now, 'gap')).toBe('—')
+    expect(formatInLine(iso, now, 'watched')).toBe('3ч 12м')
+  })
 })

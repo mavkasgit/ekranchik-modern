@@ -217,6 +217,45 @@ def test_writer_survives_a_restart_and_keeps_writing(writer, tmp_path):
     assert [r["cycle_id"] for r in restarted.store.query(limit=10).items] == [2, 1]
 
 
+def test_pass_is_written_even_when_the_counter_repeats_after_a_restart(writer, tmp_path):
+    """Проход с уже занятым cycle_id всё равно попадает в журнал.
+
+    Счётчик проходов живёт в памяти монитора и после перезапуска начинается
+    с единицы. Значит новый проход получит номер, который в журнале за сегодня
+    уже есть: без времени выхода в ключе писатель решит, что такой проход
+    уже записан, и молча его потеряет. Ключ строим по паре «номер прохода +
+    момент выхода» — у одного и того же прохода они не меняются, а у
+    разных проходов после перезапуска различаются.
+    """
+    asyncio.run(writer.flush(line_monitor=_monitor_with([_cycle(cycle_id=6)])))
+
+    restarted = JournalWriter(
+        JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]}
+    )
+    restarted.load_written_keys()
+
+    # Тот же номер прохода, но это ДРУГОЙ проход: другое время выхода.
+    fresh = _cycle(cycle_id=6, hanger=5, exit_at="2026-09-29T22:30:00")
+    assert asyncio.run(restarted.flush(line_monitor=_monitor_with([fresh]))) == 1
+
+    page = restarted.store.query(limit=10)
+    assert page.total == 2, "оба прохода на месте"
+    assert [r["line_exit_at"][11:] for r in page.items] == ["22:30:00", "20:16:03"]
+
+
+def test_same_pass_with_the_same_exit_time_is_still_written_once(writer, tmp_path):
+    """Ключ с временем выхода не ослабляет защиту от повторной записи."""
+    restarted = JournalWriter(
+        JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]}
+    )
+    restarted.load_written_keys()
+    monitor = _monitor_with([_cycle(cycle_id=6)])
+
+    assert asyncio.run(restarted.flush(line_monitor=monitor)) == 1
+    assert asyncio.run(restarted.flush(line_monitor=monitor)) == 0
+    assert restarted.store.query(limit=10).total == 1
+
+
 def test_writer_logs_the_match_line_once(writer, caplog):
     """Строка сопоставления уходит и в лог контейнера, и в файл.
 

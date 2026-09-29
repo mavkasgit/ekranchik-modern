@@ -251,13 +251,31 @@ export function passTimes(pass: JournalPass): PassTime[] {
 }
 
 /**
+ * Достоверенный момент первого замера: линию наблюдали непрерывно. Значение
+ * ставит сервер (``line_monitor.FIRST_SEEN_*``); ``start`` и ``gap`` означают,
+ * что замер сделан в момент, когда монитор посмотрел, а не когда подвес
+ * появился.
+ */
+export const TRUSTED_FIRST_SEEN = 'watched'
+
+/**
  * Сколько подвес простоял на линии: от первого замера до ``now``.
+ *
+ * По недостоверному моменту число не показывается. При старте сервера монитор
+ * застаёт в линии всех, кто уже стоит, и момент замера у них совпадает со
+ * временем старта: вышло бы «3ч» — но это три часа работы сервера, а не
+ * подвеса на линии. То же после разрыва связи.
  *
  * Больше суток показывается как «>1сут»: это не «долго стоит», а «данные
  * старые» — монитор не видел подвес сутки, и точная цифра врёт.
  */
-export function formatInLine(iso: string | null | undefined, now: Date): string {
+export function formatInLine(
+  iso: string | null | undefined,
+  now: Date,
+  firstSeenSource?: string | null,
+): string {
   if (!iso) return '—'
+  if (firstSeenSource != null && firstSeenSource !== TRUSTED_FIRST_SEEN) return '—'
   const since = new Date(iso).getTime()
   if (Number.isNaN(since)) return '—'
   const minutes = Math.floor((now.getTime() - since) / 60000)

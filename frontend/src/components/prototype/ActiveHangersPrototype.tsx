@@ -19,6 +19,7 @@ export interface PrototypeHanger {
   cycle_id: number | null
   line_entry_at: string | null
   entry_bath: number | null
+  first_seen_source: string
 }
 
 const VARIANTS = {
@@ -84,7 +85,7 @@ function VariantA({ hangers, now }: { hangers: PrototypeHanger[]; now: Date }) {
                 )}
               </td>
               <td className="py-1 px-2 text-right font-mono text-gray-700 whitespace-nowrap">
-                {formatInLine(hanger.line_entry_at, now)}
+                {formatInLine(hanger.line_entry_at, now, hanger.first_seen_source)}
               </td>
               <td className="py-1 px-2 font-mono text-gray-700">
                 {bathLabel(hanger.current_bath)}
@@ -118,7 +119,7 @@ function VariantB({ hangers, now }: { hangers: PrototypeHanger[]; now: Date }) {
             </span>
           </div>
           <div className="text-[11px] text-gray-500 font-mono truncate" title={pathLabel(hanger.baths_visited ?? [])}>
-            {passClock(hanger.line_entry_at)} · {formatInLine(hanger.line_entry_at, now)} · {pathLabel(hanger.baths_visited ?? [])}
+            {passClock(hanger.line_entry_at)} · {formatInLine(hanger.line_entry_at, now, hanger.first_seen_source)} · {pathLabel(hanger.baths_visited ?? [])}
           </div>
         </div>
       ))}
@@ -139,7 +140,7 @@ function VariantC({ hangers, now }: { hangers: PrototypeHanger[]; now: Date }) {
           <span className="font-semibold">{hangerLabel(hanger.number)}</span>
           <span className="text-green-700">ванна {bathLabel(hanger.current_bath)}</span>
           <span className="text-gray-500">
-            {passClock(hanger.line_entry_at)} · {formatInLine(hanger.line_entry_at, now)}
+            {passClock(hanger.line_entry_at)} · {formatInLine(hanger.line_entry_at, now, hanger.first_seen_source)}
           </span>
           {hanger.baths_visited && hanger.baths_visited.length > 0 && (
             <span className="text-gray-400 truncate">{pathLabel(hanger.baths_visited)}</span>
