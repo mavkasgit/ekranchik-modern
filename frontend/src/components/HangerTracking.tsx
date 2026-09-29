@@ -16,6 +16,7 @@ import {
   formatBookRow,
   formatBytes,
   formatDelta,
+  formatInLine,
   formatPath,
   pageCount,
   passClock,
@@ -25,7 +26,6 @@ import {
   type JournalQuery,
   type JournalSortField,
 } from '@/lib/domain/journal'
-import { ActiveHangersPrototype } from '@/components/prototype/ActiveHangersPrototype'
 
 interface Hanger {
   number: number
@@ -73,6 +73,13 @@ export function HangerTracking() {
   const [opcuaStatus, setOpcuaStatus] = useState<OPCUAStatus | null>(null)
   const [query, setQuery] = useState<JournalQuery>(EMPTY_JOURNAL_QUERY)
   const [searchDraft, setSearchDraft] = useState('')
+  // Секундный тик: «в линии» должно расти само, как на живой линии, а не
+  // обновляться раз в десять секунд вместе с опросом сервера.
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   const journal = useJournal(query)
   const passes = journal.data?.items ?? []
@@ -465,50 +472,72 @@ export function HangerTracking() {
         )}
       </div>
 
-      {/* Active Hangers */}
+      {/* Подвесы на линии: плотная таблица, а не карточки.
+
+          Карточка занимала около 110 пикселей на подвес, и на двенадцати
+          подвесах блок уезжал за экран — а оператору нужен весь список. Одна
+          строка на подвес, колонки выровнены, как в таблице журнала выше. */}
       {activeHangers.length > 0 && (
         <div className="mb-6">
-          {import.meta.env.DEV ? (
-            <ActiveHangersPrototype hangers={activeHangers.filter(Boolean)} />
-          ) : (
-            <>
-              <h3 className="text-lg font-semibold mb-3 text-gray-900">Сейчас на линии</h3>
-              <div className="space-y-3">
-                {activeHangers.filter(Boolean).map((hanger) => (
-                  <div key={hanger.number} className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <div className="font-mono text-gray-900">
-                          {hanger.cycle_id != null && (
-                            <span className="mr-2 text-xs font-normal text-gray-400">
-                              ID {hanger.cycle_id}
-                            </span>
-                          )}
-                          <span className="font-semibold">
-                            Подвес #{String(hanger.number).padStart(3, '0')}
-                          </span>
-                        </div>
-                        <div className="text-sm text-gray-600 mt-1">
-                          Сейчас в ванне #{hanger.current_bath}
-                        </div>
-                      </div>
-                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                        <CheckCircle className="w-3 h-3" />
-                        В линии
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-gray-900">Сейчас на линии</h3>
+            <span className="text-xs text-gray-500">{activeHangers.length}</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-gray-500">
+                  <th className="py-1 px-2 font-medium">Подвес</th>
+                  <th className="py-1 px-2 font-medium">Вход на линию</th>
+                  <th className="py-1 px-2 font-medium text-right">В линии</th>
+                  <th className="py-1 px-2 font-medium">Ванна</th>
+                  <th className="py-1 px-2 font-medium">Путь</th>
+                  <th className="py-1 px-2 font-medium text-right">Ванн</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeHangers.filter(Boolean).map(hanger => (
+                  <tr
+                    key={hanger.number}
+                    className="border-b border-gray-100 odd:bg-green-50/60 hover:bg-green-50"
+                  >
+                    <td className="py-1 px-2 font-mono text-gray-900 whitespace-nowrap">
+                      {hanger.cycle_id != null && (
+                        <span className="mr-1 text-[10px] font-normal text-gray-400">
+                          ID {hanger.cycle_id}
+                        </span>
+                      )}
+                      <span className="font-semibold">
+                        #{String(hanger.number).padStart(3, '0')}
                       </span>
-                    </div>
-                    <div className="text-xs text-gray-600">
-                      Вход на линию: {passClock(hanger.line_entry_at)}
-                      {hanger.entry_bath != null && ` (ванна ${hanger.entry_bath})`}
-                    </div>
-                    <div className="text-xs text-gray-600">
-                      Путь: {hanger.baths_visited?.map(b => `Ванна[${b}]`).join(' → ') || 'Пути пока нет'}
-                    </div>
-                  </div>
+                    </td>
+                    <td className="py-1 px-2 font-mono text-gray-700 whitespace-nowrap">
+                      {passClock(hanger.line_entry_at)}
+                      {hanger.entry_bath != null && (
+                        <span className="ml-1 text-[10px] text-gray-400">
+                          ванна {hanger.entry_bath}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-1 px-2 text-right font-mono text-gray-700 whitespace-nowrap">
+                      {formatInLine(hanger.line_entry_at, now, hanger.first_seen_source)}
+                    </td>
+                    <td className="py-1 px-2 font-mono text-gray-700">
+                      {hanger.current_bath ?? '—'}
+                    </td>
+                    <td className="py-1 px-2 font-mono text-gray-500 truncate max-w-[280px]">
+                      {hanger.baths_visited?.length
+                        ? hanger.baths_visited.map(b => `Ванна[${b}]`).join(' → ')
+                        : '—'}
+                    </td>
+                    <td className="py-1 px-2 text-right font-mono text-gray-500">
+                      {hanger.baths_visited?.length ?? 0}
+                    </td>
+                  </tr>
                 ))}
-              </div>
-            </>
-          )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
