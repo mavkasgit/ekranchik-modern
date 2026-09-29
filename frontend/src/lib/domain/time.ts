@@ -25,32 +25,3 @@ export function formatLocalized(
   if (Number.isNaN(date.getTime())) return '—'
   return date.toLocaleTimeString(locale)
 }
-
-// Сколько секунд подвесу осталось до схода с линии, если он стоит в ванне
-// `fromBath`. Подвес выходит не из своей ванны, а пройдя все ванны до
-// контрольной, поэтому время складывается по всей цепочке. Считать только
-// остаток своей ванны нельзя: тогда выход из 30-й, 31-й, 32-й и 33-й
-// получался одновременным, а подвесы шли не по порядку.
-//
-// `elapsedSeconds` — сколько секунд прошло с момента, когда пришли эти
-// данные. Остаток обработки в каждой ванне уменьшается раз в секунду, а
-// сообщения линии приходят раз в 2 с, поэтому между ними секунды надо
-// домерить на клиенте: иначе карточка стоит ступенями и время в ней не
-// идёт. Ванна, остаток которой уже кончился, даёт ноль, а не минус.
-//
-// `d_time` у ванны, счётчик которой перешёл сутки, уходит в минус — такое
-// значение нельзя прибавлять, поэтому отрицательные обнуляются.
-export function dwellChainToExit(
-  baths: ReadonlyArray<{ bath_number: number; d_time?: number | null }>,
-  fromBath: number,
-  controlBath: number,
-  elapsedSeconds: number = 0,
-): number {
-  const elapsed = Math.max(0, elapsedSeconds)
-  let total = 0
-  for (let bath = fromBath; bath <= controlBath; bath += 1) {
-    const found = baths.find((b) => b.bath_number === bath)
-    total += Math.max(0, (found?.d_time ?? 0) - elapsed)
-  }
-  return total
-}

@@ -28,7 +28,8 @@ export function applyRealtimeMessage(client: QueryClient, message: WebSocketMess
 
 /**
  * Сообщение линии несёт только счётчики ванн; данные из HTTP (`article`, `color`,
- * `power_supply`, `free`, `d_time`) сохраняем, иначе они пропадут из таблицы прогноза.
+ * `power_supply`, `free`, `d_time`) сохраняем, иначе они пропадут из состояния
+ * линии — `article` и `color` показывает таблица прогноза.
  */
 function mergeLineUpdate(previous: LineStatus | undefined, payload: LineUpdatePayload): LineStatus {
   const live = new Map((payload.baths ?? []).map((bath) => [bath.bath_number, bath]))

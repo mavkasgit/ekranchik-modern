@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLineStatus } from '@/hooks/useLineStatus'
 import { colorAbbreviation, colorCellStyle, colorHex, colorName } from '@/lib/domain/color'
-import { dwellChainToExit } from '@/lib/domain/time'
 import { hangerKey } from '@/lib/domain/hanger'
 import { profileText } from '@/lib/domain/profile'
 import { CONTROL_BATH, FORECAST_BATHS, LINE_SECONDS, type RunHanger, type RunState } from '@/lib/domain/testRun'
@@ -79,15 +78,15 @@ function buildBathForecast(
         article: normalizeMetaValue(bath.article),
         color: normalizeMetaValue(bath.color),
         inTime: inTimeNow,
-        // 34-я — сам сход: там остаток времени в этой ванне. Ванны
-        // прогноза показывают время до схода, то есть сумму по цепочке
-        // от своей ванны до 34-й, иначе выход получался одновременным.
-        // `elapsedSeconds` — секунды с последнего сообщения линии: счётчики
-        // ванн тикают сами, а приходят раз в 2 с, поэтому карточка ведёт
-        // секунды ровно и не ждёт следующего сообщения.
-        remainingTime: isControlBath
-          ? Math.max(0, outTime - inTimeNow)
-          : dwellChainToExit(baths, bath.bath_number, CONTROL_BATH, elapsedSeconds),
+        // Остаток до выхода из СВОЕЙ ванны: `out_time` — плановое время
+        // обработки, `in_time` — сколько подвес в ней уже стоит. Цепочки
+        // ванн нет: подвес выходит с линии из той ванны, где стоит, и сумма
+        // по линии давала выход из 30-й через 95 минут вместо остатка её
+        // собственной ванны. `elapsedSeconds` — секунды с последнего
+        // сообщения линии: остаток убывает раз в секунду, сообщение приходит
+        // раз в 2 с, поэтому карточка ведёт секунды ровно, не ждёт следующего
+        // сообщения и не уходит в минус, когда время вышло.
+        remainingTime: Math.max(0, outTime - inTime - Math.max(0, elapsedSeconds)),
       })
     }
   }
@@ -138,7 +137,10 @@ export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastP
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [])
-  const elapsedSeconds = Math.min(FORECAST_MAX_ELAPSED_MS, now - dataUpdatedAt) / 1000
+  // Целые секунды, а не дробь: остаток на карточке должен совпадать с
+  // счётчиком PLC в момент прихода сообщения, иначе сразу после него на
+  // экране стоит на секунду меньше.
+  const elapsedSeconds = Math.floor(Math.min(FORECAST_MAX_ELAPSED_MS, now - dataUpdatedAt) / 1000)
 
   // В тестовом режиме карточки строятся только из прогона: живые ванны сюда не подмешиваются.
   // Прогон тикает раз в секунду сам, домеривать ему нечего.
