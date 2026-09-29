@@ -3,12 +3,20 @@ Ekranchik Modern - FastAPI Application Entry Point
 """
 import os
 import time
-try:
+
+# Процесс обязан идти по московским часам: журнал подвесов и метки времени
+# пишутся локальным временем без смещения (datetime.now().isoformat()), и
+# расхождение зоны негде заметить — на экране просто неверный час.
+#
+# time.tzset() есть только на Unix-питоне; там и работает IANA-имя. На Windows
+# UCRT разбирает только POSIX-форму, а «Europe/Moscow» принимает молча и уводит
+# часы в UTC: dev показывал 20:09, когда на проде было 23:09.
+if hasattr(time, 'tzset'):
     os.environ['TZ'] = 'Europe/Moscow'
     time.tzset()
-except AttributeError:
-    # time.tzset() is not available on Windows
-    pass
+else:
+    # «MSK-3» = UTC+3 без перехода на летнее время (в России его нет).
+    os.environ['TZ'] = 'MSK-3'
 
 import asyncio
 import logging
