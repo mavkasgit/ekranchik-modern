@@ -1599,9 +1599,12 @@ export default function Dashboard() {
     return data?.products ?? []
   }, [testMode, simLoadingRows, testRows, filters.loadingLimit, data?.products])
 
-  // Подвесы, стоящие на ваннах, в порядке движения по линии: 30, 31, 32, 33, 34.
+  // Подвесы, стоящие на ваннах, — все, кто сейчас на линии, а не по одному от
+  // карточки прогноза: боковая очередь это хвост книги учёта, и пропуск между
+  // номерами в ней читается как потерянный подвес. Номера вдоль маршрута
+  // растут, поэтому список убывает по номеру, а не по ванне.
   const onLineRows = useMemo(
-    () => [...run.inBaths.map(hanger => hanger.row), ...(run.atExit ? [run.atExit.row] : [])],
+    () => run.baths.flat().map(hanger => hanger.row).sort((a, b) => Number(b.number) - Number(a.number)),
     [run],
   )
 
@@ -1610,12 +1613,21 @@ export default function Dashboard() {
   const sidebarRows = useMemo(() => {
     if (!testMode) return recentAllData?.products
     if (testMode !== 'sim') return []
-    return [...simLoadingRows, ...onLineRows, ...run.unloaded].slice(0, SIDEBAR_ROW_LIMIT)
+    // Очередь загрузки в боковой очереди — без времени: на живой линии прочерк
+    // значит «ещё не встал», и витрина показывает то же. В таблице загрузки
+    // время остаётся — там витринные строки доигрывают роль строк книги.
+    const queued = simLoadingRows.map(row => ({ ...row, time: '' }))
+    return [...queued, ...onLineRows, ...run.unloaded]
+      .sort((a, b) => Number(b.number) - Number(a.number))
+      .slice(0, SIDEBAR_ROW_LIMIT)
   }, [testMode, simLoadingRows, onLineRows, run.unloaded, recentAllData?.products])
 
   // Плашки «Обновление» в режиме симуляции реагируют на прогон, а не на файл Excel.
   // Ключи — состав строк: эффект перезапускается только когда состав действительно
-  // изменился, иначе трёхсекундное гашение плашки каждый тик сбрасывалось бы.
+  // изменился, иначе гашение плашки каждый тик сбрасывалось бы.
+  // Гашение короче боевого: строка в симуляции приходит каждые 5 секунд, и
+  // полутора секунд хватает, чтобы плашка мигнула и не горела постоянно.
+  const SIM_BLINK_MS = 1500
   const simLoadingKey = simLoadingRows.map(row => row.number).join(',')
   const simUnloadKey = run.unloaded.map(row => row.number).join(',')
 
@@ -1624,7 +1636,7 @@ export default function Dashboard() {
     prevSimLoadingKeyRef.current = simLoadingKey
 
     setHasNewRows(true)
-    setTimeout(() => setHasNewRows(false), 3000)
+    setTimeout(() => setHasNewRows(false), SIM_BLINK_MS)
   }, [testMode, simLoadingKey])
 
   useEffect(() => {
@@ -1632,7 +1644,7 @@ export default function Dashboard() {
     prevSimUnloadKeyRef.current = simUnloadKey
 
     setHasNewUnloadEvents(true)
-    setTimeout(() => setHasNewUnloadEvents(false), 3000)
+    setTimeout(() => setHasNewUnloadEvents(false), SIM_BLINK_MS)
   }, [testMode, simUnloadKey])
 
   // ESC обработчик удален - не закрываем окно по ESC, чтобы работники не могли случайно закрыть киоск

@@ -1,9 +1,10 @@
 import { useMemo, useRef } from 'react'
 import { useLineStatus } from '@/hooks/useLineStatus'
 import { colorAbbreviation, colorCellStyle, colorHex, colorName } from '@/lib/domain/color'
+import { dwellChainToExit } from '@/lib/domain/time'
 import { hangerKey } from '@/lib/domain/hanger'
 import { profileText } from '@/lib/domain/profile'
-import { CONTROL_BATH, DWELL_SECONDS, FORECAST_BATHS, type RunHanger, type RunState } from '@/lib/domain/testRun'
+import { CONTROL_BATH, DWELL_SECONDS, FORECAST_BATHS, LINE_BATHS, cardHangers, type RunHanger, type RunState } from '@/lib/domain/testRun'
 import type { LineStatus } from '@/types/line'
 
 interface BathForecastItem {
@@ -49,9 +50,11 @@ function buildBathForecast(
 ): Map<number, BathForecastItem> {
   const forecast: Map<number, BathForecastItem> = new Map()
 
-  for (const bath of lineStatus?.baths ?? []) {
-    const isForecastBath = [30, 31, 32, 33].includes(bath.bath_number)
-    const isControlBath = bath.bath_number === 34
+  const baths = lineStatus?.baths ?? []
+
+  for (const bath of baths) {
+    const isForecastBath = FORECAST_BATHS.includes(bath.bath_number)
+    const isControlBath = bath.bath_number === CONTROL_BATH
     const inTime = bath.in_time || 0
     const outTime = bath.out_time || 0
 
@@ -75,7 +78,12 @@ function buildBathForecast(
         color: normalizeMetaValue(bath.color),
         inTime,
         outTime,
-        remainingTime: Math.max(0, outTime - inTime),
+        // 34-я — сам сход: там остаток времени в этой ванне. Ванны
+        // прогноза показывают время до схода, то есть сумму по цепочке
+        // от своей ванны до 34-й, иначе выход получался одновременным.
+        remainingTime: isControlBath
+          ? Math.max(0, outTime - inTime)
+          : dwellChainToExit(baths, bath.bath_number, CONTROL_BATH),
       })
     }
   }
@@ -97,12 +105,10 @@ function buildRunForecast(run: RunState): Map<number, BathForecastItem> {
     remainingTime: hanger.remainingTime,
   })
 
-  run.inBaths.forEach((hanger, index) => {
-    const bathNum = FORECAST_BATHS[index]
-    if (bathNum !== undefined) forecast.set(bathNum, toItem(bathNum, hanger))
+  cardHangers(run).forEach((hanger, index) => {
+    const bathNum = LINE_BATHS[index]
+    if (hanger && bathNum !== undefined) forecast.set(bathNum, toItem(bathNum, hanger))
   })
-
-  if (run.atExit) forecast.set(CONTROL_BATH, toItem(CONTROL_BATH, run.atExit))
 
   return forecast
 }

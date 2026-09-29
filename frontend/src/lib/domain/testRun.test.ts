@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CONTROL_BATH,
   DWELL_SECONDS,
+  ENTRY_INTERVAL_SECONDS,
   FORECAST_BATHS,
+  HANGERS_PER_BATH,
+  LINE_BATHS,
   advanceRun,
+  cardHangers,
   emptyRun,
   startRun,
   waitingRows,
@@ -43,10 +48,10 @@ function at(seconds: number): Date {
 
 /** Детерминированный генератор: перемешивание проверяется, а не отдаётся на волю Math.random. */
 function seededRandom(seed: number): () => number {
-  let value = seed
+  let state = seed
   return () => {
-    value = (value * 9301 + 49297) % 233280
-    return value / 233280
+    state = (state * 1103515245 + 12345) % 2147483648
+    return state / 2147483648
   }
 }
 
@@ -63,55 +68,71 @@ function started(random = seededRandom(7)): RunState {
   return startRun(POOL, NOW, random)
 }
 
-/** Подвесы, стоящие на ваннах: от ванны 30 к ванне схода. */
+/** Подвесы, стоящие на ваннах, от загрузки к сходу: одна строка на ванну — как в карточках. */
 function lineNumbers(state: RunState): number[] {
-  return [...state.inBaths.map(hanger => hanger.number), ...(state.atExit ? [state.atExit.number] : [])]
+  return cardHangers(state).map(hanger => hanger?.number ?? -1)
 }
 
-describe('startRun', () => {
-  it('занимает четыре ванны прогноза и ванну схода', () => {
+/** Где в этом снимке прогона стоит подвес с таким номером. */
+function where(state: RunState, number: number): number {
+  const found = state.baths.findIndex(queue => queue.some(hanger => hanger.number === number))
+  expect(found, `подвес ${number} не найден на линии`).toBeGreaterThanOrEqual(0)
+  return LINE_BATHS[found]
+}
+
+describe('старт прогона', () => {
+  it('занимает все ванны линии, в каждой по HANGERS_PER_BATH подвесов', () => {
     const state = started()
 
-    expect(state.inBaths).toHaveLength(FORECAST_BATHS.length)
-    expect(state.atExit).not.toBeNull()
+    expect(state.baths).toHaveLength(LINE_BATHS.length)
+    expect(state.baths.map(queue => queue.length)).toEqual(Array(LINE_BATHS.length).fill(HANGERS_PER_BATH))
   })
 
-  it('в каждой ванне полный остаток: линия только что встала', () => {
+  it('карточки ванн стоят лесенкой: 5, 10, 15, 20 секунд, ванна схода — 5', () => {
     const state = started()
 
-    expect(state.inBaths.map(hanger => hanger.remainingTime)).toEqual([20, 20, 20, 20])
-    expect(state.atExit?.remainingTime).toBe(20)
+    expect(cardHangers(state).map(hanger => hanger?.remainingTime))
+      .toEqual([ENTRY_INTERVAL_SECONDS, ENTRY_INTERVAL_SECONDS * 2, ENTRY_INTERVAL_SECONDS * 3, DWELL_SECONDS, ENTRY_INTERVAL_SECONDS])
   })
 
   it('номера вдоль линии растут: кто встал раньше, тот дальше и сойдёт первым', () => {
     const state = started()
 
-    expect(state.inBaths.map(hanger => hanger.number)).toEqual([5, 4, 3, 2])
-    expect(state.atExit?.number).toBe(1)
-    expect(state.inBaths.every(hanger => PALETTE.includes(hanger.row.color))).toBe(true)
+    const numbers = lineNumbers(state)
+    const onLine = state.baths.flat().map(hanger => hanger.number)
+
+    expect(numbers).toEqual([...numbers].sort((a, b) => b - a))
+    expect(numbers[numbers.length - 1]).toBe(Math.min(...onLine))
+    expect(cardHangers(state).every(hanger => hanger && PALETTE.includes(hanger.row.color))).toBe(true)
   })
 
-  it('очередь загрузки сохраняет время витрины, а на линии время прогона', () => {
+  it('подвесы карточек — разный стаж: у ванны 33 подвес встал на линию минуту назад', () => {
     const state = started()
 
+    expect(cardHangers(state).map(hanger => hanger?.row.time)).toEqual([
+      formatLocalized(at(-15), 'ru-RU'),
+      formatLocalized(at(-30), 'ru-RU'),
+      formatLocalized(at(-45), 'ru-RU'),
+      formatLocalized(at(-60), 'ru-RU'),
+      formatLocalized(at(-95), 'ru-RU'),
+    ])
+  })
+
+  it('очередь загрузка продолжает круг: из круга ушло ровно столько подвесов, сколько стоит на линии', () => {
+    const state = started()
+
+    expect(state.cursor).toBe(LINE_BATHS.length * HANGERS_PER_BATH)
+    expect(state.nextNumber).toBe(POOL.length + 1)
     expect(waitingRows(state, 6).every(row => row.time === '12:00:00')).toBe(true)
-    expect(lineNumbers(state).length).toBe(FORECAST_BATHS.length + 1)
-    expect([...state.inBaths, state.atExit!].every(hanger => hanger.row.time === formatLocalized(NOW, 'ru-RU'))).toBe(true)
   })
 
-  it('подвес, вставший в ванну 30 позже, встал на линию позже того, кто стоит в ванне 34', () => {
-    const state = tick(started(), DWELL_SECONDS)
-
-    expect(state.inBaths[0].row.time > state.atExit!.row.time).toBe(true)
-  })
-
-  it('круг короче блока ванн: линия всё равно заполнена целиком', () => {
+  it('круг короче линии: линия всё равно заполнена, номера на ней не повторяются', () => {
     const state = startRun(POOL.slice(0, 3), NOW, seededRandom(7))
+    const numbers = state.baths.flat().map(hanger => hanger.number)
 
-    expect(state.inBaths).toHaveLength(FORECAST_BATHS.length)
-    expect(state.atExit).not.toBeNull()
-    // Номера на линии не повторяются, даже когда профилей меньше, чем ванн.
-    expect(new Set(lineNumbers(state)).size).toBe(FORECAST_BATHS.length + 1)
+    expect(state.baths.map(queue => queue.length)).toEqual(Array(LINE_BATHS.length).fill(HANGERS_PER_BATH))
+    expect(new Set(numbers).size).toBe(numbers.length)
+    expect(state.nextNumber).toBeGreaterThan(3)
   })
 
   it('пустой витрине нечего запускать', () => {
@@ -131,117 +152,146 @@ describe('очередь загрузки', () => {
   it('свежие строки сверху, по убыванию номера — как в книге учёта', () => {
     const numbers = waitingRows(started(), 6).map(row => Number(row.number))
 
-    expect(numbers).toEqual([11, 10, 9, 8, 7, 6])
+    expect(numbers).toEqual([26, 25, 24, 23, 22, 21])
     expect(numbers).toEqual([...numbers].sort((a, b) => b - a))
   })
 
-  it('окно держит размер, пока подвесы уходят с линии', () => {
+  it('теряет по одной строке каждые ENTRY_INTERVAL_SECONDS', () => {
     const start = started()
 
-    const state = tick(start, DWELL_SECONDS)
+    const state = tick(start, ENTRY_INTERVAL_SECONDS * 3)
 
+    expect(state.cursor).toBe(start.cursor + 3)
     expect(waitingRows(state, 6)).toHaveLength(6)
-    expect(state.cursor).toBe(start.cursor + 1)
   })
 
   it('строка, ушедшая на линию, больше не стоит в окне загрузки', () => {
     const start = started()
     const leaving = Number(waitingRows(start, 1)[0].number)
 
-    const state = tick(start, DWELL_SECONDS)
+    const state = tick(start, ENTRY_INTERVAL_SECONDS)
 
     expect(waitingRows(state, 6).some(row => Number(row.number) === leaving)).toBe(false)
-    expect(state.inBaths[0].number).toBe(leaving)
+    expect(state.baths[0][state.baths[0].length - 1]?.number).toBe(leaving)
   })
 })
 
-describe('advanceRun', () => {
-  it('подвес лежит в ванне все 20 секунд и уходит только на двадцатой', () => {
-    const held = tick(started(), DWELL_SECONDS - 1)
-    const gone = tick(started(), DWELL_SECONDS)
+describe('темп прогона', () => {
+  it('выгрузка получает ровно один подвес каждые ENTRY_INTERVAL_SECONDS', () => {
+    let state = started()
+    const exitsPerTick: number[] = []
 
-    expect(held.unloaded).toEqual([])
-    expect(gone.unloaded).toHaveLength(1)
+    for (let second = 1; second <= ENTRY_INTERVAL_SECONDS * 6; second += 1) {
+      const before = state.unloaded.length
+      state = advanceRun(state, at(second), 100, seededRandom(7))
+      exitsPerTick.push(state.unloaded.length - before)
+    }
+
+    expect(exitsPerTick).toEqual(Array.from({ length: ENTRY_INTERVAL_SECONDS * 6 }, (_, index) => (index + 1) % ENTRY_INTERVAL_SECONDS === 0 ? 1 : 0))
   })
 
-  it('с линии уходит подвес раз в 20 секунд, а не каждый тик', () => {
-    expect(tick(started(), DWELL_SECONDS - 1).unloaded).toHaveLength(0)
-    expect(tick(started(), DWELL_SECONDS).unloaded).toHaveLength(1)
-    expect(tick(started(), DWELL_SECONDS * 2).unloaded).toHaveLength(2)
-  })
-
-  it('подвес идёт по ваннам подряд: из 33 в ванну схода, а не прыгает', () => {
+  it('подвес лежит в ванне все 20 секунд и уходит из неё только на двадцатой', () => {
     const start = started()
-    const atControlBath = start.atExit!.number
-    const atBath33 = start.inBaths[FORECAST_BATHS.length - 1].number
+    const watched = start.baths[FORECAST_BATHS.length - 1][HANGERS_PER_BATH - 1].number
 
-    const state = tick(start, DWELL_SECONDS)
+    let state = start
+    const trace: [number, number][] = []
+    for (let second = 1; second <= DWELL_SECONDS + 1; second += 1) {
+      state = advanceRun(state, at(second), 15, seededRandom(7))
+      const bathIndex = state.baths.findIndex(queue => queue.some(hanger => hanger.number === watched))
+      const hanger = bathIndex < 0 ? null : state.baths[bathIndex].find(item => item.number === watched) ?? null
+      trace.push(hanger ? [LINE_BATHS[bathIndex], hanger.remainingTime] : [-1, -1])
+    }
 
-    expect(state.unloaded.map(row => Number(row.number))).toEqual([atControlBath])
-    expect(state.atExit?.number).toBe(atBath33)
-  })
-
-  it('в ванну 30 встаёт следующий из очереди, а ванны сдвигаются вперёд', () => {
-    const start = started()
-    const before = start.inBaths.map(hanger => hanger.number)
-    const queued = Number(waitingRows(start, 1)[0].number)
-
-    const state = tick(start, DWELL_SECONDS)
-
-    expect(state.inBaths.map(hanger => hanger.number)).toEqual([queued, ...before.slice(0, 3)])
-  })
-
-  it('выгруженный подвес сохраняет профиль и цвет строки каталога', () => {
-    const start = started()
-    const state = tick(start, DWELL_SECONDS)
-
-    expect(state.unloaded[0].profile).toBe(start.atExit!.row.profile)
-    expect(state.unloaded[0].color).toBe(start.atExit!.row.color)
+    // Двадцать секунд в ванне 33 с остатком 19…1 и только на двадцатой —
+    // переход в ванну схода с полным остатком.
+    expect(trace).toEqual([
+      ...Array.from({ length: DWELL_SECONDS - 1 }, (_, index) => [33, DWELL_SECONDS - 1 - index]),
+      [CONTROL_BATH, DWELL_SECONDS],
+      [CONTROL_BATH, DWELL_SECONDS - 1],
+    ])
   })
 
   it('ни одна ванна не пустует между подвесами даже на коротком круге', () => {
     let state = startRun(POOL.slice(0, 3), NOW, seededRandom(7))
     const snapshots: number[][] = []
 
-    for (let second = 1; second <= DWELL_SECONDS * 2; second += 1) {
+    for (let second = 1; second <= DWELL_SECONDS * 3; second += 1) {
       state = advanceRun(state, at(second), 15, seededRandom(7))
-      snapshots.push(lineNumbers(state))
+      snapshots.push(state.baths.map(queue => queue.length))
     }
 
-    // В каждом снимке ровно по подвесу на ванну: 30, 31, 32, 33 и 34.
-    expect(snapshots.every(bathNumbers => bathNumbers.length === FORECAST_BATHS.length + 1)).toBe(true)
+    expect(snapshots.every(occupancy => occupancy.every(count => count === HANGERS_PER_BATH))).toBe(true)
+  })
+
+  it('подвес идёт по ваннам подряд: из 33 в ванну схода, а не прыгает', () => {
+    const start = started()
+    const atBath33 = start.baths[FORECAST_BATHS.length - 1][0].number
+    const atControlBath = start.baths[LINE_BATHS.length - 1][0].number
+
+    const state = tick(start, ENTRY_INTERVAL_SECONDS)
+
+    expect(state.unloaded.map(row => Number(row.number))).toEqual([atControlBath])
+    expect(where(state, atBath33)).toBe(CONTROL_BATH)
+  })
+
+  it('ванны поворачиваются вместе: ушедшие встают в следующую ванну, встающие — с полным остатком', () => {
+    const start = started()
+    const headOfBath32 = start.baths[2][0].number
+
+    const state = tick(start, ENTRY_INTERVAL_SECONDS)
+
+    expect(state.baths[3][state.baths[3].length - 1].number).toBe(headOfBath32)
+    expect(state.baths.map(queue => queue[queue.length - 1].remainingTime))
+      .toEqual(Array(LINE_BATHS.length).fill(DWELL_SECONDS))
+  })
+
+  it('выгруженный подвес сохраняет профиль и цвет строки каталога', () => {
+    const start = started()
+    const leaving = start.baths[LINE_BATHS.length - 1][0]
+
+    const state = tick(start, ENTRY_INTERVAL_SECONDS)
+
+    expect(state.unloaded[0].profile).toBe(leaving.row.profile)
+    expect(state.unloaded[0].color).toBe(leaving.row.color)
+  })
+
+  it('время выгрузки — момент ухода, время входа на линию — когда подвес встал', () => {
+    const start = started()
+    const entryTime = start.baths[LINE_BATHS.length - 1][0].row.time
+
+    const state = tick(start, ENTRY_INTERVAL_SECONDS)
+
+    expect(state.unloaded[0].entry_time).toBe(entryTime)
+    expect(state.unloaded[0].exit_time).toBe(formatLocalized(at(ENTRY_INTERVAL_SECONDS), 'ru-RU'))
+    expect(state.unloaded[0].time).toBe(formatLocalized(at(ENTRY_INTERVAL_SECONDS), 'ru-RU'))
+    expect(state.unloaded[0].entry_date).toBe('29.09.26')
+    expect(state.unloaded[0].exit_date).toBe('29.09.26')
   })
 
   it('выгрузка читается свежими сверху, по убыванию номера', () => {
-    const state = tick(started(), DWELL_SECONDS * 3)
+    const state = tick(started(), ENTRY_INTERVAL_SECONDS * 3)
     const numbers = state.unloaded.map(row => Number(row.number))
 
     expect(numbers).toEqual([3, 2, 1])
   })
 
-  it('время выгрузки — момент ухода, время входа на линию — когда встал', () => {
-    const start = started()
-    const entryTime = start.atExit!.row.time
-
-    const state = tick(start, DWELL_SECONDS)
-
-    expect(state.unloaded[0].entry_time).toBe(entryTime)
-    expect(state.unloaded[0].exit_time).toBe(formatLocalized(at(DWELL_SECONDS), 'ru-RU'))
-    expect(state.unloaded[0].time).toBe(formatLocalized(at(DWELL_SECONDS), 'ru-RU'))
-    expect(state.unloaded[0].entry_date).toBe('29.09.26')
-    expect(state.unloaded[0].exit_date).toBe('29.09.26')
-  })
-
   it('выгрузку режет потолок из аргумента, а не константа', () => {
-    const state = tick(started(), DWELL_SECONDS * 4, 3)
+    const state = tick(started(), ENTRY_INTERVAL_SECONDS * 4, 3)
 
     expect(state.unloaded).toHaveLength(3)
     expect(state.unloaded.map(row => Number(row.number))).toEqual([4, 3, 2])
   })
 
+  it('без строк прогон не падает', () => {
+    expect(advanceRun(emptyRun(), NOW, 15, seededRandom(7))).toEqual(emptyRun())
+  })
+})
+
+describe('круг профилей', () => {
   it('после круга в очереди те же профили, но в другом порядке', () => {
     const start = started()
-    const state = tick(start, DWELL_SECONDS * POOL.length)
+    const state = tick(start, ENTRY_INTERVAL_SECONDS * POOL.length)
 
     expect(state.pool.map(item => item.profile)).not.toEqual(start.pool.map(item => item.profile))
     expect(state.pool.map(item => item.profile).sort()).toEqual(start.pool.map(item => item.profile).sort())
@@ -251,7 +301,7 @@ describe('advanceRun', () => {
     const start = started()
     const beforeLap = start.pool.map(row => Number(row.number))
 
-    const state = tick(start, DWELL_SECONDS * POOL.length)
+    const state = tick(start, ENTRY_INTERVAL_SECONDS * POOL.length)
     const afterLap = state.pool.map(row => Number(row.number))
     const firstNumber = Math.min(...afterLap)
 
@@ -261,12 +311,21 @@ describe('advanceRun', () => {
   })
 
   it('нумерация подвесов сквозная: круг не начинает счёт заново', () => {
-    const state = tick(started(), DWELL_SECONDS * POOL.length)
+    const state = tick(started(), ENTRY_INTERVAL_SECONDS * POOL.length)
 
     expect(state.nextNumber).toBeGreaterThan(POOL.length)
   })
 
-  it('без строк прогон не падает', () => {
-    expect(advanceRun(emptyRun(), NOW, 15, seededRandom(7))).toEqual(emptyRun())
+  it('короткий круг не роняет прогон: номера на линии остаются разными', () => {
+    let state = startRun(POOL.slice(0, 3), NOW, seededRandom(7))
+
+    for (let second = 1; second <= ENTRY_INTERVAL_SECONDS * 40; second += 1) {
+      state = advanceRun(state, at(second), 15, seededRandom(7))
+    }
+
+    const numbers = state.baths.flat().map(hanger => hanger.number)
+
+    expect(new Set(numbers).size).toBe(numbers.length)
+    expect(state.unloaded.length).toBeGreaterThan(0)
   })
 })
