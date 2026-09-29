@@ -1054,8 +1054,12 @@ function FiltersPanel({
   testMode: TestMode | null
   testError: string | null
 }) {
-  // В режимах витрины фильтры остаются живыми: окно загрузки и выгрузки берётся из них.
+  // В режиме симуляции фильтры остаются живыми: окно загрузки и выгрузки
+  // берётся из них. В режимах «Все профили» и «Все цвета» витрина показывает
+  // весь круг, поэтому потолок «Загрузка» к нему не относится и число гасится;
+  // галка остаётся живой — она включает и выключает саму таблицу.
   const otherFiltersDisabled = isLast100Mode;
+  const loadingLimitDisabled = otherFiltersDisabled || testMode === 'catalog' || testMode === 'colors';
 
   return (
     <Card>
@@ -1089,7 +1093,7 @@ function FiltersPanel({
                 className="w-12 h-7 text-center text-xs px-1"
                 min={1}
                 max={500}
-                disabled={otherFiltersDisabled}
+                disabled={loadingLimitDisabled}
               />
             </div>
 
@@ -1589,15 +1593,15 @@ export default function Dashboard() {
     [testMode, run, filters.loadingLimit],
   )
 
-  // Таблица загрузки: в симуляции — окно очереди прогона, в «Все цвета» — вся
-  // палитра (режим и есть палитра), в «Все профили» — витрина под потолок
-  // «Загрузка», иначе она льёт в таблицу весь каталог.
+  // Таблица загрузки: в симуляции — окно очереди прогона, в «Все профили» и
+  // «Все цвета» — весь круг витрины. Потолок «Загрузка» к витрине не
+  // относится: назначение этих кнопок — показать всё, иначе половина
+  // справочника не попадает на экран.
   const loadingRows = useMemo(() => {
     if (testMode === 'sim') return simLoadingRows
-    if (testMode === 'colors') return testRows
-    if (testMode) return testRows.slice(0, filters.loadingLimit)
+    if (testMode) return testRows
     return data?.products ?? []
-  }, [testMode, simLoadingRows, testRows, filters.loadingLimit, data?.products])
+  }, [testMode, simLoadingRows, testRows, data?.products])
 
   // Подвесы, стоящие на ваннах, — все, кто сейчас на линии, а не по одному от
   // карточки прогноза: боковая очередь это хвост книги учёта, и пропуск между
