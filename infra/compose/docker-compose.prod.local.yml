@@ -36,5 +36,7 @@ services:
         mount -t cifs "//172.17.11.7/Оператор" /app/excel
         -o guest,ro,iocharset=utf8,file_mode=0444,dir_mode=0555 &&
         echo "smb://172.17.11.7/Оператор -> /app/excel" &&
+        test -n "$$(ls -A /app/excel)" &&
+        echo "[start] /app/excel примонтирован" &&
         alembic upgrade head &&
         exec uvicorn app.main:app --host 0.0.0.0 --port 8000

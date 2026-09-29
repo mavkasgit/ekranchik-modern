@@ -1,0 +1,4 @@
+# Скрипты запускаются на Linux-сервере: CRLF ломает и shebang, и `set -e`
+# (в `\r`-окончании строка `set -e\r` не выполняется). Windows-checkout с
+# core.autocrlf=true иначе выкатит их с CRLF.
+*.sh text eol=lf

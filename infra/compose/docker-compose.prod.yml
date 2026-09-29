@@ -34,6 +34,22 @@ services:
       # (путь `/app/excel/…` в контейнере против UNC-пути на dev-хосте).
       - EXCEL_ACTIVE_FILE_NAME=active_excel_prod.json
       - TZ=Europe/Moscow
+    # Пустой /app/excel = bind-mount сетевого диска не смонтирован: Docker сам
+    # создаёт каталог-источник, и бэкенд стартовал бы с пустым каталогом книги
+    # («Файл не найден» при живой книге). Проверка стоит до alembic/uvicorn, и
+    # при пустом каталоге контейнер завершается с кодом 1 — вместо тихой
+    # пустоты. Диск, поднятый после старта, лечится следующим перезапуском
+    # (`restart: always`).
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        test -n "$$(ls -A /app/excel 2>/dev/null)" ||
+        { echo "[start] /app/excel пуст: сетевой диск не смонтирован." >&2;
+        echo "[start] Linux: infra/mount_and_start.sh; Windows: infra/compose/docker-compose.prod.local.yml." >&2;
+        exit 1; };
+        alembic upgrade head &&
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000
     expose:
       - "8000"
     volumes:
@@ -50,7 +66,13 @@ services:
         max-size: "20m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      # Кроме /health проверяется диск: если шара отвалится на ходу, контейнер
+      # станет unhealthy — это видно в `docker ps` и в deploy_prod.sh.
+      test:
+        - CMD-SHELL
+        - >-
+          curl -f http://localhost:8000/health > /dev/null &&
+          test -n "$$(ls -A /app/excel 2>/dev/null)" || exit 1
       interval: 30s
       timeout: 10s
       retries: 3
