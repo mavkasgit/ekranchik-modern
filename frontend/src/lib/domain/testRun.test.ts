@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   DWELL_SECONDS,
   FORECAST_BATHS,
-  LAUNCH_WINDOW,
   advanceRun,
   emptyRun,
   startRun,
@@ -21,7 +20,7 @@ const PALETTE = [
 function catalogRow(index: number): HangerData {
   return {
     number: `cat-${index}`,
-    date: '28.09.2026',
+    date: '29.09.26',
     time: '12:00:00',
     client: 'Тест Каталога',
     profile: `1010${index}`,
@@ -64,6 +63,11 @@ function started(random = seededRandom(7)): RunState {
   return startRun(POOL, NOW, random)
 }
 
+/** Подвесы, стоящие на ваннах: от ванны 30 к ванне схода. */
+function lineNumbers(state: RunState): number[] {
+  return [...state.inBaths.map(hanger => hanger.number), ...(state.atExit ? [state.atExit.number] : [])]
+}
+
 describe('startRun', () => {
   it('занимает четыре ванны прогноза и ванну схода', () => {
     const state = started()
@@ -79,19 +83,20 @@ describe('startRun', () => {
     expect(state.atExit?.remainingTime).toBe(20)
   })
 
-  it('очередь загрузки сохраняет время витрины, а на линии время своё', () => {
-    const start = started()
-
-    expect(waitingRows(start, 6).every(row => row.time === '12:00:00')).toBe(true)
-    expect(start.launched.every(row => row.time !== '12:00:00')).toBe(true)
-  })
-
-  it('запускает подвесы по порядку очереди, в ванну 34 — того, кто сойдёт первым', () => {
+  it('номера вдоль линии растут: кто встал раньше, тот дальше и сойдёт первым', () => {
     const state = started()
 
-    expect(state.inBaths.map(hanger => hanger.number)).toEqual([1, 2, 3, 4])
-    expect(state.atExit?.number).toBe(5)
+    expect(state.inBaths.map(hanger => hanger.number)).toEqual([5, 4, 3, 2])
+    expect(state.atExit?.number).toBe(1)
     expect(state.inBaths.every(hanger => PALETTE.includes(hanger.row.color))).toBe(true)
+  })
+
+  it('очередь загрузки сохраняет время витрины, а на линии время прогона', () => {
+    const state = started()
+
+    expect(waitingRows(state, 6).every(row => row.time === '12:00:00')).toBe(true)
+    expect(lineNumbers(state).length).toBe(FORECAST_BATHS.length + 1)
+    expect([...state.inBaths, state.atExit!].every(hanger => hanger.row.time === formatLocalized(NOW, 'ru-RU'))).toBe(true)
   })
 
   it('подвес, вставший в ванну 30 позже, встал на линию позже того, кто стоит в ванне 34', () => {
@@ -100,21 +105,13 @@ describe('startRun', () => {
     expect(state.inBaths[0].row.time > state.atExit!.row.time).toBe(true)
   })
 
-  it('кладёт в боковую очередь запущенные подвесы, новые сверху', () => {
-    const state = started()
-
-    expect(state.launched.map(row => Number(row.number))).toEqual([5, 4, 3, 2, 1])
-    expect(state.unloaded).toEqual([])
-  })
-
   it('круг короче блока ванн: линия всё равно заполнена целиком', () => {
     const state = startRun(POOL.slice(0, 3), NOW, seededRandom(7))
 
     expect(state.inBaths).toHaveLength(FORECAST_BATHS.length)
     expect(state.atExit).not.toBeNull()
     // Номера на линии не повторяются, даже когда профилей меньше, чем ванн.
-    const onLine = [...state.inBaths.map(hanger => hanger.number), state.atExit!.number]
-    expect(new Set(onLine).size).toBe(FORECAST_BATHS.length + 1)
+    expect(new Set(lineNumbers(state)).size).toBe(FORECAST_BATHS.length + 1)
   })
 
   it('пустой витрине нечего запускать', () => {
@@ -131,6 +128,13 @@ describe('очередь загрузки', () => {
     expect(state.pool).toHaveLength(POOL.length)
   })
 
+  it('свежие строки сверху, по убыванию номера — как в книге учёта', () => {
+    const numbers = waitingRows(started(), 6).map(row => Number(row.number))
+
+    expect(numbers).toEqual([11, 10, 9, 8, 7, 6])
+    expect(numbers).toEqual([...numbers].sort((a, b) => b - a))
+  })
+
   it('окно держит размер, пока подвесы уходят с линии', () => {
     const start = started()
 
@@ -142,50 +146,49 @@ describe('очередь загрузки', () => {
 
   it('строка, ушедшая на линию, больше не стоит в окне загрузки', () => {
     const start = started()
-    const leaving = waitingRows(start, 1)[0].number
+    const leaving = Number(waitingRows(start, 1)[0].number)
 
     const state = tick(start, DWELL_SECONDS)
 
-    expect(waitingRows(state, 6).some(row => row.number === leaving)).toBe(false)
-    expect(state.launched.some(row => row.number === leaving)).toBe(true)
+    expect(waitingRows(state, 6).some(row => Number(row.number) === leaving)).toBe(false)
+    expect(state.inBaths[0].number).toBe(leaving)
   })
 })
 
 describe('advanceRun', () => {
   it('подвес лежит в ванне все 20 секунд и уходит только на двадцатой', () => {
-    const start = started()
-    const held = tick(start, DWELL_SECONDS - 1)
-    const gone = tick(start, DWELL_SECONDS)
+    const held = tick(started(), DWELL_SECONDS - 1)
+    const gone = tick(started(), DWELL_SECONDS)
 
     expect(held.unloaded).toEqual([])
     expect(gone.unloaded).toHaveLength(1)
   })
 
-  it('с линии уходит один подвес раз в 20 секунд, а не каждый тик', () => {
+  it('с линии уходит подвес раз в 20 секунд, а не каждый тик', () => {
     expect(tick(started(), DWELL_SECONDS - 1).unloaded).toHaveLength(0)
     expect(tick(started(), DWELL_SECONDS).unloaded).toHaveLength(1)
     expect(tick(started(), DWELL_SECONDS * 2).unloaded).toHaveLength(2)
   })
 
-  it('подвес идёт по ваннам подряд, а не прыгает', () => {
+  it('подвес идёт по ваннам подряд: из 33 в ванну схода, а не прыгает', () => {
     const start = started()
-    const exitNumber = start.atExit!.number
-    const bath33Number = start.inBaths[FORECAST_BATHS.length - 1].number
+    const atControlBath = start.atExit!.number
+    const atBath33 = start.inBaths[FORECAST_BATHS.length - 1].number
 
     const state = tick(start, DWELL_SECONDS)
 
-    expect(state.unloaded.map(row => Number(row.number))).toEqual([exitNumber])
-    expect(state.atExit?.number).toBe(bath33Number)
+    expect(state.unloaded.map(row => Number(row.number))).toEqual([atControlBath])
+    expect(state.atExit?.number).toBe(atBath33)
   })
 
   it('в ванну 30 встаёт следующий из очереди, а ванны сдвигаются вперёд', () => {
     const start = started()
     const before = start.inBaths.map(hanger => hanger.number)
-    const queued = waitingRows(start, 1)[0].number
+    const queued = Number(waitingRows(start, 1)[0].number)
 
     const state = tick(start, DWELL_SECONDS)
 
-    expect(state.inBaths.map(hanger => hanger.number)).toEqual([Number(queued), ...before.slice(0, 3)])
+    expect(state.inBaths.map(hanger => hanger.number)).toEqual([queued, ...before.slice(0, 3)])
   })
 
   it('выгруженный подвес сохраняет профиль и цвет строки каталога', () => {
@@ -197,17 +200,23 @@ describe('advanceRun', () => {
   })
 
   it('ни одна ванна не пустует между подвесами даже на коротком круге', () => {
-    const shortCircle = startRun(POOL.slice(0, 3), NOW, seededRandom(7))
-    let state = shortCircle
+    let state = startRun(POOL.slice(0, 3), NOW, seededRandom(7))
     const snapshots: number[][] = []
 
     for (let second = 1; second <= DWELL_SECONDS * 2; second += 1) {
       state = advanceRun(state, at(second), 15, seededRandom(7))
-      snapshots.push([...state.inBaths.map(hanger => hanger.number), ...(state.atExit ? [state.atExit.number] : [])])
+      snapshots.push(lineNumbers(state))
     }
 
     // В каждом снимке ровно по подвесу на ванну: 30, 31, 32, 33 и 34.
     expect(snapshots.every(bathNumbers => bathNumbers.length === FORECAST_BATHS.length + 1)).toBe(true)
+  })
+
+  it('выгрузка читается свежими сверху, по убыванию номера', () => {
+    const state = tick(started(), DWELL_SECONDS * 3)
+    const numbers = state.unloaded.map(row => Number(row.number))
+
+    expect(numbers).toEqual([3, 2, 1])
   })
 
   it('время выгрузки — момент ухода, время входа на линию — когда встал', () => {
@@ -219,24 +228,15 @@ describe('advanceRun', () => {
     expect(state.unloaded[0].entry_time).toBe(entryTime)
     expect(state.unloaded[0].exit_time).toBe(formatLocalized(at(DWELL_SECONDS), 'ru-RU'))
     expect(state.unloaded[0].time).toBe(formatLocalized(at(DWELL_SECONDS), 'ru-RU'))
-    expect(state.unloaded[0].entry_date).toBe('28.09.2026')
-    expect(state.unloaded[0].exit_date).toBe('28.09.2026')
+    expect(state.unloaded[0].entry_date).toBe('29.09.26')
+    expect(state.unloaded[0].exit_date).toBe('29.09.26')
   })
 
   it('выгрузку режет потолок из аргумента, а не константа', () => {
     const state = tick(started(), DWELL_SECONDS * 4, 3)
 
     expect(state.unloaded).toHaveLength(3)
-    // Новые сверху: последний сошедший подвес стоит первой строкой.
-    expect(state.unloaded.map(row => Number(row.number))).toEqual([2, 3, 4])
-  })
-
-  it('в боковой очереди последние запущенные подвесы, новые сверху', () => {
-    const state = tick(started(), DWELL_SECONDS * LAUNCH_WINDOW)
-    const numbers = state.launched.map(row => Number(row.number))
-
-    expect(state.launched).toHaveLength(LAUNCH_WINDOW)
-    expect(numbers).toEqual([...numbers].sort((a, b) => b - a))
+    expect(state.unloaded.map(row => Number(row.number))).toEqual([4, 3, 2])
   })
 
   it('после круга в очереди те же профили, но в другом порядке', () => {

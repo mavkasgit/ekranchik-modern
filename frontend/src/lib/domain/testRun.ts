@@ -3,10 +3,11 @@
 // что отсюда пришло.
 //
 // Поведение повторяет линию: подвес входит в ванну 30 из очереди загрузки,
-// проходит 31, 32, 33 и сходит с линии через ванну 34. Очередь отдаёт ровно
-// столько подвесов, сколько уходит с линии, — по одному раз в 20 секунд.
+// проходит 31, 32, 33 и сходит с линии через ванну 34. Номера вдоль маршрута
+// растут, как в книге учёта: кто встал раньше, тот дальше по линии и сойдёт
+// первым. Очередь и таблицы показывают строки свежими сверху, по убыванию
+// номера, — так же, как на линии.
 
-import { SIDEBAR_ROW_LIMIT } from '@/config/limits'
 import { formatLocalized } from '@/lib/domain/time'
 import type { HangerData } from '@/types/dashboard'
 
@@ -18,9 +19,6 @@ export const CONTROL_BATH = 34
 
 /** Сколько подвес лежит в ванне до перехода в следующую. */
 export const DWELL_SECONDS = 20
-
-/** Строк в боковой очереди прогона: столько же, сколько тянет живая очередь. */
-export const LAUNCH_WINDOW = SIDEBAR_ROW_LIMIT
 
 export interface RunHanger {
   /** Сквозной номер подвеса: с 1 до сброса прогона. */
@@ -36,9 +34,7 @@ export interface RunState {
   inBaths: RunHanger[]
   /** Подвес в ванне схода: он следующий сойдёт с линии. */
   atExit: RunHanger | null
-  /** Запущенные подвесы для боковой очереди: новые сверху. */
-  launched: HangerData[]
-  /** Выгруженные подвесы: новые сверху. */
+  /** Выгруженные подвесы: свежие сверху, по убыванию номера. */
   unloaded: HangerData[]
   /** Круг профилей: очередь загрузки и источник номеров на следующий круг. */
   pool: HangerData[]
@@ -49,7 +45,7 @@ export interface RunState {
 }
 
 export function emptyRun(): RunState {
-  return { inBaths: [], atExit: null, launched: [], unloaded: [], pool: [], cursor: 0, nextNumber: 1 }
+  return { inBaths: [], atExit: null, unloaded: [], pool: [], cursor: 0, nextNumber: 1 }
 }
 
 function shuffle<T>(items: T[], random: () => number): T[] {
@@ -91,8 +87,9 @@ function renumberPool(rows: HangerData[], firstNumber: number): HangerData[] {
 }
 
 /**
- * Старт прогона: круг перемешан и пронумерован, первые подвесы разведены по ваннам.
- * В ванну 30 встаёт самый свежий, в ванну 34 — тот, кто сойдёт с линии первым.
+ * Старт прогона: круг перемешан и пронумерован, первые подвесы разведены по
+ * ваннам. Первый подвес из круга встаёт дальше всех по маршруту — в ванну
+ * схода, — поэтому номера вдоль линии растут и сходятся по порядку.
  */
 export function startRun(rows: HangerData[], now: Date, random: () => number = Math.random): RunState {
   if (rows.length === 0) return emptyRun()
@@ -118,25 +115,29 @@ export function startRun(rows: HangerData[], now: Date, random: () => number = M
   }
 
   const inBaths: RunHanger[] = []
-  const launched: HangerData[] = []
   let atExit: RunHanger | null = null
 
-  for (let index = 0; index < FORECAST_BATHS.length + 1; index += 1) {
+  for (let step = 0; step < FORECAST_BATHS.length + 1; step += 1) {
     const hanger = takeNext()
-    if (index === FORECAST_BATHS.length) {
+    // Шаг 0 — самая дальняя ванна, шаг 4 — ванна 30: номера вдоль маршрута растут.
+    const slot = FORECAST_BATHS.length - step
+    if (slot === FORECAST_BATHS.length) {
       atExit = hanger
     } else {
-      inBaths[index] = hanger
+      inBaths[slot] = hanger
     }
-    launched.unshift(hanger.row)
   }
 
-  return { inBaths, atExit, launched, unloaded: [], pool, cursor, nextNumber }
+  return { inBaths, atExit, unloaded: [], pool, cursor, nextNumber }
 }
 
-/** Очередь загрузки: столько строк, сколько оператор видит в таблице загрузки. */
+/**
+ * Очередь загрузки: столько строк, сколько оператор видит в таблице загрузки.
+ * Свежие строки сверху, то есть по убыванию номера подвеса: книга учёта
+ * дописывается сверху, и на линии так же — сверху последняя заведённая.
+ */
 export function waitingRows(state: RunState, limit: number): HangerData[] {
-  return state.pool.slice(state.cursor, state.cursor + Math.max(0, limit))
+  return state.pool.slice(state.cursor, state.cursor + Math.max(0, limit)).reverse()
 }
 
 /**
@@ -168,7 +169,6 @@ export function advanceRun(
   let cursor = state.cursor
   let nextNumber = state.nextNumber
 
-  /** Следующий подвес из круга: круг исчерпан — перемешиваем и нумеруем заново. */
   const takeNext = (): RunHanger => {
     if (cursor >= pool.length) {
       pool = renumberPool(shuffle(pool, random), nextNumber)
@@ -182,15 +182,15 @@ export function advanceRun(
 
   // Подвесы сдвигаются на ванну вперёд, освободившуюся ванну 30 занимает новый.
   const carried = block.slice(0, -1).map(hanger => ({ ...hanger, remainingTime: DWELL_SECONDS }))
-  const arrived = takeNext()
-  const inBaths = [arrived, ...carried]
+  const inBaths = [takeNext(), ...carried]
   const atExit = { ...block[block.length - 1], remainingTime: DWELL_SECONDS }
   const unloadedNow = state.atExit ? [state.atExit] : []
 
   return {
     inBaths,
     atExit,
-    launched: [arrived.row, ...state.launched].slice(0, LAUNCH_WINDOW),
+    // Свежая строка сверху, прежние остаются под ней: по убыванию номера, как
+    // на линии, где книга дописывается сверху.
     unloaded: [...unloadedNow.map(hanger => toUnloadedRow(hanger, now)), ...state.unloaded]
       .slice(0, Math.max(0, unloadLimit)),
     pool,

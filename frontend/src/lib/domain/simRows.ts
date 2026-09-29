@@ -37,7 +37,9 @@ function toRow(profile: Profile, color: string, number: number, now: Date): Hang
     // время переставит прогон, когда подвес действительно встанет в ванну,
     // в витринных режимах остаются те, что проставлены здесь.
     number: String(number),
-    date: now.toLocaleDateString('ru-RU'),
+    // Дата выводится как есть, без форматирования: на линии в таблице загрузки
+    // стоит двухзначный год, как в книге учёта.
+    date: new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' }).format(now),
     time: formatLocalized(now, 'ru-RU'),
     client: TEST_CLIENT,
     profile: profile.name,
