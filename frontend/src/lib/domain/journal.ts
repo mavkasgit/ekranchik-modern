@@ -196,6 +196,21 @@ function stamp(iso: string): string {
 }
 
 /**
+ * Дата и время строки книги одной ISO-меткой: ``29.09.2026`` и ``18:31``
+ * складываются в ``2026-09-29T18:31``.
+ *
+ * Двузначный год разворачивается в 2000-е — книгу ведут в этом веке, и
+ * ``69 → 2069`` оператор бы увидел как ошибку записи.
+ */
+function joinBookDateTime(date: string | null | undefined, time: string | null | undefined): string | null {
+  if (!date || !time) return null
+  const parsed = /^(\d{2})\.(\d{2})\.(\d{2,4})$/.exec(date.trim())
+  if (!parsed) return null
+  const year = parsed[3].length === 2 ? `20${parsed[3]}` : parsed[3]
+  return `${year}-${parsed[2]}-${parsed[1]}T${time.trim().slice(0, 8).padEnd(8, ':00').slice(0, 8)}`
+}
+
+/**
  * Все моменты прохода одним списком — по линии и по книге.
  *
  * Сутки в моменте показываются только когда они разные: ночная смена
@@ -205,10 +220,14 @@ function stamp(iso: string): string {
  * линия (замерили и выгрузили).
  */
 export function passTimes(pass: JournalPass): PassTime[] {
+  // Запасной путь: записи, сделанные до появления полей line_*/book_*,
+  // лежат в том же файле (срок хранения 30 суток). Читаем их по прежним
+  // полям, иначе колонка времён у них молчала бы пустотой.
+  const bookEntry = pass.book_entry_at ?? joinBookDateTime(pass.row_date, pass.row_time)
   const moments: Array<[PassTimeSource, 'вход' | 'выход', string | null | undefined]> = [
-    ['книга', 'вход', pass.book_entry_at],
-    ['линия', 'вход', pass.line_entry_at],
-    ['линия', 'выход', pass.line_exit_at],
+    ['книга', 'вход', bookEntry],
+    ['линия', 'вход', pass.line_entry_at ?? pass.first_seen_at],
+    ['линия', 'выход', pass.line_exit_at ?? pass.exit_at],
     ['книга', 'выход', pass.book_exit_at],
   ]
   const present = moments
