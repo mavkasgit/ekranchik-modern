@@ -218,29 +218,43 @@ export function LineVisualization() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-2 px-3 font-medium text-gray-600">Time</th>
+                  <th className="text-left py-2 px-3 font-medium text-gray-600">Cycle</th>
                   <th className="text-left py-2 px-3 font-medium text-gray-600">Pallete</th>
+                  <th className="text-left py-2 px-3 font-medium text-gray-600">First seen</th>
+                  <th className="text-left py-2 px-3 font-medium text-gray-600">Entry bath</th>
+                  <th className="text-left py-2 px-3 font-medium text-gray-600">Exited</th>
                   <th className="text-left py-2 px-3 font-medium text-gray-600">Duration</th>
                   <th className="text-left py-2 px-3 font-medium text-gray-600">Baths Visited</th>
                 </tr>
               </thead>
               <tbody>
-                {cycles.slice(0, 5).map((cycle, idx) => (
-                  <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-3 px-3 text-gray-700">
-                      {formatLocalized(cycle.timestamp)}
-                    </td>
-                    <td className="py-3 px-3 font-mono font-semibold text-gray-900">
-                      P{cycle.pallete}
-                    </td>
-                    <td className="py-3 px-3 text-gray-700">
-                      {formatDuration(cycle.total_time)}
-                    </td>
-                    <td className="py-3 px-3 text-xs text-gray-600 font-mono">
-                      {cycle.baths_visited.join(' → ')}
-                    </td>
-                  </tr>
-                ))}
+                {cycles.slice(0, 5).map((cycle, idx) => {
+                  const durationSec =
+                    cycle.first_seen_at && cycle.exit_at
+                      ? (Date.parse(cycle.exit_at) - Date.parse(cycle.first_seen_at)) / 1000
+                      : null
+                  return (
+                    <tr key={cycle.cycle_id ?? idx} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-3 font-mono text-gray-500">{cycle.cycle_id ?? '—'}</td>
+                      <td className="py-3 px-3 font-mono font-semibold text-gray-900">
+                        P{cycle.hanger}
+                      </td>
+                      <td className="py-3 px-3 text-gray-700">
+                        {cycle.first_seen_at ? formatLocalized(cycle.first_seen_at) : '—'}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-gray-700">{cycle.entry_bath ?? '—'}</td>
+                      <td className="py-3 px-3 text-gray-700">
+                        {cycle.exit_at ? formatLocalized(cycle.exit_at) : '—'}
+                      </td>
+                      <td className="py-3 px-3 text-gray-700">
+                        {durationSec === null ? '—' : formatDuration(durationSec)}
+                      </td>
+                      <td className="py-3 px-3 text-xs text-gray-600 font-mono">
+                        {cycle.baths_visited?.join(' → ') ?? '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

@@ -133,27 +133,48 @@ def _restore_state(state: dict):
 
 
 async def trigger_unload(hanger_id: int) -> None:
-    """
-    Имитирует выгрузку подвеса:
-      1) Bath[34].Pallete = 0  → _check_unload() инициализирует _bath34_pallete=0
-      2) Bath[34].Pallete = N  → _check_unload() детектирует переход 0→N
-    Мокаем websocket_manager.broadcast чтобы не было ошибок.
+    """Имитирует полноценный проход подвеса по линии и его выгрузку.
+
+    Выгрузка привязывается к физическому проходу, поэтому подвес должен
+    сначала появиться в линии — иначе line_monitor честно сообщает
+    ``unload_without_open_cycle``. Поэтому шаг прохода по ваннам 3→4→34
+    обязателен: именно он открывает цикл, из которого потом выбирается
+    строка книги.
     """
     from app.services.opcua_service import opcua_service
     from app.services.line_monitor import line_monitor
+
+    def occupy(bath: int, pallete: int):
+        opcua_service._cache[f"ns=4;s=Bath[{bath}].InUse"] = 1
+        opcua_service._cache[f"ns=4;s=Bath[{bath}].Pallete"] = pallete
+
+    def clear(bath: int):
+        opcua_service._cache[f"ns=4;s=Bath[{bath}].InUse"] = 0
+        opcua_service._cache[f"ns=4;s=Bath[{bath}].Pallete"] = 0
 
     with patch("app.services.line_monitor.websocket_manager") as mock_ws:
         mock_ws.broadcast = AsyncMock(return_value=0)
         mock_ws.connection_count = 0
 
-        # Шаг 1: инициализация — палетта = 0
-        opcua_service._cache["ns=4;s=Bath[34].Pallete"] = 0
         line_monitor._bath34_pallete = None
-        await line_monitor._check_unload()  # bath34_pallete → 0
+        line_monitor._hangers.clear()
 
-        # Шаг 2: подвес прибыл
+        # Инициализация: контрольная ванна пуста
+        opcua_service._cache["ns=4;s=Bath[34].Pallete"] = 0
+        await line_monitor._check_unload()
+
+        # Проход: подвес идёт 3 → 4 и доходит до контрольной ванны
+        for bath in (3, 4):
+            occupy(bath, hanger_id)
+            await line_monitor._scan_baths()
+            clear(bath)
+        occupy(34, hanger_id)
+        await line_monitor._scan_baths()
+
+        # Сход с линии: датчик 0 → N
+        clear(34)
         opcua_service._cache["ns=4;s=Bath[34].Pallete"] = hanger_id
-        await line_monitor._check_unload()  # переход 0→N → _record_unload
+        await line_monitor._check_unload()
 
 
 async def call_matched_api(limit: int = 10) -> list[dict]:

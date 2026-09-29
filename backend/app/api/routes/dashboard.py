@@ -17,11 +17,19 @@ from app.services.catalog_service import catalog_service
 from app.services.hanger_row import EMPTY, HangerRow, to_hanger_data
 from app.services.profile_name import split_profiles
 from app.services.matching import (
-    event_exit_seconds,
-    make_product_key,
-    match_unload_events,
+    CODE_CYCLE_ERROR,
+    CODE_NO_ROW,
+    CODE_SUSPECT,
+    CycleMatch,
+    match_cycles_to_rows,
+    normalize_hanger_key,
+    parse_iso_seconds,
     product_entry_seconds,
 )
+
+# Аномально долгий проход по линии — предупреждение, подбор не меняет.
+DELAY_LIMIT_SECONDS = 6 * 3600
+
 from app.schemas.dashboard import (
     DashboardResponse,
     FileStatus,
@@ -467,153 +475,131 @@ async def get_opcua_status():
 async def get_opcua_matched_unload_events(
     limit: int = Query(default=100, ge=1, le=500, description="Max events to return")
 ):
-    """
-    Get OPC UA unload events (from Bath[34]) matched with Excel data.
-    
-    Uses line_monitor to get events from Bath[34] exit detection.
-    Matches each event with Excel data by hanger number.
-    Returns events with entry/exit times and product info.
+    """Проходы подвесов по линии, сопоставленные со строками книги учёта.
+
+    Источник проходов — line_monitor: каждый проход имеет свой cycle_id,
+    номер подвеса повторяется от смены к смены и проход не идентифицирует.
+    Строку книги подбирает app.services.matching по близости к first_seen_at.
     """
     try:
         from app.services.line_monitor import line_monitor
-        
-        # Get unload events from the line monitor service
-        events = line_monitor.get_unload_events(limit=limit)
-        
-        if not events:
-            return []
-        
-        # Get all products from Excel for matching
-        products = excel_service.get_products(limit=1000, days=30, from_end=True, loading_only=False)
-        
-        # Build lookup by hanger number - store ALL products for each hanger
-        products_by_hanger: dict[str, list[HangerRow]] = {}
-        for p in products:
-            num = str(p.number)
-            if num:
-                if num not in products_by_hanger:
-                    products_by_hanger[num] = []
-                products_by_hanger[num].append(p)
-        
-        # Get photos for profiles
-        photos_map = await catalog_service.get_profiles_photos_batch(_collect_profile_names(products))
-        
-        # Shared matching rule (app.services.matching): the newest Excel row
-        # with entry time <= exit + 3h wins; candidates rank by parsed date
-        # desc, unparseable dates fall back to file order. Events match
-        # newest-first so an older unload keeps the older row when a hanger
-        # cycled twice in one shift; matched rows are never reused.
-        matched_pairs = match_unload_events(events, products_by_hanger)
-        used_entries = {make_product_key(p) for _, p in matched_pairs if p}
-        matched = []
-        for event, product in matched_pairs:
-            hanger_num = str(event.get('hanger'))
-            candidates = products_by_hanger.get(hanger_num, [])
-            exit_seconds = event_exit_seconds(event)
-            
-            # Warning if gap is suspicious (diagnostic only — not used for matching)
-            warning_message = None
-            if product:
-                entry_seconds = product_entry_seconds(product)
-                time_diff_hours = (exit_seconds - entry_seconds) / 3600
-                
-                if time_diff_hours > 6:
-                    warning_message = f"⚠ Время между входом и выходом: {time_diff_hours:.1f}ч (проверить соответствие)"
-                elif time_diff_hours < 0:
-                    warning_message = f"⚠ Вход позже выхода на {abs(time_diff_hours):.1f}ч (опечатка оператора?)"
-                
-                if warning_message:
-                    # Detailed diagnostic logging
-                    logger.warning(
-                        f"[Matching Diagnostic] Hanger {hanger_num} exit at {event.get('date')} {event.get('time')} "
-                        f"matched with newest valid row: {product.date} {product.time} "
-                        f"(diff: {time_diff_hours:.1f}h). "
-                        f"Total candidates in Excel: {len(candidates)}."
-                    )
-                    p_key_product = make_product_key(product)
-                    for i, p_cand in enumerate(candidates):
-                        p_key_cand = make_product_key(p_cand)
-                        c_date = p_cand.date
-                        c_time = p_cand.time
-                        
-                        if p_key_cand == p_key_product:
-                            status = f"Picked (newest valid row, diff: {time_diff_hours:.1f}h)"
-                        elif p_key_cand in used_entries:
-                            status = "Already used in another match"
-                        elif not c_time or c_time == EMPTY:
-                            status = "Skipped (time is empty)"
-                        else:
-                            # candidates are newest-first (get_products reverses)
-                            pos_from_end = i + 1
-                            status = f"Not picked (row #{pos_from_end} from bottom)"
-                        
-                        logger.warning(f"  Candidate {i+1}: Date={c_date}, Time={c_time}, Profile={p_cand.profile}, Client={p_cand.client} -> {status}")
-            
 
-            
-            profiles_info = _build_profiles_info(
-                product.profile if product else '', photos_map
-            )
-            
+        cycles = line_monitor.get_unload_events(limit=limit)
+        if not cycles:
+            return []
+
+        products = excel_service.get_products(limit=1000, days=30, from_end=True, loading_only=False)
+
+        rows_by_hanger: dict[str, list[HangerRow]] = {}
+        for p in products:
+            key = normalize_hanger_key(p.number)
+            if key:
+                rows_by_hanger.setdefault(key, []).append(p)
+
+        photos_map = await catalog_service.get_profiles_photos_batch(_collect_profile_names(products))
+
+        matches = match_cycles_to_rows(cycles, rows_by_hanger)
+        matched: list[MatchedUnloadEvent] = []
+        for m in matches:
+            cycle, row = m.cycle, m.row
+            hanger_num = str(cycle.get("hanger"))
+            code, warning = _warning_for(m)
+            if m.code:
+                # Диагностика в лог идёт по всем причинам, включая NO_ROW,
+                # у которого на экране пометки нет: пустая строка читается сама.
+                logger.warning(
+                    "[Matching] cycle %s hanger %s: %s (row %s)",
+                    cycle.get("cycle_id"), hanger_num, m.code,
+                    f"{row.date} {row.time}" if row else "—",
+                )
+
+            profiles_info = _build_profiles_info(row.profile if row else '', photos_map)
             matched.append(MatchedUnloadEvent(
-                exit_date=event.get("date") or datetime.now().strftime("%d.%m.%Y"),
-                exit_time=event.get("time"),
-                hanger=int(hanger_num),
-                entry_date=str(product.date) if product else None,
-                entry_time=str(product.time) if product else None,
-                client=str(product.client) if product else EMPTY,
-                profile=str(product.profile) if product else EMPTY,
+                cycle_id=cycle.get("cycle_id"),
+                first_seen_at=cycle.get("first_seen_at"),
+                entry_bath=cycle.get("entry_bath"),
+                entry_date=str(row.date) if row else None,
+                entry_time=str(row.time) if row else None,
+                entry_delta_sec=m.entry_delta_sec,
+                exit_date=cycle.get("date") or datetime.now().strftime("%d.%m.%Y"),
+                exit_time=cycle.get("time") or EMPTY,
+                hanger=int(hanger_num or 0),
+                client=str(row.client) if row else EMPTY,
+                profile=str(row.profile) if row else EMPTY,
                 profiles_info=profiles_info,
-                color=str(product.color) if product else EMPTY,
-                lamels_qty=product.lamels_qty if product else 0,
-                kpz_number=str(product.kpz_number) if product else EMPTY,
-                material_type=str(product.material_type) if product else EMPTY,
-                time_warning=warning_message,  # Add warning if time exceeds limit
-                # Forecast info - will be populated below
-                current_bath=None,
-                bath_entry_time=None,
-                bath_processing_time=None,
+                color=str(row.color) if row else EMPTY,
+                lamels_qty=row.lamels_qty if row else 0,
+                kpz_number=str(row.kpz_number) if row else EMPTY,
+                material_type=str(row.material_type) if row else EMPTY,
+                is_defect=bool(row.is_defect) if row else False,
+                time_warning_code=code or None,
+                time_warning=warning,
             ))
-        # matched_pairs is already newest-first; no reverse needed.
-        # === Populate forecast info (current bath and processing time) ===
+
+        # === Прогноз по ваннам для подвесов, которые сейчас на линии ===
         try:
-            from app.services.line_monitor import line_monitor
-            
-            logger.info(f"[OPC UA Unload] Populating forecast for {len(matched)} events")
-            
             for event in matched:
-                hanger_id = event.hanger
-                hanger_state = line_monitor.get_hanger_state(hanger_id)
-                
-                logger.debug(f"[OPC UA Unload] Hanger {hanger_id}: state={hanger_state}, bath={hanger_state.current_bath if hanger_state else None}")
-                
-                if hanger_state and hanger_state.current_bath:
-                    current_bath_num = int(hanger_state.current_bath)
-                    
-                    # Only show forecast for baths 30-33
-                    if 30 <= current_bath_num <= 33:
-                        event.current_bath = current_bath_num
-                        
-                        # Get entry time in current bath
-                        if hanger_state.entry_time:
-                            event.bath_entry_time = hanger_state.entry_time.strftime("%H:%M:%S")
-                        
-                        # Get processing time from OPC UA (dTime field)
-                        try:
-                            from app.services.opcua_service import opcua_service
-                            dtime = opcua_service.get_value(f"ns=4;s=Bath[{current_bath_num}].dTime")
-                            if dtime and isinstance(dtime, (int, float)):
-                                event.bath_processing_time = int(dtime)
-                            logger.debug(f"[OPC UA Unload] Hanger {hanger_id} in bath {current_bath_num}: dTime={dtime}, entry_time={event.bath_entry_time}")
-                        except Exception as e:
-                            logger.warning(f"Could not get dTime for bath {current_bath_num}: {e}")
+                hanger_state = line_monitor.get_hanger_state(event.hanger)
+                if not hanger_state or not hanger_state.current_bath:
+                    continue
+                bath_num = int(hanger_state.current_bath)
+                if not 30 <= bath_num <= 33:
+                    continue
+                event.current_bath = bath_num
+                if hanger_state.entry_time:
+                    event.bath_entry_time = hanger_state.entry_time.strftime("%H:%M:%S")
+                try:
+                    from app.services.opcua_service import opcua_service
+                    dtime = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].dTime")
+                    if dtime and isinstance(dtime, (int, float)):
+                        event.bath_processing_time = int(dtime)
+                except Exception as e:
+                    logger.warning(f"Could not get dTime for bath {bath_num}: {e}")
         except Exception as e:
             logger.warning(f"[OPC UA Unload] Could not populate forecast info: {e}", exc_info=True)
-        
+
         return matched
     except Exception as e:
         logger.error(f"[OPC UA Unload] Error matching events: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _warning_for(m: CycleMatch):
+    """Код бейджа и текст-тултип для результата подбора."""
+    if m.code == CODE_CYCLE_ERROR:
+        return CODE_CYCLE_ERROR, "line_monitor не нашёл открытого цикла для этого выхода"
+    if m.code == CODE_NO_ROW:
+        # Пустая строка читается сама: подвес сошёл, а в книге его нет.
+        # Бейдж не нужен — на экране и так видно, что данных нет.
+        return None, None
+    if m.code == CODE_SUSPECT:
+        row = m.row
+        line_in = m.cycle.get("first_seen_at") or EMPTY
+        if m.suspect_reason == "later_run":
+            return CODE_SUSPECT, (
+                f"Вход линии: {_hhmm(line_in)}, найденная строка: {row.time} {row.date} — "
+                "строка позже выхода, вероятно от другого прогона"
+            )
+        delta = m.entry_delta_sec or 0
+        return CODE_SUSPECT, (
+            f"Вход линии: {_hhmm(line_in)}, в книге: {row.time} {row.date} — "
+            f"расхождение {abs(delta) / 60:.0f} мин"
+        )
+
+    # Уверенное попадание: помечаем только аномально долгий проход.
+    row = m.row
+    if row is not None and m.entry_delta_sec is not None:
+        on_line = parse_iso_seconds(m.cycle.get("exit_at")) - product_entry_seconds(row)
+        if on_line > DELAY_LIMIT_SECONDS:
+            return "DELAY", f"На линии {on_line / 3600:.1f}ч при пороге 6ч"
+    return "", None
+
+
+def _hhmm(iso: str) -> str:
+    try:
+        return datetime.fromisoformat(iso).strftime("%H:%M")
+    except (ValueError, TypeError):
+        return EMPTY
 
 
 # This endpoint is redundant now as the logic is in /opcua-unload-matched

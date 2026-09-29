@@ -60,11 +60,17 @@ export const dashboardApi = {
 
 
 export interface MatchedUnloadEvent {
+  /** Физический проход подвеса по линии — идентификатор не номера подвеса */
+  cycle_id?: number | null
+  first_seen_at?: string | null
+  entry_bath?: number | null
+  entry_date?: string | null
+  entry_time?: string | null
+  /** Расхождение book_time − first_seen_at, сек: сырые данные для калибровки */
+  entry_delta_sec?: number | null
   exit_date: string
   exit_time: string
   hanger: number
-  entry_date?: string
-  entry_time?: string
   client: string
   profile: string
   profiles_info: Array<{
@@ -79,10 +85,11 @@ export interface MatchedUnloadEvent {
   lamels_qty: number | string
   kpz_number: string
   material_type: string
+  is_defect?: boolean
   // Forecast info - current bath and processing time
   current_bath?: number | null
   bath_entry_time?: string | null
   bath_processing_time?: number | null
-  // Warning if time difference exceeds limit
+  time_warning_code?: string | null
   time_warning?: string | null
 }

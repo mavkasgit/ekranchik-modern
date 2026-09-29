@@ -1,28 +1,53 @@
-"""Shared hanger (подвес) <-> Excel row matching.
+"""Связь физического прохода подвеса по линии со строкой книги учёта.
 
-Single source of truth for the "newest valid entry" rule used by both:
-- dashboard ``/opcua-unload-matched`` (unload event -> Excel row),
-- opcua hanger meta (latest profile/color per hanger number).
+`line_monitor` фиксирует КАЖДЫЙ проход как отдельный объект: ``cycle_id``,
+``hanger``, ``first_seen_at``, ``entry_bath``, ``exit_at``. Номера подвесов
+повторяются от смены к смены, поэтому номер подвеса НЕ является
+идентификатором прохода — им является ``cycle_id``.
 
-Rule: among the candidate rows of one hanger number, the newest row with
-entry time ``<=`` exit moment + ``EXIT_AFTER_TOLERANCE_SECONDS`` wins.
-Candidates are ranked by parsed Excel date+time desc; rows with
-unparseable dates (or without time) rank as 0, so a stable sort keeps
-them in file order as a fallback. Already matched rows are tracked via
-``used_keys`` so one row is never reused by two events.
+Якорь для подбора строки — ``first_seen_at`` (момент, когда монитор впервые
+увидел подвес в любой ванне этого прохода), а не время выхода: выход у всех
+циклов один и тот же по природе, а вход различает проходы. Дата и время из
+книги остаются вторым независимым подтверждением.
+
+Физического входа в линию мы не знаем — знаем только момент обнаружения,
+поэтому расхождение ``book_time - first_seen_at`` возвращается в
+``CycleMatch.entry_delta_sec``: по нему калибруется допуск на живой линии.
 """
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.hanger_row import HangerRow
 
-# A hanger cannot be loaded more than 3h after it was unloaded
-# (operator input delay tolerance). Rows past this bound are impossible
-# matches and are skipped, ranking still follows date, not time math.
-EXIT_AFTER_TOLERANCE_SECONDS = 3 * 3600
+# Максимальное расхождение между временем входа в книге и моментом, когда
+# монитор увидел подвес в линии. ЗАГЛУШКА, НЕ ОТКАЛИБРОВАНА: взята
+# заведомо широкой, чтобы не отсекать нормальные строки, пока нет замеров
+# на живой линии. Калибруется по разбросу entry_delta_sec из ответов API.
+MAX_ENTRY_DELTA_SECONDS = 15 * 60
+
+# Причины, по которым подбор не даёт уверенного попадания. Пустая строка —
+# строка подобрана уверенно, бейдж не показывается.
+CODE_OK = ""
+CODE_SUSPECT = "SUSPECT"
+CODE_NO_ROW = "NO_ROW"
+CODE_CYCLE_ERROR = "CYCLE_ERROR"
 
 # Raw Excel time cells with these values mean "not yet loaded into line".
 _EMPTY_TIME_TOKENS = frozenset({"", "—", "nan", "NaT", "None"})
+
+
+@dataclass(frozen=True)
+class CycleMatch:
+    """Результат подбора строки книги к одному проходу подвеса."""
+
+    cycle: Dict[str, Any]
+    row: Optional[HangerRow]
+    code: str = CODE_OK
+    entry_delta_sec: Optional[float] = None
+    # Почему подбор сомнителен: строка позже выхода этого прохода, значит
+    # она принадлежит более позднему прогону; иначе — само расхождение.
+    suspect_reason: str = ""
 
 
 def parse_excel_date(date_str: str) -> Tuple[int, int, int]:
@@ -93,7 +118,7 @@ def has_entry_time(product: HangerRow) -> bool:
 
 
 def product_entry_seconds(product: HangerRow) -> float:
-    """Ranking key of an Excel row: entry epoch seconds, 0.0 if unusable."""
+    """Entry moment of an Excel row as epoch seconds; 0.0 if unusable."""
     if not has_entry_time(product):
         return 0.0
     return excel_datetime_to_seconds(
@@ -107,64 +132,135 @@ def make_product_key(product: HangerRow) -> str:
     return f"{product.date}|{product.time}|{product.number}"
 
 
-def event_exit_seconds(event: Dict[str, Any]) -> float:
-    """Exit moment of an unload event as epoch seconds; 0.0 if unparseable."""
-    return excel_datetime_to_seconds(
-        parse_excel_date(event.get("date") or ""),
-        parse_excel_time(event.get("time") or ""),
-    )
+def parse_iso_seconds(value: Any) -> float:
+    """Epoch seconds of an ISO timestamp; 0.0 when missing or unparseable."""
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _cycle_first_seen(cycle: Dict[str, Any]) -> float:
+    return parse_iso_seconds(cycle.get("first_seen_at"))
+
+
+def _cycle_exit(cycle: Dict[str, Any]) -> float:
+    return parse_iso_seconds(cycle.get("exit_at"))
 
 
 def select_latest_candidate(
     candidates: List[HangerRow],
-    exit_seconds: Optional[float] = None,
     used_keys: Optional[set] = None,
     require_time: bool = True,
 ) -> Optional[HangerRow]:
-    """Pick the newest valid row: entry time <= exit + 3h tolerance.
+    """Самая поздняя строка номера — для метаданных профиля и цвета.
 
-    Ranking is by parsed date desc; unparseable rows keep file order
-    (stable sort). Skips already ``used_keys`` rows, rows without time
-    (when ``require_time``), and rows loaded more than 3h after the exit.
-    With ``exit_seconds=None`` (or 0) the guard is off: newest row wins.
+    Используется эндпоинтом api/routes/opcua.py, где нужно «что сейчас
+    загружено», а не «какая строка соответствует выгрузке»: там номер
+    подвеса и есть ключ, потому что показывается текущий проход.
+
+    ``require_time=True`` — самая поздняя строка с заполненным и
+    распарсенным временем. ``False`` — черновик, у которого время в книге
+    ещё не проставлено: сравнивать нечем, поэтому берётся нижняя строка
+    файла, её дописывают последней.
     """
     used = used_keys or set()
-    # Stable sort: equal keys (unparseable -> 0.0) keep file order.
-    ranked = sorted(candidates, key=product_entry_seconds, reverse=True)
-    for product in ranked:
+    if not require_time:
+        for product in candidates:
+            if make_product_key(product) not in used:
+                return product
+        return None
+
+    best, best_seconds = None, 0.0
+    for product in candidates:
         if make_product_key(product) in used:
             continue
-        if require_time and not has_entry_time(product):
+        if not has_entry_time(product):
             continue
-        if exit_seconds:
-            if product_entry_seconds(product) - exit_seconds > EXIT_AFTER_TOLERANCE_SECONDS:
-                continue
-        return product
-    return None
+        seconds = product_entry_seconds(product)
+        if seconds == 0.0:
+            continue
+        if best is None or seconds > best_seconds:
+            best, best_seconds = product, seconds
+    return best
 
 
-def match_unload_events(
-    events: List[Dict[str, Any]],
-    products_by_hanger: Dict[str, List[HangerRow]],
-) -> List[Tuple[Dict[str, Any], Optional[HangerRow]]]:
-    """Greedily match unload events to Excel rows, newest exit first.
+def match_cycles_to_rows(
+    cycles: List[Dict[str, Any]],
+    rows_by_hanger: Dict[str, List[HangerRow]],
+) -> List[CycleMatch]:
+    """Привязать строку книги к каждому проходу подвеса.
 
-    Newest-first order guarantees chronological distribution when a hanger
-    cycled twice in one shift: the newest exit takes the newest row, the
-    older exit keeps the older row. Returns (event, product|None) pairs in
-    newest-first order.
+    Проходы обрабатываются по времени ``first_seen_at`` — от ранних к
+    поздним, поэтому ранний проход забирает свою строку, а не более позднюю.
+    Одна строка книги не достаётся двум проходам.
+
+    Для обычного прохода берётся неиспользованная строка того же номера,
+    ближайшая к ``first_seen_at``:
+
+    - бейдж не показывается;
+    - строка позже выхода этого прохода — она принадлежит более позднему
+      прогону; строка всё равно показывается, но с ``SUSPECT``;
+    - расхождение больше допуска — ``SUSPECT``: причина может быть любой,
+      решение за оператором.
+
+    Если строк по номеру нет вовсе — ``NO_ROW``. Проход, у которого
+    ``line_monitor`` не нашёл открытого цикла, остаётся ``CYCLE_ERROR`` и
+    строки не получает вовсе.
     """
+    matches: List[CycleMatch] = []
     used: set = set()
-    ordered = sorted(events, key=event_exit_seconds, reverse=True)
-    matched: List[Tuple[Dict[str, Any], Optional[Dict[str, Any]]]] = []
-    for event in ordered:
-        candidates = products_by_hanger.get(str(event.get("hanger")), [])
-        product = select_latest_candidate(
-            candidates,
-            exit_seconds=event_exit_seconds(event),
-            used_keys=used,
+    ordered = sorted(cycles, key=_cycle_first_seen)
+
+    for cycle in ordered:
+        if cycle.get("type") == "cycle_error":
+            matches.append(CycleMatch(cycle=cycle, row=None, code=CODE_CYCLE_ERROR))
+            continue
+
+        first_seen = _cycle_first_seen(cycle)
+        exit_at = _cycle_exit(cycle)
+        candidates = [
+            row
+            for row in rows_by_hanger.get(normalize_hanger_key(cycle.get("hanger")), [])
+            if has_entry_time(row) and make_product_key(row) not in used
+        ]
+
+        if not candidates:
+            matches.append(CycleMatch(cycle=cycle, row=None, code=CODE_NO_ROW))
+            continue
+
+        # Ближайшая по модулю разности. При first_seen = 0 (нет данных о
+        # начале прохода) порядок не определён — берём самую позднюю строку.
+        if first_seen == 0.0:
+            best = max(candidates, key=product_entry_seconds)
+            delta = None
+        else:
+            best = min(
+                candidates,
+                key=lambda row: abs(product_entry_seconds(row) - first_seen),
+            )
+            delta = product_entry_seconds(best) - first_seen
+
+        used.add(make_product_key(best))
+
+        code, reason = CODE_OK, ""
+        if exit_at and product_entry_seconds(best) > exit_at:
+            code = CODE_SUSPECT
+            reason = "later_run"
+        elif delta is not None and abs(delta) > MAX_ENTRY_DELTA_SECONDS:
+            code = CODE_SUSPECT
+            reason = "entry_delta"
+
+        matches.append(
+            CycleMatch(
+                cycle=cycle,
+                row=best,
+                code=code,
+                entry_delta_sec=delta,
+                suspect_reason=reason,
+            )
         )
-        if product is not None:
-            used.add(make_product_key(product))
-        matched.append((event, product))
-    return matched
+
+    return matches

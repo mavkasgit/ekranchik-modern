@@ -31,13 +31,20 @@ class UnloadEvent(BaseModel):
 
 
 class MatchedUnloadEvent(BaseModel):
-    """Unload event matched with Excel data"""
+    """Проход подвеса по линии, сопоставленный со строкой книги учёта"""
+    # Физический проход — из line_monitor
+    cycle_id: Optional[int] = None
+    first_seen_at: Optional[str] = None  # Когда монитор впервые увидел подвес в линии
+    entry_bath: Optional[int] = None  # Ванна, в которой подвес появился
+    # Из книги учёта (если строка подобрана)
+    entry_date: Optional[str] = None
+    entry_time: Optional[str] = None
+    # Расхождение book_time − first_seen_at в секундах: сырые данные для
+    # калибровки MAX_ENTRY_DELTA_SECONDS на живой линии
+    entry_delta_sec: Optional[float] = None
     exit_date: str
     exit_time: str
     hanger: int
-    # From Excel (if matched)
-    entry_date: Optional[str] = None
-    entry_time: Optional[str] = None
     client: str = "—"
     profile: str = "—"
     profiles_info: List[ProfileInfo] = Field(default_factory=list)
@@ -45,12 +52,14 @@ class MatchedUnloadEvent(BaseModel):
     lamels_qty: Union[int, str] = 0
     kpz_number: str = "—"
     material_type: str = "—"
+    is_defect: bool = False
     # Forecast info - current bath and processing time
     current_bath: Optional[int] = None  # Bath number 30-33 where hanger currently is
     bath_entry_time: Optional[str] = None  # Time when hanger entered current bath (HH:MM:SS)
     bath_processing_time: Optional[int] = None  # Expected processing time in seconds for current bath
-    # Warning if time difference exceeds limit
-    time_warning: Optional[str] = None  # Warning message if entry-exit time exceeds 6h limit
+    # Причина, по которой подбор неуверенный: см. app.services.matching
+    time_warning_code: Optional[str] = None
+    time_warning: Optional[str] = None  # Текст причины для тултипа
 
 
 class DashboardResponse(BaseModel):

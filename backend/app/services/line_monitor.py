@@ -36,12 +36,27 @@ class HangerPathEntry:
 
 @dataclass
 class HangerState:
-    """Current state of a hanger in the line, tracking its current cycle."""
+    """Текущее состояние подвеса и его открытого прохода по линии.
+
+    Один ``HangerState`` переживает несколько проходов: номера подвесов
+    повторяются от смены к смене. Поля ``cycle_id``, ``first_seen_at``,
+    ``entry_bath`` и ``path`` относятся ТОЛЬКО к текущему проходу и
+    обнуляются при каждом новом (см. ``_open_cycle``).
+
+    ``first_seen_at`` — момент, когда монитор впервые увидел подвес в
+    ЛЮБОЙ ванне этого прохода, а не доказанный физический вход в линию.
+    ``entry_bath`` — ванна, в которой он появился; нужна, чтобы измерить
+    систематическое смещение относительно времени в книге учёта.
+    """
     id: int
     current_bath: Optional[str] = None
     entry_time: Optional[datetime] = None
     last_seen: datetime = field(default_factory=datetime.now)
     path: List[HangerPathEntry] = field(default_factory=list)
+    cycle_id: Optional[int] = None
+    first_seen_at: Optional[datetime] = None
+    entry_bath: Optional[int] = None
+
 
 
 class LineMonitorService:
@@ -67,7 +82,13 @@ class LineMonitorService:
         # State tracking
         self._hangers: Dict[int, HangerState] = {}
         self._bath34_pallete: Optional[int] = None
-        self._processed_unloads: deque = deque(maxlen=1000)
+        # Идентификатор физического прохода подвеса по линии. Монотонный и
+        # никогда не переиспользуется, поэтому остаётся уникальным и после
+        # clear_data — события у клиентов переживают сброс.
+        self._cycle_counter = 0
+        # Ключи уже обработанных проходов: cycle_id для нормального выхода и
+        # (номер, минута) для аварийного, у которого цикла нет.
+        self._processed_unloads: Deque[object] = deque(maxlen=1000)
         self._last_cleanup_time = datetime.now()
 
         # Unload events cache (deque для O(1) операций)
@@ -291,6 +312,34 @@ class LineMonitorService:
                 del self._hangers[hanger_id]
             logger.warning(f"[Line Monitor] Force-cleaned {to_remove} oldest hangers (overflow protection)")
 
+    def _open_cycle(
+        self, hanger: HangerState, bath_num: int, now: datetime
+    ) -> None:
+        """Открыть новый физический проход подвеса по линии.
+
+        Вызывается каждый раз, когда подвес появляется в линии: и когда его
+        видят впервые, и когда он вернулся с новым прогоном под тем же
+        номером. Всё, что относится к прошлому проходу, отбрасывается —
+        накопленный path в том числе.
+        """
+        self._cycle_counter += 1
+        hanger.cycle_id = self._cycle_counter
+        hanger.first_seen_at = now
+        hanger.entry_bath = bath_num
+        hanger.path = []
+
+    def cycle_snapshot(self, hanger: HangerState) -> Dict:
+        """Общее представление прохода для события выгрузки и /line/cycles."""
+        return {
+            "cycle_id": hanger.cycle_id,
+            "hanger": hanger.id,
+            "first_seen_at": hanger.first_seen_at.isoformat()
+            if hanger.first_seen_at
+            else None,
+            "entry_bath": hanger.entry_bath,
+            "baths_visited": [e.bath_name for e in hanger.path],
+        }
+
     async def _scan_baths(self) -> None:
         """Scan all baths and update hanger positions, handling new cycles."""
         now = datetime.now()
@@ -315,16 +364,22 @@ class LineMonitorService:
                 hanger_state = self._hangers.get(hanger_id)
 
                 # --- New Cycle Detection ---
-                # If hanger is not tracked, it's a genuinely new hanger — create state.
-                # If it was previously unloaded (current_bath=None) but reappears, 
-                # reuse existing state to preserve path history.
+                # Номера подвесов повторяются от смены к смене, поэтому
+                # появление подвеса в линии — это ВСЕГДА новый физический
+                # проход: свои cycle_id, first_seen_at, entry_bath и пустой
+                # path. Путь прошлого прохода не наследуется — иначе path[0]
+                # указывал бы на первый проход за всё время жизни записи,
+                # а total_time_sec суммировал бы все проходы подряд.
                 if not hanger_state:
                     hanger_state = HangerState(id=hanger_id)
                     self._hangers[hanger_id] = hanger_state
-                    logger.info(f"Hanger {hanger_id} started a new cycle upon entering bath {bath_name}.")
+                    self._open_cycle(hanger_state, bath_num, now)
                 elif hanger_state.current_bath is None:
-                    # Re-appearing hanger — keep old path, just reset current position
-                    logger.info(f"Hanger {hanger_id} re-entered line at bath {bath_name} (was inactive).")
+                    self._open_cycle(hanger_state, bath_num, now)
+                logger.info(
+                    f"Hanger {hanger_id} cycle {hanger_state.cycle_id} opened: "
+                    f"first seen at bath {hanger_state.entry_bath}."
+                )
 
                 # --- State Update ---
                 # If hanger moved to a new bath
@@ -393,75 +448,127 @@ class LineMonitorService:
             logger.error(f"[Line Monitor] Unload check error: {e}", exc_info=True)
     
     async def _record_unload(self, hanger_id: int) -> None:
-        """Record unload event, update hanger state to inactive, and broadcast."""
+        """Зафиксировать выгрузку подвеса и разослать событие.
+
+        Выгрузка привязывается к физическому проходу (``cycle_id``), а не к
+        номеру подвеса: один и тот же номер выходит с линии столько раз,
+        сколько его прогоняют за смену. Дедупликация — по ``cycle_id``,
+        поэтому два выхода одного номера в пределах одной минуты — это два
+        разных события, а повторная обработка одного прохода отсекается.
+        """
         try:
             now = datetime.now()
-            # Use a simple key to avoid duplicate events within a short timeframe
-            event_key = (hanger_id, now.strftime('%Y%m%d_%H%M'))
-            
-            if event_key in self._processed_unloads:
-                return
-            self._processed_unloads.append(event_key)
-            
             hanger = self._hangers.get(hanger_id)
-            total_time_sec = 0
-            path_summary = []
 
-            if hanger:
-                # Finalize the last step (the unload bath)
-                if hanger.entry_time and hanger.current_bath:
-                    duration = (now - hanger.entry_time).total_seconds()
-                    hanger.path.append(
-                        HangerPathEntry(
-                            bath_name=hanger.current_bath,
-                            entry_time=hanger.entry_time,
-                            exit_time=now,
-                            duration=duration
-                        )
+            # Открытого прохода нет: состояние потеряно (рестарт сервера,
+            # давний простой, вытеснение при переполнении) либо подвес уже
+            # помечен ушедшим. Это ошибка монитора, и она НЕ должна
+            # выглядеть как нормальный выход с total_time_sec = 0.
+            # cycle_id задним числом не создаём — иначе ошибка снова станет
+            # валидным проходом.
+            if hanger is None or hanger.current_bath is None:
+                # Дедупликация по (номер, минута): цикла, к которому можно
+                # было бы привязаться, здесь нет, а дрожание датчика 0→N
+                # иначе даёт неограниченный поток одинаковых cycle_error.
+                error_key = (hanger_id, now.strftime('%Y%m%d_%H%M'))
+                if error_key in self._processed_unloads:
+                    return
+                self._processed_unloads.append(error_key)
+                reason = "unload_without_open_cycle"
+                logger.error(
+                    f"[Line Monitor] {reason}: hanger {hanger_id} "
+                    f"(state={'missing' if hanger is None else 'not_on_line'}, "
+                    f"cycle={hanger.cycle_id if hanger else None})"
+                )
+                await self._publish(
+                    {
+                        "type": "cycle_error",
+                        "reason": reason,
+                        "cycle_id": None,
+                        "hanger": hanger_id,
+                        "first_seen_at": None,
+                        "entry_bath": None,
+                        "exit_at": now.isoformat(),
+                        "total_time_sec": None,
+                        "baths_visited": None,
+                        "time": now.strftime("%H:%M:%S"),
+                        "date": now.strftime("%d.%m.%Y"),
+                        "timestamp": now.isoformat(),
+                    },
+                    now,
+                    hanger_id,
+                )
+                return
+
+            if hanger.cycle_id in self._processed_unloads:
+                return
+            self._processed_unloads.append(hanger.cycle_id)
+
+            # Замыкаем последний шаг — ванну выгрузки.
+            if hanger.entry_time:
+                hanger.path.append(
+                    HangerPathEntry(
+                        bath_name=hanger.current_bath,
+                        entry_time=hanger.entry_time,
+                        exit_time=now,
+                        duration=(now - hanger.entry_time).total_seconds(),
                     )
-                
-                # Calculate total time from the first entry in its path
-                if hanger.path:
-                    first_entry_time = hanger.path[0].entry_time
-                    total_time_sec = (now - first_entry_time).total_seconds()
+                )
 
-                path_summary = [entry.bath_name for entry in hanger.path]
-
-                # Mark hanger as inactive
-                hanger.current_bath = None
-                hanger.entry_time = None
-                hanger.last_seen = now
-                logger.info(f"Hanger {hanger_id} unloaded. State set to inactive.")
-
+            # Проход цел от first_seen_at до выхода: path[0] теперь
+            # принадлежит текущему проходу, а не первому за всё время.
+            total_time_sec = (now - hanger.first_seen_at).total_seconds()
             event = {
+                "type": "unload",
+                "reason": None,
+                "cycle_id": hanger.cycle_id,
                 "hanger": hanger_id,
+                "first_seen_at": hanger.first_seen_at.isoformat(),
+                "entry_bath": hanger.entry_bath,
+                "exit_at": now.isoformat(),
+                "total_time_sec": total_time_sec,
+                "baths_visited": [e.bath_name for e in hanger.path],
                 "time": now.strftime("%H:%M:%S"),
                 "date": now.strftime("%d.%m.%Y"),
-                "total_time_sec": total_time_sec,
-                "baths_visited": path_summary,
-                "timestamp": now.isoformat()
+                "timestamp": now.isoformat(),
             }
-            
-            # Cache event (deque автоматически удаляет старые)
-            self._unload_events.append(event)
-            
-            # Broadcast via WebSocket с retry для надёжности
-            message = WebSocketMessage(type="unload_event", payload=event, timestamp=now)
-            
-            # Пробуем отправить до 3 раз с небольшой задержкой
-            for attempt in range(3):
-                sent = await websocket_manager.broadcast(message)
-                if sent > 0:
-                    logger.info(f"[Line Monitor] Unload broadcast OK: Hanger {hanger_id}, sent to {sent} clients")
-                    break
-                elif websocket_manager.connection_count > 0:
-                    logger.warning(f"[Line Monitor] Unload broadcast attempt {attempt+1} failed, retrying...")
-                    await asyncio.sleep(0.1)
-            
-            logger.info(f"[Line Monitor] Unload recorded: Hanger {hanger_id} at {now.strftime('%H:%M:%S')}")
-        
+
+            # Mark hanger as inactive
+            hanger.current_bath = None
+            hanger.entry_time = None
+            hanger.last_seen = now
+            logger.info(
+                f"Hanger {hanger_id} cycle {hanger.cycle_id} unloaded "
+                f"after {total_time_sec / 60:.1f} min, "
+                f"{len(hanger.path)} baths."
+            )
+
+            await self._publish(event, now, hanger_id)
+
         except Exception as e:
             logger.error(f"[Line Monitor] Record unload error for hanger {hanger_id}: {e}", exc_info=True)
+
+    async def _publish(
+        self, event: Dict, now: datetime, hanger_id: int
+    ) -> None:
+        """Положить событие в кэш и разослать клиентам (с retry)."""
+        # Cache event (deque автоматически удаляет старые)
+        self._unload_events.append(event)
+
+        message = WebSocketMessage(type="unload_event", payload=event, timestamp=now)
+
+        # Пробуем отправить до 3 раз с небольшой задержкой
+        for attempt in range(3):
+            sent = await websocket_manager.broadcast(message)
+            if sent > 0:
+                logger.info(
+                    f"[Line Monitor] Unload broadcast OK: "
+                    f"hanger {hanger_id}, type {event.get('type')}, sent to {sent} clients"
+                )
+                break
+            elif websocket_manager.connection_count > 0:
+                logger.warning(f"[Line Monitor] Unload broadcast attempt {attempt+1} failed, retrying...")
+                await asyncio.sleep(0.1)
     
     def get_unload_events(self, limit: int = 100) -> List[dict]:
         """Get recent unload events."""

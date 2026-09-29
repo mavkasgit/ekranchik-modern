@@ -94,8 +94,9 @@ function saveFilters(filters: Filters) {
   localStorage.setItem(FILTERS_KEY, JSON.stringify(filters))
 }
 
-// Format date with year 2026 (DD.MM.YY -> DD.MM.2026)
-function formatDate(date: string | undefined): string {
+// Format date with year 2026 (DD.MM.YY -> DD.MM.2026). null — строка книги
+// не подобрана к этому проходу, показываем прочерк.
+function formatDate(date: string | null | undefined): string {
   if (!date) return '—'
   // Handle formats like "28.10.26" or "29.11.2026"
   const parts = date.split('.')
@@ -642,6 +643,25 @@ const getRowClassName = (hanger: HangerData, idx: number) => {
   return idx % 2 === 0 ? 'bg-slate-200 dark:bg-slate-800/50' : '';
 }
 
+// Причины пометки строки — разные причины требуют разных действий
+// оператора, поэтому у каждой свой бейдж, а текст причины приходит в
+// тултипе из бэкенда (app.api.routes.dashboard._warning_for).
+// NO_ROW бейджа не имеет: пустая строка читается сама.
+const WARNING_BADGES: Record<string, { label: string; className: string }> = {
+  SUSPECT: {
+    label: '⚠ ПРОВЕРИТЬ СТРОКУ',
+    className: 'text-amber-700 bg-amber-200 dark:text-amber-400 dark:bg-amber-950/60 border-amber-300/50',
+  },
+  DELAY: {
+    label: '⚠ ЗАДЕРЖКА',
+    className: 'text-orange-700 bg-orange-200 dark:text-orange-400 dark:bg-orange-950/60 border-orange-300/50',
+  },
+  CYCLE_ERROR: {
+    label: '⚠ НАРУШЕН ЦИКЛ',
+    className: 'text-red-700 bg-red-200 dark:text-red-400 dark:bg-red-950/60 border-red-300/50',
+  },
+}
+
 
 
 function ClockInline() {
@@ -703,7 +723,10 @@ function DataTable({
         {data.map((hanger, idx) => {
           const profilesInfo = hanger.profiles_info || [];
           const showPhotosBelow = profilesInfo.length > 2;
-          const numAdditionalRows = showPhotosBelow || hanger.time_warning || hanger.is_defect ? 1 : 0;
+          const badge = hanger.time_warning_code
+            ? WARNING_BADGES[hanger.time_warning_code]
+            : undefined;
+          const numAdditionalRows = showPhotosBelow || badge || hanger.is_defect ? 1 : 0;
           const totalRowsForHanger = 1 + numAdditionalRows;
 
           return (
@@ -863,19 +886,19 @@ function DataTable({
                     gridColumn: showPhotosBelow ? '1 / -1' : 'type / photo' 
                   }}
                 >
-                  {/* Предупреждения */}
-                  {(hanger.time_warning || hanger.is_defect) && (
+                  {/* Пометки строки: причина из бэкенда + брак */}
+                  {(badge || hanger.is_defect) && (
                     <div className="flex items-center gap-1.5">
-                      {hanger.time_warning && (
-                        <span 
-                          className="text-orange-700 font-bold text-[10px] px-2 py-0.5 bg-orange-200 dark:bg-orange-950/60 dark:text-orange-400 rounded whitespace-nowrap inline-block border border-orange-300/50"
-                          title={hanger.time_warning}
+                      {badge && (
+                        <span
+                          className={`${badge.className} font-bold text-[10px] px-2 py-0.5 rounded whitespace-nowrap inline-block border`}
+                          title={hanger.time_warning ?? undefined}
                         >
-                          ⚠ ЗАДЕРЖКА (проверить соответствие)
+                          {badge.label}
                         </span>
                       )}
                       {hanger.is_defect && (
-                        <span 
+                        <span
                           className="text-red-700 font-bold text-[10px] px-2 py-0.5 bg-red-200 dark:bg-red-950/60 dark:text-red-400 rounded whitespace-nowrap inline-block border border-red-300/50"
                         >
                           ⚠ БРАК
@@ -883,7 +906,6 @@ function DataTable({
                       )}
                     </div>
                   )}
-
                   {/* Список профилей (только если showPhotosBelow === true) */}
                   {showPhotosBelow && (
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
@@ -1383,6 +1405,8 @@ export default function Dashboard() {
       bath_entry_time: event.bath_entry_time,
       bath_processing_time: event.bath_processing_time,
       time_warning: event.time_warning,
+      time_warning_code: event.time_warning_code,
+      is_defect: event.is_defect,
     }))
   }, [isMockMode, run.unloaded, matchedEvents])
 

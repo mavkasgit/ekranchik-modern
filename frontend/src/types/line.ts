@@ -29,8 +29,12 @@ export interface LineUpdatePayload {
 }
 
 export interface CompletedCycle {
-  timestamp: string
-  pallete: number
-  total_time: number
-  baths_visited: number[]
+  /** Идентификатор физического прохода подвеса, а не номер подвеса. */
+  cycle_id: number | null
+  hanger: number
+  /** Когда монитор впервые увидел подвес в ЛЮБОЙ ванне этого прохода. */
+  first_seen_at: string | null
+  entry_bath: number | null
+  exit_at: string | null
+  baths_visited: (number | string)[]
 }

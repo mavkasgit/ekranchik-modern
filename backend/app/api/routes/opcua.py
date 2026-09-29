@@ -594,26 +594,23 @@ async def get_bath_status(bath_number: int):
 
 @router.get("/line/cycles")
 async def get_completed_cycles(limit: int = 20):
-    """Получить завершённые циклы (подвесы вышедшие из линии через Bath[34])."""
-    # Get cycles from line monitor
-    all_hangers = list(line_monitor._hangers.values())
-    
-    # Filter completed hangers (not currently in any bath but have path history)
-    completed = [h for h in all_hangers if h.current_bath is None and h.path]
-    
-    # Sort by last_seen descending
+    """Завершённые проходы подвесов по линии — те же поля, что и в событии выгрузки.
+
+    Отличие от unload event: здесь текущее состояние памяти монитора, там
+    зафиксированный результат выгрузки. Оба описывают один и тот же проход
+    по одной модели, поэтому полей не расходится.
+    """
+    completed = [h for h in line_monitor._hangers.values()
+                 if h.current_bath is None and h.path]
     completed.sort(key=lambda h: h.last_seen, reverse=True)
-    
+
     cycles = []
     for hanger in completed[:limit]:
-        if hanger.path:
-            baths_visited = [entry.bath_name for entry in hanger.path]
-            cycles.append({
-                "timestamp": hanger.path[0].entry_time.isoformat() if hanger.path else None,
-                "pallete": hanger.id,
-                "baths_visited": baths_visited
-            })
-    
+        cycles.append({
+            **line_monitor.cycle_snapshot(hanger),
+            "exit_at": hanger.last_seen.isoformat(),
+        })
+
     return {
         "total": len(cycles),
         "cycles": cycles
