@@ -20,6 +20,12 @@ COPY . .
 # Create directories
 RUN mkdir -p /app/data /app/static/images /app/excel
 
+# Версия приложения: единый источник — корневой VERSION, но он лежит вне
+# контекста сборки (backend/). Значение приходит аргументом из compose, иначе
+# версия осталась бы фолбэком 'dev' и в интерфейсе, и в /api/version.
+ARG APP_VERSION=dev
+RUN printf '%s\n' "$APP_VERSION" > /app/VERSION
+
 # Expose port
 EXPOSE 8000
 

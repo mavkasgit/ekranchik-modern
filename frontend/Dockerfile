@@ -12,8 +12,10 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build the application
-RUN npm run build
+# Build the application. Версия приходит аргументом: корневой VERSION лежит вне
+# контекста сборки (frontend/), и без него бандл показывал бы 'dev'.
+ARG APP_VERSION=dev
+RUN APP_VERSION="${APP_VERSION}" npm run build
 
 # Production stage
 FROM nginx:alpine

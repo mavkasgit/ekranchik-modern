@@ -4,7 +4,11 @@ import path from 'path'
 import fs from 'fs'
 
 // Единый источник версии — корневой VERSION (фолбэк 'dev').
+// В Docker-сборке VERSION лежит вне контекста (frontend/), поэтому значение
+// приходит аргументом сборки APP_VERSION; локально файл читается сам.
 function readAppVersion(): string {
+  const fromBuild = (process.env.APP_VERSION ?? '').trim()
+  if (fromBuild) return fromBuild
   try {
     const text = fs.readFileSync(path.resolve(__dirname, '../VERSION'), 'utf-8').trim().split(/\s+/)[0]
     if (text) return text

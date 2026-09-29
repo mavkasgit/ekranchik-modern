@@ -11,6 +11,10 @@ services:
     build:
       context: ../../backend
       dockerfile: Dockerfile
+      # Версия приложения — из корневого VERSION: его в контекст сборки не
+      # положить, поэтому скрипт деплоя передаёт значение сюда.
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     container_name: ekranchik-backend-prod
     env_file:
       - ../../backend/.env
@@ -81,6 +85,8 @@ services:
     build:
       context: ../../frontend
       dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     container_name: ekranchik-frontend-prod
     expose:
       - "5173"

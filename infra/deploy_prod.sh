@@ -23,6 +23,14 @@ MOUNT_POINT="${MOUNT_POINT:-/mnt/ktm-disk}"
 WAIT_SECONDS="${WAIT_SECONDS:-60}"
 COMPOSE_FILES=(-f compose/docker-compose.prod.yml)
 
+# Версия приложения: единый источник — корневой VERSION. В контекст сборки
+# образов он не попадает (контексты — backend/ и frontend/), поэтому значение
+# передаётся аргументом сборки, иначе и интерфейс, и /api/version показали бы
+# 'dev' — по ним не видно, что пересборка что-то принесла.
+APP_VERSION="$(tr -d '[:space:]' < "$SCRIPT_DIR/../VERSION" 2>/dev/null || true)"
+APP_VERSION="${APP_VERSION:-dev}"
+export APP_VERSION
+
 # Windows (Docker Desktop): bind-mount сетевого диска с хоста не работает, CIFS
 # монтирует сам контейнер — локальный оверрайд подключается только там.
 # Windows_NT — это не MINGW/MSYS: так `uname -s` отвечает в части окружений
@@ -54,6 +62,7 @@ if [ "$(uname -s)" = "Linux" ]; then
 fi
 
 # 2. Сборка и пересоздание.
+echo "[deploy] Версия сборки: $APP_VERSION"
 if [ "$#" -eq 0 ]; then
     echo "[deploy] docker compose ${COMPOSE_FILES[*]} up -d --build"
     docker compose "${COMPOSE_FILES[@]}" up -d --build
