@@ -13,6 +13,13 @@
  *
  * Usage: node scripts/run-python.js <args...>   (run from any directory)
  *   e.g. node scripts/run-python.js -m uvicorn app.main:app --port 8013
+ *
+ * Env overrides: leading `--env KEY=VALUE` pairs are removed from the
+ * argument list and applied to the spawned process. Needed because npm runs
+ * scripts through cmd.exe on Windows, where the `KEY=VALUE cmd` prefix form
+ * is a POSIX-ism and silently sets nothing.
+ *
+ *   node scripts/run-python.js --env SIMULATION_ENABLED=false -m uvicorn app.main:app
  */
 
 "use strict";
@@ -42,9 +49,37 @@ if (!fs.existsSync(venvPython)) {
   );
 }
 
-const child = spawn(python, process.argv.slice(2), {
+/**
+ * Отделяет ведущие `--env KEY=VALUE` от аргументов Python.
+ * Ошибку в паре не проглатываем: молчаливый запуск в чужом режиме дороже
+ * остановки.
+ */
+function splitEnv(argv) {
+  const args = [];
+  const env = { ...process.env };
+  let i = 0;
+  for (; i < argv.length; i++) {
+    if (argv[i] !== "--env") break;
+    const pair = argv[i + 1];
+    const eq = pair ? pair.indexOf("=") : -1;
+    if (eq < 1) {
+      process.stderr.write(
+        `[run-python] --env expects KEY=VALUE, got ${JSON.stringify(pair)}\n`
+      );
+      process.exit(2);
+    }
+    env[pair.slice(0, eq)] = pair.slice(eq + 1);
+    i++;
+  }
+  return { args: argv.slice(i), env };
+}
+
+const { args: pythonArgs, env } = splitEnv(process.argv.slice(2));
+
+const child = spawn(python, pythonArgs, {
   cwd: backendDir,
   stdio: "inherit",
+  env,
   // Ctrl+C in the concurrently-driven dev stack must reach the real process.
   windowsHide: true,
 });
