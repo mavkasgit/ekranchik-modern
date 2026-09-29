@@ -95,6 +95,33 @@ def test_day_change_starts_new_file(store):
     ]
 
 
+def test_max_cycle_id_is_taken_from_every_file(store):
+    """Максимум номера прохода ищется по всем файлам, а не по последнему.
+
+    Счётчик проходов при старте продолжается от максимума в журнале, иначе
+    после перезапуска номера снова начнутся с единицы. Искать надо по всем
+    суткам: номер в последнем файле не обязательно наибольший.
+    """
+    store.append(_record(cycle_id=7, exit_at="2026-09-28T10:00:00"))
+    store.append(_record(cycle_id=19, exit_at="2026-09-29T10:00:00"))
+    store.append(_record(cycle_id=12, exit_at="2026-09-30T10:00:00"))
+
+    assert store.max_cycle_id() == 19
+
+
+def test_max_cycle_id_of_empty_journal_is_zero(store):
+    """Пустой журнал — счётчик остаётся нулевым, первый проход будет первым."""
+    assert store.max_cycle_id() == 0
+
+
+def test_max_cycle_id_skips_records_without_a_pass(store):
+    """Аварийное событие прохода не имеет — оно не сдвигает счётчик."""
+    store.append(_record(cycle_id=5, exit_at="2026-09-29T10:00:00"))
+    store.append(_record(cycle_id=None, exit_at="2026-09-29T11:00:00"))
+
+    assert store.max_cycle_id() == 5
+
+
 def test_size_cap_rolls_over_within_the_same_day(store, tmp_path):
     """Потолок размера не теряет записи: следующий файл той же сутки."""
     small = JournalStore(tmp_path / "journal", max_file_bytes=400)

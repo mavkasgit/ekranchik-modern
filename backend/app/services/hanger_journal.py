@@ -317,6 +317,23 @@ class JournalStore:
             self._cache.popitem(last=False)
         return records
 
+    def max_cycle_id(self) -> int:
+        """Наибольший номер прохода в журнале; 0 — проходов не было.
+
+        Счётчик проходов монитора живёт в памяти, поэтому при старте сервера
+        он продолжается от этого максимума — иначе номера снова пошли бы с
+        единицы и совпали бы с уже записанными. Ищем по ВСЕМ файлам: номер в
+        последнем по времени не обязательно наибольший, пока счётчик не был
+        продолжен.
+        """
+        highest = 0
+        for journal_file in self.files():
+            for record in self._file_records(journal_file):
+                value = record.get("cycle_id")
+                if isinstance(value, int) and value > highest:
+                    highest = value
+        return highest
+
     def prune(self) -> List[Path]:
         """Удалить файлы старше срока хранения. Возвращает удалённые.
 

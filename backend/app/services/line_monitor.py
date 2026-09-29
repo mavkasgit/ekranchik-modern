@@ -371,6 +371,20 @@ class LineMonitorService:
             return FIRST_SEEN_GAP
         return FIRST_SEEN_WATCHED
 
+    def resume_cycle_counter(self, last_cycle_id: int) -> None:
+        """Продолжить нумерацию проходов от уже записанных в журнал.
+
+        Счётчик живёт в памяти, поэтому после перезапуска сервера он снова
+        был бы нулевым, и номера проходов поехали бы с единицы поверх тех, что
+        уже лежат в журнале. Вызывается ДО ``start``: иначе монитор успеет
+        раздать первые номера, пока счётчик ещё пуст.
+
+        Значение только поднимает счётчик: чужое или битое не должно
+        отматывать нумерацию назад и выдавать номера, уже занятые.
+        """
+        if isinstance(last_cycle_id, int) and last_cycle_id > self._cycle_counter:
+            self._cycle_counter = last_cycle_id
+
     def _open_cycle(
         self, hanger: HangerState, bath_num: int, now: datetime
     ) -> None:

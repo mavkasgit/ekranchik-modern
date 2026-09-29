@@ -85,6 +85,16 @@ async def lifespan(app: FastAPI):
                     "на Linux диск монтирует infra/mount_and_start.sh"
                 )
     
+    # Нумерация проходов продолжается от журнала (issue #34). Именно ДО старта
+    # монитора: он раздаёт номера уже на первом же скане линии, и подстано-
+    # вить позже значило бы переписать выданные.
+    last_cycle_id = journal_writer.store.max_cycle_id()
+    line_monitor.resume_cycle_counter(last_cycle_id)
+    logger.info(
+        f"[STARTUP] Pass numbering continues from {last_cycle_id}: "
+        f"next pass is {last_cycle_id + 1}"
+    )
+
     # OPC UA Service - пакетное чтение с защитой от зомби-сессий
     if settings.OPCUA_ENABLED:
         await opcua_service.start()

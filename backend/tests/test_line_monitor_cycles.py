@@ -59,6 +59,34 @@ def test_repeated_number_gets_separate_cycles(monitor, monkeypatch):
     assert state.path == [], "путь прошлого прохода не должен наследоваться"
 
 
+def test_counter_continues_from_the_journal_after_a_restart(monitor):
+    """После перезапуска номера проходов продолжаются, а не начинаются с 1.
+
+    Счётчик живёт в памяти, поэтому без подстановки из журнала каждый
+    перезапуск выдавал бы номера, уже занятые, и разбирать проходы по номеру
+    становилось бы невозможно.
+    """
+    monitor.resume_cycle_counter(19)
+    state = lm.HangerState(id=1)
+    monitor._hangers[1] = state
+
+    monitor._open_cycle(state, 3, datetime(2026, 9, 29, 20, 0))
+
+    assert state.cycle_id == 20
+
+
+def test_counter_resume_never_goes_backwards(monitor):
+    """Чужое или битое значение не сбрасывает счётчик назад."""
+    monitor.resume_cycle_counter(100)
+    monitor.resume_cycle_counter(-5)
+    state = lm.HangerState(id=1)
+    monitor._hangers[1] = state
+
+    monitor._open_cycle(state, 3, datetime(2026, 9, 29, 20, 0))
+
+    assert state.cycle_id == 101
+
+
 def test_unload_closes_cycle_with_its_own_path(monitor, monkeypatch):
     """total_time_sec считается по текущему проходу, а не по первому за всё время."""
     start = datetime.now() - timedelta(minutes=90)
