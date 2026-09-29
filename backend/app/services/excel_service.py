@@ -4,6 +4,7 @@ Excel Service - handles Excel file parsing, caching, and data extraction.
 import time
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -14,6 +15,63 @@ from app.core.config import settings
 from app.services.hanger_row import EMPTY, HangerRow
 
 logger = logging.getLogger(__name__)
+
+# Путь к сетевой шаре: \\host\share\… либо диск с буквой Z:\… (после нормализации
+# разделителей). Хвост после шары — то, что сохраняется в смонтированном каталоге.
+_SHARE_PATH_RE = re.compile(r"^(?:\\\\[^\\]+\\[^\\]+|[A-Za-z]:)(?:\\(.*))?$")
+
+# Кавычки, которыми обрамляют путь при копировании: прямые, типографские,
+# угловые. Пара может быть разной («…»), поэтому проверяются оба края.
+_PATH_QUOTES = "\"'`“”„‟«»‘’‹›"
+
+# Строки листа, пропускаемые при чтении данных: две инструкции и строка
+# заголовков. Индекс первой строки данных в датафрейме равен нулю, а в
+# листе (нумерация с единицы) она идёт под номером
+# ``DATA_ROWS_SKIPPED + 1``.
+DATA_ROWS_SKIPPED = 3
+
+
+def normalize_path_input(path_text: str) -> str:
+    """Путь из буфера обмена: пробелы и кавычки по краям, в т.ч. типографские.
+
+    Оператор копирует путь из проводника, письма или строки статуса, и он
+    приходит в кавычках любого вида и с пробелами вокруг них. Пробелы внутри
+    пути (в имени книги) сохраняются: снимается только рамка.
+    """
+    value = path_text.strip()
+    while len(value) >= 2 and value[0] in _PATH_QUOTES and value[-1] in _PATH_QUOTES:
+        value = value[1:-1].strip()
+    return value
+
+
+def path_exists(path: Path) -> bool:
+    """``exists()`` по пути, который может быть чужим для этой машины.
+
+    Ядро отвечает на такой путь не только ENOENT: windows-путь с обратными
+    слэшами в Linux-контейнере даёт EINVAL, и без перехвата наружу уходил бы
+    500 вместо «файл не найден».
+    """
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def share_tail(path_text: str) -> Optional[List[str]]:
+    """Части пути после шары или диска: ``\\\\host\\share\\a\\b.xlsm`` → ``['a', 'b.xlsm']``.
+
+    Оператор набирает сетевую книгу так, как её видит его машина
+    (``\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm`` или ``Z:\\…``), а сервер — как
+    каталог смонтированной шары. Функция отделяет хвост, который в этом
+    каталоге сохраняется. ``None`` — путь не похож на путь к сетевой шаре либо
+    хвоста нет (``\\\\host\\share``, ``Z:\\``).
+    """
+    text = path_text.strip().replace("/", "\\")
+    match = _SHARE_PATH_RE.match(text)
+    if not match or not match.group(1):
+        return None
+    parts = [part for part in match.group(1).split("\\") if part]
+    return parts or None
 
 
 class ExcelService:
@@ -66,17 +124,68 @@ class ExcelService:
         self._cache_mtime: Optional[float] = None
         self._cache_path: Optional[Path] = None
         self._active_file_name: Optional[str] = self._load_persisted_active_file()
+        # О каком выборе уже сказали в лог: свойство спрашивают на каждый
+        # запрос статуса, повторять одно предупреждение незачем.
+        self._warned_about: Optional[str] = None
+
+    def _resolved_active(self) -> Optional[Path]:
+        """Выбор из интерфейса → путь: имя достраивается до каталога книги.
+
+        Имя без пути — старый формат записи (``Учет КПЗ 2026.xlsm``), его
+        достраивают каталогом книги. Путь с корнем (``/app/excel/…``,
+        ``\\\\host\\share\\…``, ``Z:\\…``) отдаётся как есть: приклеивать его к
+        каталогу нельзя — из ``/app/excel/…`` так получается чужой путь
+        ``\\\\host\\share\\app\\excel\\…``, которого нет. Путь к сетевой шаре
+        распознаётся и на Linux, где он не абсолютный: там он тоже чужой.
+        """
+        if not self._active_file_name:
+            return None
+        path = Path(self._active_file_name)
+        if path.is_absolute() or path.root or share_tail(self._active_file_name):
+            return path
+        if not settings.excel_path:
+            return None
+        return settings.excel_path.parent / path
 
     @property
     def current_path(self) -> Optional[Path]:
-        """Get path to the currently active Excel file"""
-        if self._active_file_name:
-            path = Path(self._active_file_name)
-            if path.is_absolute():
-                return path
-            elif settings.excel_path:
-                return settings.excel_path.parent / path
-        return settings.excel_path
+        """Путь к активной книге учёта.
+
+        Выбор из интерфейса перекрывает конфигурацию, но только если файл
+        существует здесь. ``active_excel.json`` лежит в общем каталоге `static`,
+        и на машине, где рядом живут dev и прод-контейнер, в него попадает
+        путь соседней среды (``/app/excel/…`` против
+        ``\\\\172.17.11.7\\Оператор\\…``). Чужой путь книгу не подменяет —
+        берётся путь из конфигурации, а в лог идёт предупреждение.
+        """
+        chosen = self._resolved_active()
+        if chosen is None:
+            return settings.excel_path
+        if path_exists(chosen):
+            return chosen
+
+        configured = settings.excel_path
+        if configured is not None and path_exists(configured):
+            if self._warned_about != self._active_file_name:
+                self._warned_about = self._active_file_name
+                logger.warning(
+                    f"[Excel] Выбор {chosen} на этой машине не существует — "
+                    f"книга берётся из конфигурации: {configured}"
+                )
+            return configured
+        return chosen
+
+    @property
+    def directory(self) -> Optional[Path]:
+        """Каталог книги: у сервера — смонтированная сетевая папка.
+
+        Один владелец правила для списка файлов, выбора по пути и подсказки в
+        ошибке: сначала каталог активной книги, затем каталог из конфигурации.
+        """
+        for candidate in (self.current_path, settings.excel_path):
+            if candidate and path_exists(candidate.parent):
+                return candidate.parent
+        return None
 
     def set_active_file(self, file_path: str) -> None:
         """Set active Excel file path/name and invalidate cache"""
@@ -246,7 +355,7 @@ class ExcelService:
             path,
             sheet_name=sheet_name,
             header=None,
-            skiprows=[0, 1, 2],
+            skiprows=list(range(DATA_ROWS_SKIPPED)),
             usecols=usecols,
             engine='calamine',
         )
@@ -432,6 +541,12 @@ class ExcelService:
             
             products.append(HangerRow(
                 number=number_display,
+                # Лист читается с пропуском трёх строк (две инструкции и
+                # заголовки), поэтому первая строка данных имеет индекс 0,
+                # а в листе, где нумерация с единицы, идёт под номером 4.
+                # Проверено сверкой с листом: индекс + 4 попадает в ту же
+                # строку, на единицу меньше — уже соседняя.
+                sheet_row=int(row.name) + DATA_ROWS_SKIPPED + 1,
                 date=date_str,
                 time=time_str,
                 client=row.get('client') if pd.notna(row.get('client')) else EMPTY,

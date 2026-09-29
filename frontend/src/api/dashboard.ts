@@ -45,17 +45,6 @@ export const dashboardApi = {
     })
     return data
   },
-
-  uploadExcelFile: async (file: File): Promise<ExcelSelectResponse> => {
-    const formData = new FormData()
-    formData.append('file', file)
-    const { data } = await api.post<ExcelSelectResponse>('/dashboard/excel/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    })
-    return data
-  },
 }
 
 

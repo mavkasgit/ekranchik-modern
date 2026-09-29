@@ -70,6 +70,20 @@ async def lifespan(app: FastAPI):
         logger.info("[STARTUP] ExcelWatcher started")
     else:
         logger.warning("[STARTUP] Excel path not configured, ExcelWatcher not started")
+        # Пустой каталог книги — не «файл не найден», а не смонтированный
+        # сетевой диск: без явного текста причина ищется наугад.
+        book_dir = settings.excel_path.parent if settings.excel_path else None
+        if book_dir is not None and book_dir.exists():
+            try:
+                empty = next(book_dir.iterdir(), None) is None
+            except OSError:
+                empty = False
+            if empty:
+                logger.error(
+                    f"[STARTUP] Каталог книги {book_dir} пуст: сетевой диск не смонтирован. "
+                    "На Windows прод запускается с infra/compose/docker-compose.prod.local.yml, "
+                    "на Linux диск монтирует infra/mount_and_start.sh"
+                )
     
     # OPC UA Service - пакетное чтение с защитой от зомби-сессий
     if settings.OPCUA_ENABLED:

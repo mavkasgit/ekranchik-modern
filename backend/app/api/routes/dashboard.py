@@ -6,13 +6,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 from app.core.config import settings
-from app.services.excel_service import excel_service
+from app.services.excel_service import (
+    excel_service,
+    normalize_path_input,
+    path_exists,
+    share_tail,
+)
 from app.services.catalog_service import catalog_service
 from app.services.hanger_row import EMPTY, HangerRow, to_hanger_data
 from app.services.profile_name import split_profiles
@@ -224,13 +229,9 @@ async def get_excel_files(folder_path: Optional[str] = Query(default=None, descr
         if folder_path:
             current_dir = Path(folder_path).resolve()
         else:
-            active_path = excel_service.current_path
-            if active_path and active_path.parent.exists():
-                current_dir = active_path.parent.resolve()
-            elif settings.excel_path and settings.excel_path.parent.exists():
-                current_dir = settings.excel_path.parent.resolve()
-            else:
-                current_dir = Path.cwd().resolve()
+            # Тот же каталог, что и для выбора по пути: смонтированная сетевая
+            # папка книги, иначе текущий каталог процесса.
+            current_dir = excel_service.directory or Path.cwd().resolve()
                 
         if not current_dir.exists():
             raise HTTPException(status_code=400, detail=f"Путь не существует: {current_dir}")
@@ -308,6 +309,62 @@ async def get_excel_files(folder_path: Optional[str] = Query(default=None, descr
         )
 
 
+def _not_found_detail(target: Path) -> str:
+    """Ошибка «файла нет» с подсказкой, если каталог книги пуст.
+
+    Пустой каталог — самый частый случай: сетевой диск не смонтирован в
+    контейнер (запуск прода на Windows без docker-compose.prod.local.yml).
+    Без подсказки оператор видит только «Файл не найден».
+    """
+    detail = f"Файл {target} не найден"
+    book_dir = excel_service.directory
+    if book_dir is not None:
+        try:
+            empty = next(book_dir.iterdir(), None) is None
+        except OSError:
+            empty = False
+        if empty:
+            detail += (
+                f". Каталог книги {book_dir} пуст — сетевой диск не смонтирован"
+                " (на Windows прод запускается с infra/compose/docker-compose.prod.local.yml)"
+            )
+    return detail
+
+
+def _resolve_book_file(raw_path: str) -> Path:
+    """Путь, набранный оператором, → путь, который видит сервер.
+
+    Оператор набирает сетевую книгу так, как её видит его машина
+    (``\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm`` или ``Z:\\…``), а сервер — как
+    каталог смонтированной шары: в контейнере такой путь не разрешается.
+    Поэтому хвост такого пути ищется в каталоге книги, и только потом путь
+    разрешается как есть (на Windows сервер читает шару сам).
+    """
+    book_dir = excel_service.directory
+    path = Path(raw_path)
+
+    tail = share_tail(raw_path)
+    if tail and book_dir is not None:
+        mapped = book_dir.joinpath(*tail)
+        if path_exists(mapped):
+            return mapped.resolve()
+        # На Windows сервер читает шару сам, и путь мог указывать в другую её
+        # папку; в контейнере такой путь не разрешается, и в ошибке должно
+        # стоять то место, где сервер искал файл.
+        if path.is_absolute() and path_exists(path):
+            return path.resolve()
+        return mapped.resolve()
+
+    if not path.is_absolute() and not path.root:
+        if book_dir is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Невозможно разрешить относительный путь: каталог книги неизвестен",
+            )
+        path = book_dir / path
+    return path.resolve()
+
+
 @router.post("/excel/select")
 async def select_excel_file(request: ExcelFileSelectRequest):
     """
@@ -316,27 +373,22 @@ async def select_excel_file(request: ExcelFileSelectRequest):
     try:
         # Support both file_path (for custom paths) and file_name (for backward compatibility)
         if request.file_path:
-            file_path = request.file_path.strip().strip('"\'')
+            # Путь копируют из проводника или письма: кавычки и пробелы по краям
+            # снимаются здесь, чтобы клиент не повторял правило.
+            file_path = normalize_path_input(request.file_path)
         elif request.file_name:
             # Backward compatibility
-            path = settings.excel_path
-            if not path:
+            book_dir = excel_service.directory
+            if book_dir is None:
                 raise HTTPException(status_code=400, detail="Путь к Excel-файлу не настроен")
-            file_path = str((path.parent / request.file_name).resolve())
+            file_path = str(book_dir / normalize_path_input(request.file_name))
         else:
             raise HTTPException(status_code=400, detail="Не указан путь к файлу (file_path) или его имя (file_name)")
 
-        target_file = Path(file_path)
-        if not target_file.is_absolute():
-            if settings.excel_path:
-                target_file = (settings.excel_path.parent / target_file).resolve()
-            else:
-                raise HTTPException(status_code=400, detail="Невозможно разрешить относительный путь")
+        target_file = _resolve_book_file(file_path)
 
-        target_file = target_file.resolve()
-        
-        if not target_file.exists():
-            raise HTTPException(status_code=404, detail=f"Файл {target_file} не найден")
+        if not path_exists(target_file):
+            raise HTTPException(status_code=404, detail=_not_found_detail(target_file))
             
         if not target_file.is_file():
             raise HTTPException(status_code=400, detail=f"Указанный путь не является файлом: {target_file}")
@@ -374,68 +426,6 @@ async def select_excel_file(request: ExcelFileSelectRequest):
     except Exception as e:
         logger.error(f"[DASHBOARD API] Failed to select Excel file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/excel/upload")
-async def upload_excel_file(file: UploadFile = File(...)):
-    """
-    Upload an Excel file to the server and set it as the active Excel file.
-    """
-    try:
-        # Check file extension
-        suffix = Path(file.filename).suffix.lower()
-        if suffix not in ('.xlsx', '.xls', '.xlsm'):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Неподдерживаемый формат файла: {suffix}. Допустимы только .xlsx, .xls, .xlsm"
-            )
-            
-        path = settings.excel_path
-        if path:
-            target_dir = path.parent
-        else:
-            target_dir = Path(settings.STATIC_DIR) / "uploads"
-            
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_file = target_dir / file.filename
-        
-        # Save file contents
-        content = await file.read()
-        with open(target_file, "wb") as f:
-            f.write(content)
-            
-        # Set this file as the active Excel file
-        excel_service.set_active_file(str(target_file.resolve()))
-        logger.info(f"[DASHBOARD API] Uploaded and selected Excel file: {target_file}")
-        
-        # Invalidate watcher cache if running, and notify via WS
-        try:
-            from app.services.websocket_manager import websocket_manager
-            from app.schemas.websocket import WebSocketMessage
-            message = WebSocketMessage(
-                type="data_update",
-                payload={
-                    "source": "excel",
-                    "file": target_file.name,
-                    "file_path": str(target_file.resolve()),
-                    "message": f"Активный файл Excel изменен на {target_file.name}"
-                },
-                timestamp=datetime.now()
-            )
-            await websocket_manager.broadcast(message)
-        except Exception as ws_err:
-            logger.warning(f"Could not broadcast websocket update for file switch: {ws_err}")
-            
-        return {
-            "success": True,
-            "active": str(target_file.resolve())
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[DASHBOARD API] Failed to upload Excel file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 
 @router.get("/status/opcua", response_model=FileStatus)

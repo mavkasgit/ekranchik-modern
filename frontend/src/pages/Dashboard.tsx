@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, AlertTriangle, Inbox, Clock
+  Image, Maximize2, Minimize2, X, AlertTriangle, Inbox, Clock,
+  Folder, Loader2, CornerUpLeft
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -50,7 +51,7 @@ import type { Profile } from '@/types/profile'
 import { formatClock, formatLocalized } from '@/lib/domain/time'
 import { BathForecast } from '@/components/BathForecastTable'
 import { dashboardApi } from '@/api/dashboard'
-import type { HangerData, ProfileInfo } from '@/types/dashboard'
+import type { HangerData, ProfileInfo, ExcelFilesResponse } from '@/types/dashboard'
 import { useFullscreen } from '@/App'
 
 const FILTERS_KEY = 'ekranchik_filters'
@@ -489,14 +490,14 @@ function StatusBar({
   activeFile,
   recentFiles,
   onSelectFile,
-  onOpenExplorer,
+  onOpenFilePicker,
   onOpenPathModal,
   isFetching,
 }: {
   activeFile: string;
   recentFiles: string[];
   onSelectFile: (filePath: string) => void;
-  onOpenExplorer: () => void;
+  onOpenFilePicker: () => void;
   onOpenPathModal: () => void;
   isFetching: boolean;
 }) {
@@ -527,9 +528,9 @@ function StatusBar({
               <Button
                 variant="link"
                 size="sm"
-                onClick={onOpenExplorer}
+                onClick={onOpenFilePicker}
                 className="text-foreground h-auto p-0 font-medium truncate max-w-[250px] hover:text-primary cursor-pointer border-b border-dashed border-foreground/50 hover:border-primary text-xs inline-flex hover:no-underline"
-                title="Нажмите, чтобы выбрать или изменить active файл Excel"
+                title="Нажмите, чтобы выбрать книгу учёта на сервере"
               >
                 {fileStatus?.file_name || activeFile.split(/[\\/]/).pop() || 'Выбрать файл'}
               </Button>
@@ -561,11 +562,11 @@ function StatusBar({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="bg-background border-border text-foreground">
                   <DropdownMenuItem
-                    onClick={onOpenExplorer}
+                    onClick={onOpenFilePicker}
                     disabled={isFetching}
                     className="cursor-pointer text-xs focus:bg-accent focus:text-accent-foreground"
                   >
-                    Выбрать новый файл...
+                    Выбрать файл на сервере...
                   </DropdownMenuItem>
                   {recentFiles.filter(Boolean).length > 0 && (
                     <>
@@ -1214,6 +1215,21 @@ const formatLastModified = (isoString?: string) => {
     return isoString;
   }
 };
+// Текст ошибки API: detail от FastAPI (HTTPException) либо message транспорта.
+function apiErrorMessage(err: unknown, fallback: string): string {
+  if (typeof err === 'object' && err !== null) {
+    if ('response' in err && typeof err.response === 'object' && err.response !== null) {
+      const response = err.response
+      if ('data' in response && typeof response.data === 'object' && response.data !== null) {
+        const data = response.data
+        if ('detail' in data && typeof data.detail === 'string') return data.detail
+      }
+    }
+    if ('message' in err && typeof err.message === 'string') return err.message
+  }
+  return fallback
+}
+
 // Main
 export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(loadFilters)
@@ -1279,29 +1295,37 @@ export default function Dashboard() {
     });
   }, []);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Выбор книги учёта. Файл лежит на сетевом диске, который видит сервер, а не
+  // браузер: список отдаёт бэкенд (GET /dashboard/excel/files), а выбор идёт по
+  // пути сервера (POST /dashboard/excel/select). Копию файла клиента на сервер
+  // не передаём: каталог книги на проде read-only, а на записываемой шаре копия
+  // под тем же именем затёрла бы боевую книгу.
+  const [isFilePickerOpen, setIsFilePickerOpen] = useState(false)
+  const [pickerData, setPickerData] = useState<ExcelFilesResponse | null>(null)
+  const [pickerLoading, setPickerLoading] = useState(false)
+  const [pickerError, setPickerError] = useState<string | null>(null)
 
-  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const loadPickerDir = useCallback(async (dir?: string) => {
+    setPickerLoading(true)
+    setPickerError(null)
     try {
-      const res = await dashboardApi.uploadExcelFile(file);
-      if (res.success) {
-        setActiveFile(res.active);
-        addRecentFile(res.active);
-        // Refetch queries
-        queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY })
+      const res = await dashboardApi.getExcelFiles(dir)
+      setPickerData(res)
+      if (!res.success) {
+        setPickerError(res.error || 'Папку не удалось прочитать')
       }
-    } catch (err: any) {
-      console.error('Ошибка загрузки Excel-файла:', err);
-      alert(err.response?.data?.detail || err.message || 'Ошибка загрузки файла');
+    } catch (err: unknown) {
+      setPickerData(null)
+      setPickerError(apiErrorMessage(err, 'Папку не удалось прочитать'))
     } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+      setPickerLoading(false)
     }
-  };
+  }, [])
+
+  const openFilePicker = useCallback(() => {
+    setIsFilePickerOpen(true)
+    loadPickerDir()
+  }, [loadPickerDir])
 
   // Fetch Excel files list initially
   useEffect(() => {
@@ -1326,9 +1350,9 @@ export default function Dashboard() {
         // Refetch queries
         queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY })
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Ошибка выбора Excel-файла:', err);
-      alert(err.response?.data?.detail || err.message || 'Ошибка выбора файла');
+      alert(apiErrorMessage(err, 'Ошибка выбора файла'));
     }
   };
 
@@ -1367,7 +1391,7 @@ export default function Dashboard() {
           <strong>Внимание!</strong> Файл не сохранялся более 30 минут. 
           Отображаемые данные могут быть неверными! 
           (Последнее сохранение: {formatLastModified(fileStatus?.last_modified)}). 
-          Настройте сохранение файла либо выберите копию файла.
+          Настройте сохранение файла либо выберите другую книгу учёта.
         </div>
       </div>
     );
@@ -1802,7 +1826,7 @@ export default function Dashboard() {
           activeFile={activeFile}
           recentFiles={recentFiles}
           onSelectFile={handleSelectExcelFile}
-          onOpenExplorer={() => fileInputRef.current?.click()}
+          onOpenFilePicker={openFilePicker}
           onOpenPathModal={() => setIsPathModalOpen(true)}
           isFetching={isFetching}
         />
@@ -1924,7 +1948,7 @@ export default function Dashboard() {
               Ввод пути к Excel файлу
             </DialogTitle>
             <DialogDescription className="text-muted-foreground text-xs">
-              Укажите полный путь к Excel-файлу на сервере для его загрузки и активации в системе.
+              Укажите полный путь к книге учёта на сервере — по этому пути сервер её открывает.
             </DialogDescription>
           </DialogHeader>
 
@@ -1975,7 +1999,7 @@ export default function Dashboard() {
             </Button>
             <Button
               onClick={async () => {
-                const cleaned = customPathInput.trim().replace(/^["']|["']$/g, '');
+                const cleaned = customPathInput.trim();
                 if (cleaned) {
                   await handleSelectExcelFile(cleaned);
                   setIsPathModalOpen(false);
@@ -1991,13 +2015,93 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleUploadFile}
-        accept=".xlsx,.xls,.xlsm"
-        className="hidden"
-      />
+      <Dialog open={isFilePickerOpen} onOpenChange={(open) => { if (!open) { setIsFilePickerOpen(false); setPickerData(null); setPickerError(null); } }}>
+        <DialogContent className="max-w-2xl bg-background border-border text-foreground p-6 rounded-lg shadow-2xl flex flex-col gap-4">
+          <DialogHeader className="space-y-1.5">
+            <DialogTitle className="text-xl font-bold flex items-center gap-2 text-emerald-600">
+              <FileSpreadsheet className="w-5 h-5" />
+              Книга учёта на сервере
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground text-xs">
+              Файл читает сервер, поэтому и список — то, что видит сервер.
+              {pickerData?.current_directory && (
+                <span className="block font-mono text-[11px] mt-1 break-all">{pickerData.current_directory}</span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-[240px] max-h-[420px] overflow-y-auto border border-border rounded-md divide-y divide-border">
+            {pickerLoading && (
+              <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Читаю папку…
+              </div>
+            )}
+            {!pickerLoading && pickerError && (
+              <div className="px-3 py-4 text-xs text-destructive">{pickerError}</div>
+            )}
+            {!pickerLoading && !pickerError && pickerData && (
+              <>
+                {pickerData.parent_directory && (
+                  <button
+                    type="button"
+                    onClick={() => loadPickerDir(pickerData.parent_directory || undefined)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent"
+                    title={pickerData.parent_directory}
+                  >
+                    <CornerUpLeft className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="font-mono text-xs text-muted-foreground">..</span>
+                  </button>
+                )}
+                {pickerData.files.length === 0 && (
+                  <div className="px-3 py-4 text-xs text-muted-foreground">В папке нет файлов Excel</div>
+                )}
+                {pickerData.files.map((item) => {
+                  const isActive = item.path === pickerData.active;
+                  return (
+                    <button
+                      key={item.path}
+                      type="button"
+                      onClick={() => {
+                        if (item.is_dir) {
+                          loadPickerDir(item.path);
+                          return;
+                        }
+                        // Путь сервера, а не копия файла: бэкенд откроет его сам.
+                        handleSelectExcelFile(item.path).then(() => setIsFilePickerOpen(false));
+                      }}
+                      className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent ${isActive ? 'bg-emerald-50 dark:bg-emerald-950/40' : ''}`}
+                      title={item.path}
+                    >
+                      {item.is_dir
+                        ? <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                        : <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />}
+                      <span className={`text-xs truncate ${isActive ? 'font-semibold text-emerald-700 dark:text-emerald-400' : ''}`}>
+                        {item.name}
+                      </span>
+                      {!item.is_dir && (
+                        <span className="ml-auto shrink-0 text-[11px] text-muted-foreground tabular-nums">
+                          {item.size_formatted}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </>
+            )}
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setIsFilePickerOpen(false)}
+              className="h-8 text-xs font-medium px-4"
+            >
+              Закрыть
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Фиксированные часы в правом нижнем углу */}
       <div className="fixed bottom-4 right-4 z-50 bg-background/95 dark:bg-slate-900/95 backdrop-blur-sm border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-2 shadow-lg flex items-center gap-2">
