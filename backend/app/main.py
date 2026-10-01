@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"[STARTUP] Ekranchik Modern v{get_app_version()}")
     logger.info(f"[STARTUP] Environment: {settings.ENVIRONMENT}")
 
-    # Full mode (ADR 0002): каталог данных + миграции до старта сервисов.
+    # Заводская машина (ADR 0002): каталог данных + миграции до старта сервисов.
     ensure_data_dirs()
     await run_startup_migrations()
     # Start ExcelWatcher
@@ -197,7 +197,7 @@ async def api_version():
     return {"version": get_app_version()}
 
 
-# Full mode (ADR 0002): serve frontend/dist SPA on the same port.
+# Заводская машина (ADR 0002): serve frontend/dist SPA on the same port.
 # Order matters: api (/api) -> ws (/ws) -> static (/static) -> health/docs
 # are registered above and win; SPA mount + fallback only handle the rest.
 # The catch-all is registered BEFORE the "/" mount on purpose: a Mount on "/"

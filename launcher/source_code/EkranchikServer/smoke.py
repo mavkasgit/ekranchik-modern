@@ -190,8 +190,8 @@ def main() -> int:
     # Бэкап чужого состояния ДО любых записей.
     saved_server_cfg = server_cfg.read_bytes() if server_cfg.exists() else None
     # SyncAutoStart при старте трогает настоящий Run только под нашим именем
-    # значения (EkranchikServer), миграция удаляет legacy-значение
-    # EkranchikAllInOne — бэкапим оба значения, не весь ключ.
+    # значения (EkranchikServer), миграция удаляет устаревшее
+    # значение прежней поставки — бэкапим оба значения, не весь ключ.
     REAL_RUN = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
     saved_run = _ps("(Get-ItemPropertyValue "
                     f"-Path '{REAL_RUN}' -Name 'EkranchikServer' -ErrorAction SilentlyContinue)")

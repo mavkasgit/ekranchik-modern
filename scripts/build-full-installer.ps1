@@ -94,7 +94,7 @@ if (-not (Test-Path (Join2 $FrontendDist "index.html"))) {
   else { throw "$msg Соберите (шаг 1) или передайте -AllowMissingDist." }
 }
 
-# --- 2. Пакет полного режима (issue #5) ---
+# --- 2. Пакет заводской машины (issue #5) ---
 Write-Host "==> Собираю пакет scripts/build-full-package.ps1"
 $pkgArgs = @{}
 if ($SkipPythonDownload) { $pkgArgs["SkipPythonDownload"] = $true }

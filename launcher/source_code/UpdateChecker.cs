@@ -400,7 +400,7 @@ namespace EkranchikShared
                 + " \"browser_download_url\": \"https://dl/bak\"},"
                 + "{\"name\": \"MyEkranchikSetup.exe\","
                 + " \"browser_download_url\": \"https://dl/evil.exe\"},"
-                + "{\"name\": \"EkranchikAllInOne.exe\","
+                + "{\"name\": \"UnrelatedApp.exe\","
                 + " \"browser_download_url\": \"https://dl/other.exe\"}]},"
                 + "{\"tag_name\": \"full-v1.0.6\", \"draft\": false, \"prerelease\": false, \"body\": \"garbage only\","
                 + " \"assets\": [{\"name\": \"EkranchikSetup-notes.txt\","

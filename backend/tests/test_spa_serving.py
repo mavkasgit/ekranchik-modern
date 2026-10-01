@@ -1,5 +1,5 @@
 """
-SPA serving tests (ADR 0002, full mode).
+SPA serving tests (ADR 0002, plant machine).
 
 FastAPI serves frontend/dist on the same port when the dist directory
 exists, with SPA fallback to index.html. Without dist the legacy

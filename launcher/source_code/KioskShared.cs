@@ -123,9 +123,9 @@ namespace EkranchikShared
         public const string KioskArgsSuffix = " --no-gui";
         public const string ServerValueName = "EkranchikServer";
         public const string ServerArgsSuffix = " --silent";
-        // Значение merged-режима (EkranchikAllInOne): больше не поставляется,
+        // Значение прежней поставки (EkranchikAllInOne): больше не поставляется,
         // сервер удаляет его при старте.
-        public const string LegacyMergedValueName = "EkranchikAllInOne";
+        public const string LegacyAutostartValueName = "EkranchikAllInOne";
 
         public static string EffectiveKeyPath(string? runKeyPath) =>
             string.IsNullOrWhiteSpace(runKeyPath) ? RealRunKeyPath : runKeyPath!;
@@ -144,7 +144,7 @@ namespace EkranchikShared
             }
         }
 
-        // Миграция: удалить чужое значение (например, запись merged-режима,
+        // Миграция: удалить чужое значение (например, запись прежней поставки,
         // которого больше нет на диске).
         public static void DeleteValue(string valueName, string? runKeyPath = null)
         {

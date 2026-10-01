@@ -95,7 +95,7 @@ class ExcelService:
         filename = settings.excel_active_file_name
         if static_dir.exists():
             return static_dir / filename
-        # Full mode (ADR 0002): static нет — хранить выбор в каталоге данных,
+        # Заводская машина (ADR 0002): static нет — хранить выбор в каталоге данных,
         # чтобы пережил обновление (раньше падал в CWD рядом с кодом).
         return settings.data_dir_path / filename
 

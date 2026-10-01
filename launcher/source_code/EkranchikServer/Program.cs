@@ -25,7 +25,7 @@
 //     (по умолчанию в настоящем Run; с --run-key — в тестовом подключении
 //     HKCU\<subkey> под тем же именем значения) и выходит;
 //   --run-key=<subkey> — действует и на обычном старте: и запись автозапуска
-//     сервера, и чистка устаревшего merged-значения идут в тестовое
+//     сервера, и чистка устаревшего значения идут в тестовое
 //     подключение, настоящий Run машины не пачкается.
 
 using System;
@@ -525,14 +525,14 @@ namespace EkranchikServer
             _appLog.Write($"settings: excel={config.ExcelPath} opcua={config.OpcuaEndpoint} " +
                 $"sim={config.SimulationEnabled} lan={config.LanAccess} autostart={config.AutoStart}");
             SyncAutoStart();
-            // Миграция: merged-приложение (EkranchikAllInOne) больше не
+            // Миграция: прежняя поставка (EkranchikAllInOne) больше не
             // поставляется — его значение автозапуска убираем, иначе при
             // автозагрузке стартует то, чего уже нет на диске. Значение
             // экрана киоска (Ekranchik) НЕ трогаем: это отдельное приложение.
             try
             {
-                WindowsAutoStart.DeleteValue(WindowsAutoStart.LegacyMergedValueName, _runKeyPath);
-                _appLog.Write($"migration: legacy merged autostart value removed from " +
+                WindowsAutoStart.DeleteValue(WindowsAutoStart.LegacyAutostartValueName, _runKeyPath);
+                _appLog.Write($"migration: legacy autostart value removed from " +
                               $"{WindowsAutoStart.EffectiveKeyPath(_runKeyPath)}");
             }
             catch (Exception ex)

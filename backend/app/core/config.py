@@ -1,14 +1,14 @@
 """
 Application configuration using Pydantic Settings
 
-Full mode (ADR 0002): на заводской машине без Docker данные (SQLite + images)
+Заводская машина без Docker (ADR 0002): данные (SQLite + images)
 живут в %LOCALAPPDATA%/Ekranchik/data и переживают переустановку.
 Правила разрешения (dev/Docker не ломаются):
   DATABASE_URL / IMAGES_DIR, заданные явно (env, .env, compose) — всегда win.
   Иначе: EKRANCHIK_DATA_DIR > %LOCALAPPDATA%/Ekranchik/data > ./data-фолбэк.
-Настройки #4 из AllInOne пробрасываются env-алиасами EKRANCHIK_* (контракт
-с EkranchikAllInOne): EKRANCHIK_EXCEL_PATH, EKRANCHIK_OPCUA_ENDPOINT,
-EKRANCHIK_SIMULATION. Голые имена в приоритете над алиасами.
+Настройки пробрасываются env-алиасами EKRANCHIK_*: EKRANCHIK_EXCEL_PATH,
+EKRANCHIK_OPCUA_ENDPOINT, EKRANCHIK_SIMULATION. Голые имена в приоритете
+над алиасами.
 """
 import os
 from pathlib import Path
@@ -18,7 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def default_data_dir() -> Optional[Path]:
-    """Каталог данных полного режима или None (dev/Docker-фолбэк)."""
+    """Каталог данных заводской машины или None (dev/Docker-фолбэк)."""
     override = os.environ.get("EKRANCHIK_DATA_DIR")
     if override:
         return Path(override)
@@ -75,10 +75,10 @@ class Settings(BaseSettings):
     STATIC_DIR: str = "../static"  # Relative to backend folder
     IMAGES_DIR: str = "../static/images"
 
-    # Frontend SPA (full mode, ADR 0002): FastAPI serves frontend/dist on the same port
+    # Frontend SPA (ADR 0002): FastAPI serves frontend/dist on the same port
     FRONTEND_DIST_DIR: str = "../frontend/dist"  # Relative to backend folder
 
-    # Full-mode overrides from EkranchikAllInOne settings UI (#4).
+    # Overrides from the server settings UI (EKRANCHIK_* contract).
     # Applied in the validator below ONLY when the bare name was not
     # provided explicitly (env/.env/compose win over aliases).
     EKRANCHIK_DATA_DIR: Optional[str] = None
@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     EKRANCHIK_SIMULATION: Optional[bool] = None
 
     @model_validator(mode="after")
-    def _apply_full_mode_defaults(self):
+    def _apply_plant_defaults(self):
         """Разрешить каталог данных и EKRANCHIK_*-алиасы (ADR 0002)."""
         provided = self.model_fields_set
         if self.EKRANCHIK_SIMULATION is not None and "SIMULATION_ENABLED" not in provided:
@@ -172,7 +172,7 @@ class Settings(BaseSettings):
     def FRONTEND_DIST_PATH(self) -> Path | None:
         """Get frontend dist directory path"""
         candidates = [Path(self.FRONTEND_DIST_DIR)]
-        # Пакет полного режима: <pkg>/backend + <pkg>/dist (CWD = backend/).
+        # Пакет заводской машины: <pkg>/backend + <pkg>/dist (CWD = backend/).
         backend_dir = Path(__file__).resolve().parents[2]
         candidates.append(backend_dir.parent / "dist")
         for path in candidates:

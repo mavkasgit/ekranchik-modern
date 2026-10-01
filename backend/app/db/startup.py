@@ -1,5 +1,5 @@
 """
-Startup helpers for full mode (ADR 0002): data dirs + migrations.
+Startup helpers for the plant machine (ADR 0002): data dirs + migrations.
 
 - ensure_data_dirs(): создаёт каталог sqlite-файла и images при старте.
   Идемпотентно, dev/Docker не затрагивает (их пути уже существуют/заданы).

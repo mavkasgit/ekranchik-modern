@@ -1,10 +1,10 @@
 ﻿<#
 .SYNOPSIS
-  Разовый перенос данных Docker-прода в каталог данных All-in-One (ADR 0002, issue #7).
+  Разовый перенос данных Docker-прода в каталог данных заводской машины (ADR 0002, issue #7).
 
 .DESCRIPTION
   Копирует SQLite БД и каталог images/ с прод-сервера в каталог данных
-  полного режима %LOCALAPPDATA%/Ekranchik/data:
+  заводской машины %LOCALAPPDATA%/Ekranchik/data:
     <DataDir>/ekranchik.db
     <DataDir>/images/
 
@@ -63,7 +63,7 @@ if (-not $Force) {
   # Живой сервер держит БД своим дочерним python-бэкендом. Имя процесса на
   # новых поставках — EkranchikServer (экран киоска Ekranchik БД не трогает,
   # поэтому в проверку не входит); EkranchikAllInOne оставлен для машин,
-  # где ещё стоит merged-приложение.
+  # где ещё стоит прежняя поставка.
   $serverNames = @("EkranchikServer", "EkranchikAllInOne")
   $server = Get-Process -Name $serverNames -ErrorAction SilentlyContinue
   if ($server) {

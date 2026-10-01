@@ -3,7 +3,7 @@
 Бэкенд читает VERSION в рантайме (фолбэк 'dev', если файла нет —
 например, в минимальной dev-раскладке). Поиск идёт вверх от этого файла,
 поэтому работает и в репозитории (backend/app/core/version.py -> корень),
-и в полном пакете (dist-full/backend/VERSION, кладёт build-full-package.ps1).
+и в пакете заводской машины (dist-full/backend/VERSION, кладёт build-full-package.ps1).
 """
 from functools import lru_cache
 from pathlib import Path

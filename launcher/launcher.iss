@@ -35,7 +35,7 @@
 ; данных и живые настройки (%LOCALAPPDATA%\Ekranchik: data/, *.json, logs/)
 ; установкой, обновлением и удалением компонентов НЕ затрагиваются — они
 ; нигде ниже не перечислены.
-; Файлы и ярлыки прежнего merged-приложения EkranchikAllInOne вычищаются
+; Файлы и ярлыки прежней поставки EkranchikAllInOne вычищаются
 ; всегда: разделённых приложений он больше не запускает.
 ;
 ; Сборка пакета перед компиляцией (порядок важен):
@@ -46,7 +46,7 @@
 ;                    (штамп из корневого VERSION; без флага версия подхватится
 ;                    сама через source_code\Directory.Build.props).
 ;                    Даёт launcher\EkranchikServer.exe. Рядом раскладывается
-;                    пакет полного режима (ниже шаг 3).
+;                    пакет заводской машины (ниже шаг 3).
 ;   3. Python-пакет: powershell -ExecutionPolicy Bypass -File ..\scripts\build-full-package.ps1
 ;                    (раскладывает ..\dist-full\{python,backend,dist}).
 ;
@@ -59,7 +59,7 @@
 #define MyAppPublisher "Mavka"
 #define MyAppExeName "Ekranchik.exe"
 #define MyAppServerExeName "EkranchikServer.exe"
-; Прежнее merged-приложение: файлы и ярлыки вычищаются всегда.
+; Прежняя поставка: файлы и ярлыки вычищаются всегда.
 #define MyAppLegacyExeName "EkranchikAllInOne.exe"
 #define MyAppIconName "launcher.ico"
 
@@ -161,7 +161,7 @@ Type: filesandordirs; Name: "{app}\dist"; Check: not WizardIsComponentSelected('
 Type: filesandordirs; Name: "{app}\python"; Check: not WizardIsComponentSelected('server')
 Type: files; Name: "{group}\{#MyAppName} (сервер).lnk"; Check: not WizardIsComponentSelected('server')
 Type: files; Name: "{userdesktop}\{#MyAppName} (сервер).lnk"; Check: not WizardIsComponentSelected('server')
-; --- Вычистка прежнего merged-приложения (общий AppId): на любой машине с
+; --- Вычистка прежней поставки (общий AppId): на любой машине с
 ; прежней поставкой мог остаться EkranchikAllInOne.exe и его ярлыки. ---
 Type: files; Name: "{app}\{#MyAppLegacyExeName}"
 Type: files; Name: "{app}\EkranchikAllInOne.dll"
