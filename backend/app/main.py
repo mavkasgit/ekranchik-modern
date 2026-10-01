@@ -169,6 +169,17 @@ app.include_router(opcua_router, prefix="/api")
 app.include_router(websocket_router)
 app.include_router(journal_router, prefix="/api")
 
+# Фото профилей: веб-интерфейс просит их как /static/images/… (photoUrl).
+# В dev и Docker это подкаталог статики (../static/images, /app/static/images),
+# а в пакете заводской машины (ADR 0002) каталога static рядом с backend нет
+# вовсе: фото живут в каталоге данных (…/Ekranchik/data/images). Поэтому
+# каталог изображений монтируется отдельно и РАНЬШЕ общего /static: иначе в
+# пакете все фото отдавали 404, хотя файлы на месте.
+images_dir = settings.images_path
+images_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/static/images", StaticFiles(directory=str(images_dir)), name="images")
+logger.info(f"[STARTUP] Images mounted from: {images_dir}")
+
 # Mount static files - use project root static folder
 # In development: ../static (relative to backend folder)
 # In Docker: /app/static (mounted volume)

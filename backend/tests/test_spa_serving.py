@@ -17,9 +17,11 @@ from fastapi.testclient import TestClient
 from app.core import config as config_module
 
 INDEX_HTML = "<html><body><div id='root'>SPA</div></body></html>"
+PHOTO_BYTES = b"\xff\xd8\xff\xe0jpeg-thumb"
 
 
-def _load_app(monkeypatch, tmp_path, with_dist: bool, with_index: bool = True):
+def _load_app(monkeypatch, tmp_path, with_dist: bool, with_index: bool = True,
+              with_static: bool = True):
     """Reload app.main with settings pointed at a controlled tmp layout."""
     if with_dist:
         dist = tmp_path / "dist"
@@ -34,9 +36,16 @@ def _load_app(monkeypatch, tmp_path, with_dist: bool, with_index: bool = True):
         )
 
     static = tmp_path / "static"
-    static.mkdir(exist_ok=True)
-    (static / "hello.txt").write_text("static-file", encoding="utf-8")
+    if with_static:
+        static.mkdir(exist_ok=True)
+        (static / "hello.txt").write_text("static-file", encoding="utf-8")
     monkeypatch.setattr(config_module.settings, "STATIC_DIR", str(static))
+
+    # Фото профилей живут в каталоге данных, а не в static (ADR 0002).
+    images = tmp_path / "data" / "images"
+    images.mkdir(parents=True)
+    (images / "photo-thumb.jpg").write_bytes(PHOTO_BYTES)
+    monkeypatch.setattr(config_module.settings, "IMAGES_DIR", str(images))
 
     import app.main as main_module
 
@@ -57,6 +66,13 @@ def api_only_client(monkeypatch, tmp_path):
 @pytest.fixture()
 def no_index_client(monkeypatch, tmp_path):
     return _load_app(monkeypatch, tmp_path, with_dist=True, with_index=False)
+
+
+@pytest.fixture()
+def plant_client(monkeypatch, tmp_path):
+    """Раскладка пакета заводской машины: dist и каталог данных есть,
+    каталога static рядом с backend нет вовсе."""
+    return _load_app(monkeypatch, tmp_path, with_dist=True, with_static=False)
 
 
 def test_root_serves_index_html(spa_client):
@@ -82,6 +98,23 @@ def test_static_mounted_from_backend(spa_client):
     resp = spa_client.get("/static/hello.txt")
     assert resp.status_code == 200
     assert resp.text == "static-file"
+
+
+def test_images_served_from_images_dir(spa_client):
+    """Веб-интерфейс просит фото профиля как /static/images/… (photoUrl):
+    файл обязан браться из каталога изображений, а не из static."""
+    resp = spa_client.get("/static/images/photo-thumb.jpg")
+    assert resp.status_code == 200
+    assert resp.content == PHOTO_BYTES
+
+
+def test_images_served_in_plant_layout_without_static(plant_client):
+    """Пакет заводской машины (ADR 0002): каталога static рядом с backend нет,
+    фото лежат в каталоге данных. /static/images/… обязан отдавать файл —
+    иначе каталог профилей на заводской машине остаётся без картинок."""
+    resp = plant_client.get("/static/images/photo-thumb.jpg")
+    assert resp.status_code == 200
+    assert resp.content == PHOTO_BYTES
 
 
 def test_api_namespace_not_shadowed_by_spa(spa_client):
