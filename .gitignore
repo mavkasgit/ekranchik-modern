@@ -74,6 +74,13 @@ npm-debug.log*
 # Build outputs
 frontend/dist/
 dist-full/
+# Собранные приложения (dotnet publish: kiosk, kiosk-single, server) рядом
+# с репозиторием. Из их состава правило *.exe отсеивает только сами exe —
+# WebView2Loader.dll, Microsoft.Web.WebView2.*.xml и *.pdb оставались
+# неотслеживаемыми (11 файлов при 328 МБ каталога). Каталог игнорируется
+# целиком: это публикация, а не исходники; для установщика нужный
+# WebView2Loader.dll лежит в launcher/ и отслеживается там.
+dist-exe/
 
 # Kiro (AI development specs and documentation)
 .kiro/
