@@ -214,7 +214,7 @@ namespace EkranchikServer
         // Сетевой путь к Excel-книге учёта.
         public string ExcelPath { get; set; } = "//ktm-disk/Оператор/Учет КПЗ 2026.xlsm";
         // Адрес реального OPC UA сервера.
-        public string OpcuaEndpoint { get; set; } = "opc.tcp://172.17.11.131:4840/";
+        public string OpcuaEndpoint { get; set; } = "opc.tcp://172.17.11.115:4840/";
         // Тестовые данные (SIMULATION_ENABLED у backend).
         public bool SimulationEnabled { get; set; } = false;
         // Желаемый автозапуск Windows (реестр HKCU ...\Run синхронизируется

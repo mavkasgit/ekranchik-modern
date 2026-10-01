@@ -5,7 +5,7 @@
 ```env
 # backend/.env
 OPCUA_ENABLED=True
-OPCUA_ENDPOINT=opc.tcp://172.17.11.131:4840/
+OPCUA_ENDPOINT=opc.tcp://172.17.11.115:4840/
 OPCUA_POLL_INTERVAL=5
 ```
 
@@ -46,10 +46,10 @@ diagnostics = opcua_service.get_diagnostics()
 
 ```bash
 # 1. Проверить доступность хоста
-ping 172.17.11.131
+ping 172.17.11.115
 
 # 2. Проверить порт
-nc -zv 172.17.11.131 4840
+nc -zv 172.17.11.115 4840
 
 # 3. Проверить API
 curl http://localhost:8000/api/opcua/diagnose

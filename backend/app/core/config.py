@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     # --- OPC UA Configuration ---
     OPCUA_ENABLED: bool = True # Master switch to enable/disable OPC UA service
-    OPCUA_ENDPOINT: str = "opc.tcp://172.17.11.131:4840/"
+    OPCUA_ENDPOINT: str = "opc.tcp://172.17.11.115:4840/"
     OPCUA_SIM_ENDPOINT: str = "opc.tcp://127.0.0.1:4840/freeopcua/server/" # Simulator endpoint
     OPCUA_POLL_INTERVAL: int = 5  # Seconds between polls for real server
     OPCUA_SIM_POLL_INTERVAL: int = 1  # Seconds between polls for simulation

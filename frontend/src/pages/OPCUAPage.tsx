@@ -335,7 +335,7 @@ export function OPCUAPage() {
                 <div className="bg-gray-50 rounded-lg p-4 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Endpoint:</span>
-                    <span className="font-mono text-sm">{status?.endpoint || 'opc.tcp://172.17.11.131:4840'}</span>
+                    <span className="font-mono text-sm">{status?.endpoint || 'opc.tcp://172.17.11.115:4840'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">State:</span>
