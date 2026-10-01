@@ -171,6 +171,21 @@ Type: files; Name: "{group}\{#MyAppName}.lnk"
 Type: files; Name: "{userdesktop}\{#MyAppName}.lnk"
 Type: files; Name: "{group}\{#MyAppName} Полный пакет.lnk"
 Type: files; Name: "{userdesktop}\{#MyAppName} Полный пакет.lnk"
+; Конфиг прежней поставки (PythonExe/KioskExe/UseExternalKiosk): ADR 0004 не
+; читает его вовсе, но на машине с прежней установкой он остаётся лежать в
+; каталоге приложения рядом с живым server_config.json.
+Type: files; Name: "{app}\allinone_config.json"
+
+[UninstallDelete]
+; Один каталог, который unins000 сам дочиста не уберёт: backend\. В пакете
+; (scripts/build-full-package.ps1) кэши байткода вычищены, а работа сервера их
+; создаёт заново — backend\app\__pycache__, alembic\__pycache__ и т.д. Файлы
+; установщику незнакомы, значит после удаления остаётся непустой backend\ от
+; уже удалённого сервера. dist\ и python\ здесь не перечислены: в python\
+; кэши приходят из pip install (то есть знакомы установщику) и уходят вместе
+; с ним, а в dist\ приложение вообще не пишет.
+; data\, *.json и logs\ по-прежнему не трогаются — это данные и настройки.
+Type: filesandordirs; Name: "{app}\backend"
 
 [Icons]
 ; Два ярлыка в «Пуске» и те же два на рабочем столе по задаче desktopicon.
