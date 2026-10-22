@@ -729,6 +729,16 @@ class LineMonitorService:
                 logger.warning(f"[Line Monitor] Unload broadcast attempt {attempt+1} failed, retrying...")
                 await asyncio.sleep(0.1)
     
+    def restore_unload_events(self, events: List[dict]) -> None:
+        """Вернуть проходы из журнала в кэш после перезапуска.
+
+        События приходят в порядке появления (от старых к новым) и
+        дописываются в конец deque — так ``get_unload_events`` отдаст их
+        в том же порядке, что и до перезапуска. Новые выгрузки получают
+        следующие ``cycle_id`` и встают после восстановленных.
+        """
+        self._unload_events.extend(events)
+
     def get_unload_events(self, limit: int = 100) -> List[dict]:
         """Последние выходы с линии, новые сверху.
 

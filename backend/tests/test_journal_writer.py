@@ -10,13 +10,19 @@
 """
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from app.services.hanger_row import HangerRow
 from app.services.hanger_journal import JournalStore
-from app.services.journal_writer import JournalWriter, record_from_match
+from app.services.journal_writer import (
+    RESTORE_EVENTS,
+    JournalWriter,
+    record_from_match,
+)
+from app.services.line_monitor import LineMonitorService
 from app.services.matching import CODE_NO_ROW, CycleMatch, TRUSTED_FIRST_SEEN
 
 
@@ -200,7 +206,11 @@ def test_writer_survives_a_restart_and_keeps_writing(writer, tmp_path):
     Перезапуск поднимает нового писателя с пустой памятью: без чтения
     журнала при старте проходы последних суток записались бы повторно.
     """
-    asyncio.run(writer.flush(line_monitor=_monitor_with([_cycle(cycle_id=1)])))
+    # Сутки записи — текущие: ``load_written_keys`` помнит только вчера и
+    # сегодня, а проверяется именно чтение журнала при рестарте.
+    today = datetime.now().strftime("%Y-%m-%d")
+    first = _cycle(cycle_id=1, exit_at=f"{today}T20:16:03")
+    asyncio.run(writer.flush(line_monitor=_monitor_with([first])))
 
     restarted = JournalWriter(
         JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]}
@@ -208,8 +218,8 @@ def test_writer_survives_a_restart_and_keeps_writing(writer, tmp_path):
     restarted.load_written_keys()
     monitor = _monitor_with(
         [
-            _cycle(cycle_id=1),
-            _cycle(cycle_id=2, exit_at="2026-09-29T21:16:03"),
+            first,
+            _cycle(cycle_id=2, exit_at=f"{today}T21:16:03"),
         ]
     )
 
@@ -337,6 +347,73 @@ def test_retention_is_applied_while_the_server_runs(tmp_path):
 
     assert not stale.exists()
 
+
+
+def _seed_journal(writer, count):
+    """Записать в журнал ``count`` проходов с выходами по минуте."""
+    for index in range(count):
+        cycle = _cycle(
+            cycle_id=index + 1,
+            exit_at=f"2026-09-29T20:{index:02d}:00",
+        )
+        asyncio.run(writer.flush(line_monitor=_monitor_with([cycle])))
+
+
+def test_restore_returns_the_last_passes_to_the_monitor_in_their_order(tmp_path):
+    """После рестарта панель выхода видна, а не пуста.
+
+    Проходы живут в памяти монитора и обнуляются при перезапуске. Журнал
+    переживает рестарт, поэтому последние ``RESTORE_EVENTS`` записей
+    возвращаются в память в порядке появления — ``get_unload_events``
+    отдаёт их новыми сверху, как и до перезапуска.
+    """
+    store = JournalStore(tmp_path / "journal")
+    writer = JournalWriter(store, rows_provider=lambda: {"5": [_row()]})
+    total = RESTORE_EVENTS + 5
+    _seed_journal(writer, total)
+
+    monitor = LineMonitorService()
+    assert writer.restore_recent(monitor) == RESTORE_EVENTS
+
+    events = monitor.get_unload_events(limit=100)
+    expected = list(range(total, total - RESTORE_EVENTS, -1))
+    assert [event["cycle_id"] for event in events] == expected, "новые сверху"
+    assert events[0]["first_seen_source"] == TRUSTED_FIRST_SEEN
+    assert events[0]["date"] == "29.09.2026"
+    assert events[0]["time"] == f"20:{total - 1:02d}:00"
+
+
+def test_restore_does_not_rewrite_the_passes_it_brought_back(tmp_path):
+    """Поднятые проходы уже есть в журнале — второй раз их не пишем.
+
+    ``load_written_keys`` помнит только вчерашние и сегодняшние сутки, а
+    проходы в памяти монитора могут быть старше. Без пометки при
+    восстановлении писатель дописал бы их в файл повторно.
+    """
+    store = JournalStore(tmp_path / "journal")
+    writer = JournalWriter(store, rows_provider=lambda: {"5": [_row()]})
+    total = 3
+    _seed_journal(writer, total)
+
+    restarted = JournalWriter(
+        store, rows_provider=lambda: {"5": [_row()]}
+    )
+    restarted.load_written_keys()
+    monitor = LineMonitorService()
+    assert restarted.restore_recent(monitor) == total
+    assert asyncio.run(restarted.flush(line_monitor=monitor)) == 0
+    assert restarted.store.query(limit=100).total == total
+
+
+def test_restore_of_an_empty_journal_is_a_no_op(tmp_path):
+    """Пустой журнал — не ошибка: панель просто ждёт новых выгрузок."""
+    writer = JournalWriter(
+        JournalStore(tmp_path / "journal"), rows_provider=dict
+    )
+    monitor = LineMonitorService()
+
+    assert writer.restore_recent(monitor) == 0
+    assert monitor.get_unload_events(limit=100) == []
 
 
 def _monitor_with(events):

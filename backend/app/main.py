@@ -117,6 +117,11 @@ async def lifespan(app: FastAPI):
     # Журнал подвесов (issue #34): фоновый писатель. Запускается вместе с
     # монитором и пишет проходы, даже когда дашборд никто не открывал.
     journal_writer.load_written_keys()
+    # Панель «Выход» читает только память монитора. Поднимаем в неё
+    # последние проходы из журнала, иначе после перезапуска она пуста до
+    # первой новой выгрузки.
+    restored = journal_writer.restore_recent(line_monitor)
+    logger.info(f"[STARTUP] Restored {restored} recent pass(es) from journal")
     journal_writer.prune()
     journal_task = asyncio.create_task(
         journal_writer.run_forever(line_monitor, settings.JOURNAL_FLUSH_INTERVAL)

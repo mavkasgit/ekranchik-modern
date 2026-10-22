@@ -64,6 +64,10 @@ def _book_entry_at(row) -> str | None:
 # нельзя: проход, отложенный из-за недоступной книги учёта, выпал бы из окна
 # и потерялся бы, а не дождался книги.
 LOOKBACK_EVENTS = 500
+# Сколько последних проходов поднимаем из журнала в память монитора при
+# старте: панель «Выход» иначе пуста до первой новой выгрузки. Оператору
+# нужен последний десяток; полная история — в Hanger Tracking.
+RESTORE_EVENTS = 10
 # Сколько уже записанных проходов помним. Держим всё окно flush и ещё
 # столько же: пока проход виден монитору, его ключ обязан помниться, иначе
 # он запишется в файл второй раз (см. JournalWriter._remember).
@@ -127,6 +131,45 @@ def record_from_match(match: CycleMatch) -> Dict[str, Any]:
     }
 
 
+def event_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Событие монитора из записи журнала — для восстановления после старта.
+
+    Поля события и записи называются по-разному (``source`` против
+    ``first_seen_source``), а ``date``/``time`` события — уже разобранные
+    локальные значения. Восстанавливаем ровно тот вид, который
+    ``line_monitor`` кладёт в кэш, чтобы роут выгрузок не различал старые
+    и новые проходы.
+    """
+    exit_at = record.get("exit_at")
+    moment = _iso_datetime(exit_at) or _iso_datetime(record.get("recorded_at"))
+    return {
+        "type": record.get("type"),
+        "reason": record.get("reason"),
+        "cycle_id": record.get("cycle_id"),
+        "hanger": record.get("hanger"),
+        "first_seen_at": record.get("first_seen_at"),
+        "first_seen_source": record.get("source"),
+        "entry_bath": record.get("entry_bath"),
+        "baths_visited": record.get("baths_visited"),
+        "path": record.get("path") or [],
+        "exit_at": exit_at,
+        "total_time_sec": record.get("total_time_sec"),
+        "time": moment.strftime("%H:%M:%S") if moment else "",
+        "date": moment.strftime("%d.%m.%Y") if moment else "",
+        "timestamp": exit_at or record.get("recorded_at"),
+    }
+
+
+def _iso_datetime(value: Any) -> datetime | None:
+    """Разобрать ISO-метку события; None — поле пустое или битое."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
 def _event_key(cycle: Dict[str, Any]) -> tuple:
     """Ключ прохода для дедупликации.
 
@@ -150,8 +193,9 @@ def _event_key(cycle: Dict[str, Any]) -> tuple:
 class JournalWriter:
     """Пишет новые проходы в журнал и поднимает их в лог контейнера.
 
-    Наружу смотрит тремя операциями: ``flush`` (записать всё новое — её
-    зовёт фоновая задача), ``run_forever`` (собственно задача) и
+    Наружу смотрит четырьмя операциями: ``flush`` (записать всё новое — её
+    зовёт фоновая задача), ``run_forever`` (собственно задача),
+    ``restore_recent`` (вернуть последние проходы в память при старте) и
     ``prune`` (удаление старых файлов). Строки книги на входе ``flush``
     не берутся из сервисов, а приходят ``rows_provider``-ом: так
     разбор проходов отвязан от чтения книги и проверяется без Excel.
@@ -189,6 +233,29 @@ class JournalWriter:
         )
         for record in reversed(page.items):
             self._remember(_record_key(record))
+
+    def restore_recent(self, line_monitor) -> int:
+        """Поднять последние проходы журнала в память монитора.
+
+        Вызывается при старте после ``load_written_keys``: проходы уже
+        лежат в журнале, и без пометки писатель записал бы их второй раз
+        (для записей старше вчерашних суток ключей в памяти ещё нет).
+        В монитор события возвращаются от старых к новым — в порядке, в
+        котором их туда кладёт ``_publish``.
+        """
+        page = self.store.query(
+            sort="exit_at", direction="desc", limit=RESTORE_EVENTS
+        )
+        if not page.items:
+            return 0
+
+        records = list(reversed(page.items))
+        line_monitor.restore_unload_events(
+            [event_from_record(record) for record in records]
+        )
+        for record in records:
+            self._remember(_record_key(record))
+        return len(records)
 
     async def flush(self, line_monitor) -> int:
         """Записать проходы, которых в журнале ещё нет. Возвращает их число."""
