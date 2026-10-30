@@ -1,0 +1,37 @@
+{
+  "project": "ekranchik-modern",
+  "title": "Экранчик — учёт заказов и производства",
+  "ports": [
+    {
+      "port": 8083,
+      "env": "prod",
+      "service": "nginx",
+      "container": "ekranchik-nginx-prod",
+      "purpose": "веб-интерфейс прода",
+      "source": "infra/compose/docker-compose.prod.yml"
+    },
+    {
+      "port": 5173,
+      "env": "dev",
+      "service": "vite",
+      "process": "node",
+      "purpose": "фронтенд dev (strictPort)",
+      "source": "frontend/vite.config.ts"
+    },
+    {
+      "port": 8013,
+      "env": "dev",
+      "service": "backend",
+      "process": "python",
+      "purpose": "API dev (uvicorn)",
+      "source": "package.json"
+    },
+    {
+      "port": 4840,
+      "env": "dev",
+      "service": "docker",
+      "purpose": "контейнерная сборка dev",
+      "source": "infra/compose/docker-compose.dev.yml"
+    }
+  ]
+}
