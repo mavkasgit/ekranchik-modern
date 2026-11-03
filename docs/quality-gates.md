@@ -25,7 +25,9 @@ mise run fix       # безопасные автофиксы (ruff, oxfmt, jacti
 | CI           | push в `main`, PR, понедельник    | `mise run check`, backend pytest, frontend vitest, OSV-скан по расписанию                                           |
 
 Хук — удобство, а не гейт: проверка, которая есть только в хуке, не enforced.
-`commitlint` вызывается и из `commit-msg`, и в CI по диапазону коммитов.
+`commitlint` вызывается и из `commit-msg`, и в CI: в PR проверяется весь
+диапазон `base..head`, при push в `main` — последний коммит. История до
+внедрения гейта (2026-11-03) не переписана и служит бейзлайном.
 
 ## Что проверяется
 
