@@ -3,8 +3,7 @@
   "ignoreBinaries": ["oxlint", "start"],
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.js", "e2e/tests/*.spec.mts"],
-      "ignoreDependencies": ["@commitlint/cli"]
+      "entry": ["scripts/*.js", "e2e/tests/*.spec.mts"]
     },
     "frontend": {
       "ignore": ["src/components/ui/**", "src/hooks/use-toast.ts"]

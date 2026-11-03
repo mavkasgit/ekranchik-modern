@@ -25,11 +25,23 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # commitlint читает диапазон коммитов
       - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5
       - name: npm dependencies
         run: |
           npm ci
           npm --prefix frontend ci
+      - name: commitlint (range)
+        env:
+          FROM: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TO: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$FROM" ] || [ "$FROM" = "0000000000000000000000000000000000000000" ]; then
+            npx --no-install commitlint --last --verbose
+          else
+            npx --no-install commitlint --from "$FROM" --to "$TO" --verbose
+          fi
       - name: aggregate check
         run: mise run check
 
