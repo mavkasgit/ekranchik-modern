@@ -86,7 +86,12 @@ def watched_deltas(records: list[dict]) -> list[float]:
 
 
 def percentile(values: list[float], share: float) -> float:
-    """Перцентиль линейной интерполяцией — как в numpy и statistics.quantiles."""
+    """Перцентиль линейной интерполяцией по позиции ``share * (n - 1)``.
+
+    Это правило ``numpy.percentile``. ``statistics.quantiles`` по умолчанию
+    считает методом ``exclusive`` и на той же выборке даёт другое значение,
+    поэтому здесь он не используется.
+    """
     ordered = sorted(values)
     position = share * (len(ordered) - 1)
     lower = int(position)
