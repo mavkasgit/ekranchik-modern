@@ -10,7 +10,7 @@ alembic==1.14.0
 
 # Validation
 pydantic>=2.14.1,<2.15
-pydantic-settings>=2.6.0
+pydantic-settings>=2.16.1
 
 # Excel parsing
 pandas==3.1.0
