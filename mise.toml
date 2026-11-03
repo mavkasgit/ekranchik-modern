@@ -1,0 +1,13 @@
+# Единый файл тулчейна: его читают и разработчик, и CI (см. docs/adopt.md — dev-quality-gates).
+# Версии JS-инструментов (oxlint, oxfmt, knip, commitlint) — в корневом package.json,
+# Python-тулчейн боевого бэкенда — в backend/.venv (npm run setup:python).
+
+[tools]
+node = "24"
+ruff = "0.17.3"
+hk = "2.11.0"
+betterleaks = "1.9.0"
+osv-scanner = "2.7.0"
+jactionlint = "2.4.0"
+hadolint = "2.15.1"
+shellcheck = "0.11.0"
