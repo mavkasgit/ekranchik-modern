@@ -12,7 +12,7 @@ local oxlint = (Step) {
 }
 
 local ruff = (Step) {
-  glob = List("backend/**/*.py")
+  glob = List("backend/**/*.py", "scripts/**/*.py")
   check = "ruff check {{ files }}"
   fix = "ruff check --fix {{ files }}"
 }

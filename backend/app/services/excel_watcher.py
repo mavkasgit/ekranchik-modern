@@ -10,7 +10,6 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from app.core.config import settings
 from app.schemas.websocket import WebSocketMessage
 from app.services.excel_service import excel_service
 from app.services.websocket_manager import websocket_manager
@@ -93,7 +92,9 @@ class ExcelWatcher:
         Start watching for Excel file changes.
 
         Args:
-            watch_path: Directory to watch (uses config default if None)
+            watch_path: File or directory to watch. Defaults to the active book
+                (``excel_service.current_path``): «какой файл активен» имеет
+                одного владельца, конфигурация — только его стартовое значение.
 
         Returns:
             True if started successfully
@@ -102,7 +103,7 @@ class ExcelWatcher:
             logger.warning("ExcelWatcher already running")
             return False
 
-        path = watch_path or settings.excel_path
+        path = watch_path or excel_service.current_path
         if not path:
             logger.error("No Excel path configured")
             return False
