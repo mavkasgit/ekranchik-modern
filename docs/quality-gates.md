@@ -98,31 +98,33 @@ OSV-скан намеренно не блокирует PR: новая advisory 
 ## Как проверить, что гейт падает
 
 Проверка, которую не видели падающей, не работает. На чистом дереве
-`mise run check` даёт exit 0; по одному нарушению на инструмент — exit 1:
+`mise run check` даёт exit 0; по одному нарушению на каждый класс проверок —
+exit 1:
 
 ```bash
-# секрет: betterleaks
-printf 'token = "AKIAIOSFODNN7EXAMPLE"\n' >> VERSION
-mise run check          # betterleaks: leak found → exit 1
+# секрет: betterleaks (ключ генерируется на месте, в файле его нет)
+KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')
+printf 'aws_secret_access_key = "%s"\n' "$KEY" >> VERSION
+mise run check          # betterleaks: leaks found: 1 → exit 1
 git checkout -- VERSION
 
 # формат: oxfmt
-printf '\n#  без  форматирования\n' >> CONTEXT.md
-mise run check          # oxfmt: file would be reformatted → exit 1
+printf '\n|a|b|\n|-|-|\n|1|2|\n' >> CONTEXT.md
+mise run check          # oxfmt: format issues found → exit 1
 git checkout -- CONTEXT.md
 
 # линтер: ruff
 printf 'import os\n' >> backend/app/main.py
-mise run check          # ruff: F401 → exit 1
+mise run check          # ruff: E402 → exit 1
 git checkout -- backend/app/main.py
 
 # workflow: jactionlint
-printf '  bogus-key: true\n' >> .github/workflows/check.yml
+printf 'bogus-key: true\n' >> .github/workflows/check.yml
 mise run check          # jactionlint: unexpected key → exit 1
 git checkout -- .github/workflows/check.yml
 
 # типы: tsc
-printf 'const broken: number = "no";\n' >> frontend/src/main.tsx
+printf 'const broken: number = "no";\nconsole.log(broken);\n' >> frontend/src/main.tsx
 mise run check          # tsc: Type 'string' is not assignable to type 'number' → exit 1
 git checkout -- frontend/src/main.tsx
 ```
