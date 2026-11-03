@@ -43,10 +43,9 @@ def _baths(mapping):
 
 def test_repeated_number_gets_separate_cycles(monitor, monkeypatch):
     """Номер 1 прогоняют дважды — это два прохода, а не один с накопленным path."""
-    monitor._open_cycle_hanger = None  # атрибут не используется, читаем состояние
     first = monitor._open_cycle
     state = lm.HangerState(id=1)
-    monitor._hangers[1] = state
+    monitor.restore_hangers([state])
     first(state, 3, datetime(2026, 9, 29, 20, 0))
     state.current_bath = "3"
     state.path.append(lm.HangerPathEntry("3", datetime(2026, 9, 29, 20, 0)))
@@ -71,7 +70,7 @@ def test_counter_continues_from_the_journal_after_a_restart(monitor):
     """
     monitor.resume_cycle_counter(19)
     state = lm.HangerState(id=1)
-    monitor._hangers[1] = state
+    monitor.restore_hangers([state])
 
     monitor._open_cycle(state, 3, datetime(2026, 9, 29, 20, 0))
 
@@ -83,7 +82,7 @@ def test_counter_resume_never_goes_backwards(monitor):
     monitor.resume_cycle_counter(100)
     monitor.resume_cycle_counter(-5)
     state = lm.HangerState(id=1)
-    monitor._hangers[1] = state
+    monitor.restore_hangers([state])
 
     monitor._open_cycle(state, 3, datetime(2026, 9, 29, 20, 0))
 
@@ -94,7 +93,7 @@ def test_unload_closes_cycle_with_its_own_path(monitor, monkeypatch):
     """total_time_sec считается по текущему проходу, а не по первому за всё время."""
     start = datetime.now() - timedelta(minutes=90)
     state = lm.HangerState(id=1)
-    monitor._hangers[1] = state
+    monitor.restore_hangers([state])
     monitor._open_cycle(state, 3, start)
     state.current_bath = "34"
     state.entry_time = start + timedelta(minutes=89)
@@ -116,7 +115,7 @@ def test_unload_without_open_cycle_is_error(monitor, monkeypatch):
     state = lm.HangerState(id=4)
     state.current_bath = None
     state.path = []
-    monitor._hangers[4] = state
+    monitor.restore_hangers([state])
 
     monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
     asyncio.run(monitor._record_unload(4))
@@ -135,7 +134,7 @@ def test_dedup_by_cycle_id_keeps_both_unloads(monitor, monkeypatch):
     now = datetime.now()
     for cycle_start in (now - timedelta(hours=2), now - timedelta(minutes=10)):
         state = lm.HangerState(id=1)
-        monitor._hangers[1] = state
+        monitor.restore_hangers([state])
         monitor._open_cycle(state, 3, cycle_start)
         state.path.append(lm.HangerPathEntry("3", cycle_start))
         state.current_bath = "34"
@@ -152,7 +151,7 @@ def test_duplicate_processing_of_same_cycle_dropped(monitor, monkeypatch):
     """Повторная обработка одного прохода второго события не создаёт."""
     monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
     state = lm.HangerState(id=1)
-    monitor._hangers[1] = state
+    monitor.restore_hangers([state])
     monitor._open_cycle(state, 3, datetime.now() - timedelta(minutes=30))
     state.path.append(lm.HangerPathEntry("3", datetime.now() - timedelta(minutes=30)))
     state.current_bath = "34"
@@ -178,14 +177,14 @@ def test_transit_gap_does_not_break_cycle(monitor, monkeypatch):
     """
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 1)}))
     asyncio.run(monitor._scan_baths())
-    state = monitor._hangers[1]
+    state = monitor.get_hanger_state(1)
     opened_at = state.first_seen_at
     cycle_id = state.cycle_id
     assert state.entry_bath == 30
 
     # Подвес пропал из ванн на 10 минут — едет между ними.
     monitor._departure_bound = timedelta(minutes=42)
-    seen = monitor._hangers[1]
+    seen = monitor.get_hanger_state(1)
     seen.unseen_since = datetime.now() - timedelta(minutes=10)
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({31: (True, 1)}))
     asyncio.run(monitor._scan_baths())
@@ -202,7 +201,7 @@ def test_unload_during_transit_keeps_cycle(monitor, monkeypatch):
     """Выгрузка в разрыве видимости — нормальный выход, а не CYCLE_ERROR."""
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 46)}))
     asyncio.run(monitor._scan_baths())
-    state = monitor._hangers[46]
+    state = monitor.get_hanger_state(46)
     cycle_id = state.cycle_id
 
     # Подвес не виден ни в одной ванне (скан не успел), но проход цел.
@@ -221,7 +220,7 @@ def test_unloaded_hanger_parked_at_control_bath_starts_no_cycle(monitor, monkeyp
     """Выгруженный подвес ещё стоит в 34-й — нового прохода это не начинает."""
     monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
     state = lm.HangerState(id=7)
-    monitor._hangers[7] = state
+    monitor.restore_hangers([state])
     monitor._open_cycle(state, 30, datetime.now() - timedelta(minutes=15))
     state.current_bath = "34"
     state.entry_time = datetime.now()
@@ -240,7 +239,7 @@ def test_hanger_leaving_line_closes_cycle(monitor, monkeypatch):
     """Подвес, пропавший заведомо дольше границы, проход закрывает."""
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 3)}))
     asyncio.run(monitor._scan_baths())
-    state = monitor._hangers[3]
+    state = monitor.get_hanger_state(3)
 
     monitor._departure_bound = timedelta(minutes=42)
     state.unseen_since = datetime.now() - timedelta(minutes=43)
@@ -282,7 +281,7 @@ def test_unload_events_returned_newest_first(monitor, monkeypatch):
     monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
     for number, minutes_ago in ((2, 30), (3, 20), (5, 10)):
         state = lm.HangerState(id=number)
-        monitor._hangers[number] = state
+        monitor.restore_hangers([state])
         seen = datetime.now() - timedelta(minutes=minutes_ago)
         monitor._open_cycle(state, 30, seen)
         state.current_bath = "34"
@@ -299,7 +298,7 @@ def test_unload_events_limit_keeps_most_recent(monitor, monkeypatch):
     monkeypatch.setattr(lm, "websocket_manager", _SilentWS())
     for number in (2, 3, 5, 7):
         state = lm.HangerState(id=number)
-        monitor._hangers[number] = state
+        monitor.restore_hangers([state])
         monitor._open_cycle(state, 30, datetime.now() - timedelta(minutes=10))
         state.current_bath = "34"
         state.entry_time = datetime.now()
@@ -310,14 +309,14 @@ def test_unload_events_limit_keeps_most_recent(monitor, monkeypatch):
     assert [e["hanger"] for e in events] == [7, 5]
 
 
-async def _connected() -> bool:
+async def _connection_up() -> bool:
     return True
 
 
 def _poll(monitor, monkeypatch, mapping):
     """Один успешный опрос линии: связь есть, ванны отдают mapping."""
-    monkeypatch.setattr(lm.opcua_service, "ensure_connected", _connected)
-    monkeypatch.setattr(lm.opcua_service, "_connected", True)
+    monkeypatch.setattr(lm.opcua_service, "ensure_connected", _connection_up)
+    monkeypatch.setattr(type(lm.opcua_service), "is_connected", property(lambda self: True))
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths(mapping))
     asyncio.run(monitor._poll_once())
 
@@ -332,7 +331,7 @@ def test_first_scan_after_start_is_untrusted(monitor, monkeypatch):
     """
     _poll(monitor, monkeypatch, {5: (True, 777)})
 
-    assert monitor._hangers[777].first_seen_source == lm.FIRST_SEEN_START
+    assert monitor.get_hanger_state(777).first_seen_source == lm.FIRST_SEEN_START
 
 
 def test_scan_after_connection_gap_is_untrusted(monitor, monkeypatch):
@@ -342,7 +341,7 @@ def test_scan_after_connection_gap_is_untrusted(monitor, monkeypatch):
 
     _poll(monitor, monkeypatch, {5: (True, 777), 6: (True, 888)})
 
-    assert monitor._hangers[888].first_seen_source == lm.FIRST_SEEN_GAP
+    assert monitor.get_hanger_state(888).first_seen_source == lm.FIRST_SEEN_GAP
 
 
 def test_scan_on_watched_line_is_trusted(monitor, monkeypatch):
@@ -351,7 +350,7 @@ def test_scan_on_watched_line_is_trusted(monitor, monkeypatch):
 
     _poll(monitor, monkeypatch, {5: (True, 777), 6: (True, 888)})
 
-    assert monitor._hangers[888].first_seen_source == lm.FIRST_SEEN_WATCHED
+    assert monitor.get_hanger_state(888).first_seen_source == lm.FIRST_SEEN_WATCHED
 
 
 def test_unload_event_carries_source_and_path_times(monitor, monkeypatch):
@@ -363,7 +362,7 @@ def test_unload_event_carries_source_and_path_times(monitor, monkeypatch):
     start = datetime(2026, 9, 29, 13, 11, 0)
     left_30 = start + timedelta(minutes=51)
     state = lm.HangerState(id=21)
-    monitor._hangers[21] = state
+    monitor.restore_hangers([state])
     monitor._open_cycle(state, 30, start)
     state.current_bath = "31"
     state.entry_time = start + timedelta(minutes=54)

@@ -41,20 +41,19 @@ async def test_opcua_service_update_simulation_mode():
     with patch.object(opcua_service, "start"), patch.object(opcua_service, "stop"):
         # Test simulation mode enabled
         await opcua_service.update_simulation_mode(True)
-        assert opcua_service._url == settings.OPCUA_SIM_ENDPOINT
-        assert opcua_service._poll_interval == settings.OPCUA_SIM_POLL_INTERVAL
+        assert opcua_service.endpoint == settings.OPCUA_SIM_ENDPOINT
+        assert opcua_service.poll_interval == settings.OPCUA_SIM_POLL_INTERVAL
 
         # Test simulation mode disabled
         await opcua_service.update_simulation_mode(False)
-        assert opcua_service._url == settings.OPCUA_ENDPOINT
-        assert opcua_service._poll_interval == settings.OPCUA_POLL_INTERVAL
+        assert opcua_service.endpoint == settings.OPCUA_ENDPOINT
+        assert opcua_service.poll_interval == settings.OPCUA_POLL_INTERVAL
 
 
 def test_excel_service_update_simulation_mode():
     """Test that excel_service.update_simulation_mode invalidates caches and updates path"""
     with patch.object(excel_service, "_load_persisted_active_file", return_value="test.xlsm"):
         excel_service.update_simulation_mode()
-        assert excel_service._active_file_name == "test.xlsm"
-        assert excel_service._cache is None
-        assert excel_service._cache_mtime is None
-        assert excel_service._cache_path is None
+        assert excel_service.active_file_name == "test.xlsm"
+        assert not excel_service.has_cached_data
+        assert excel_service.cache_mtime is None
