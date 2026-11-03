@@ -4,7 +4,7 @@
   "workspaces": {
     ".": {
       "entry": ["scripts/*.js", "e2e/tests/*.spec.mts"],
-      "ignoreDependencies": ["@commitlint/cli", "@commitlint/config-conventional"]
+      "ignoreDependencies": ["@commitlint/cli"]
     },
     "frontend": {
       "ignore": ["src/components/ui/**", "src/hooks/use-toast.ts"]

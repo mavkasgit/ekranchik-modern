@@ -1,0 +1,61 @@
+amends "package://github.com/jdx/hk/releases/download/v2.11.0/hk@2.11.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.11.0/hk@2.11.0#/Builtins.pkl"
+
+// Три уровня проверки (dev-quality-gates):
+//   pre-commit  — быстрые шаги из steps по staged-файлам, с автофиксом;
+//   pre-push    — те же проверки на всём пуше + дорогие шаги (knip, tsc);
+//   check       — агрегатная команда для CI: mise run check (hk run check --all).
+
+local oxlint = (Step) {
+  glob = List("**/*.{js,jsx,mjs,mts,ts,tsx}")
+  check = "oxlint -c .oxlintrc.json {{ files }}"
+}
+
+local ruff = (Step) {
+  glob = List("backend/**/*.py")
+  check = "ruff check {{ files }}"
+  fix = "ruff check --fix {{ files }}"
+}
+
+local knip = (Step) {
+  glob = List("**/*.{js,mjs,mts,ts,tsx}")
+  check = "npx --no-install knip"
+}
+
+local tsc = (Step) {
+  glob = List("frontend/**/*.{ts,tsx}")
+  check = "node frontend/node_modules/typescript/bin/tsc -p frontend/tsconfig.json --noEmit"
+}
+
+local commitlint = (Step) {
+  check = "npx --no-install commitlint --edit {{ commit_msg_file }}"
+}
+
+steps {
+  ["ruff"] = ruff
+  ["oxfmt"] = Builtins.oxfmt
+  ["oxlint"] = oxlint
+}
+
+hooks {
+  ["check"] {
+    steps {
+      ["knip"] = knip
+      ["tsc"] = tsc
+    }
+  }
+  ["pre-push"] {
+    steps {
+      ["ruff"] = ruff
+      ["oxfmt"] = Builtins.oxfmt
+      ["oxlint"] = oxlint
+      ["knip"] = knip
+      ["tsc"] = tsc
+    }
+  }
+  ["commit-msg"] {
+    steps {
+      ["commitlint"] = commitlint
+    }
+  }
+}
