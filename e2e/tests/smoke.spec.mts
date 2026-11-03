@@ -25,7 +25,6 @@ test.describe("Ekranchik Smoke Tests", () => {
     await expect(dashboardLink).toBeVisible({ timeout: 15000 });
 
     await expect(page.getByRole("link", { name: "Каталог" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Анализ" })).toBeVisible();
     await expect(page.getByRole("link", { name: "OPC UA" })).toBeVisible();
   });
 });

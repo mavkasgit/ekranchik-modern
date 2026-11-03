@@ -74,7 +74,10 @@ export const test = base.extend<{
   connectedBrowser: Browser;
   connectedPage: Page;
 }>({
-  connectedBrowser: async (_fixtures, use) => {
+  // Playwright требует, чтобы первый параметр фикстуры был деструктуризацией;
+  // сам объект фикстур здесь не нужен.
+  // eslint-disable-next-line no-empty-pattern
+  connectedBrowser: async ({}, use) => {
     const browser = BROWSER_MODE === "cdp" ? await getCdpBrowser() : await getManagedBrowser();
     await use(browser);
   },
