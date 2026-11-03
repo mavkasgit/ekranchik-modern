@@ -3,10 +3,14 @@ E2E тест: Матчинг OPC UA unload-событий с данными Exce
 
 Тестирует полный цикл:
 1. Создаём тестовый Excel файл (лист "Подвесы")
-2. Настраиваем excel_service на чтение тестового файла
-3. Симулируем unload через opcua_service._cache → line_monitor._check_unload()
+2. Подставляем его активной книгой на один прогон
+3. Симулируем проход подвеса по линии через значения узлов OPC UA
 4. Вызываем GET /api/dashboard/opcua-unload-matched
 5. Проверяем результат матчинга
+
+Состояние сервисов подставляется публичными методами (фикстура
+``clean_line`` и ``use_file``): тест не записывает приватные поля и ничего
+не снимает/восстанавливает в ``finally``.
 """
 
 from datetime import datetime, timedelta
@@ -14,6 +18,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import openpyxl
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 # ---------------------------------------------------------------------------
@@ -68,69 +73,34 @@ def create_test_excel(filepath: str, rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _setup_excel(filepath: Path):
-    """Настраивает excel_service на тестовый файл."""
+def _setup_excel(filepath: Path) -> None:
+    """Сделать тестовый файл активной книгой на один прогон.
+
+    Выбор не запоминается в ``static/active_excel.json``: иначе книга,
+    которой уже нет после теста, переключила бы рабочий стенд.
+    """
     from app.services.excel_service import excel_service
 
-    excel_service._active_file_name = str(filepath)
-    excel_service._cache = None
-    excel_service._cache_mtime = None
-    excel_service._cache_path = None
+    excel_service.use_file(str(filepath))
 
 
-def _setup_opcua_and_monitor():
-    """Настраивает opcua_service и line_monitor для теста."""
-    from app.services.line_monitor import line_monitor
-    from app.services.opcua_service import opcua_service
-
-    opcua_service._connected = True
-    opcua_service._cache = {}
-
-    line_monitor._bath34_pallete = None
-    line_monitor._unload_events.clear()
-    line_monitor._processed_unloads.clear()
-
-
-def _save_state() -> dict:
-    """Сохраняет текущее состояние сервисов для восстановления."""
+def _clean_state() -> None:
+    """Пустая линия и пустой кэш PLC, книга — из настроек."""
     from app.services.excel_service import excel_service
     from app.services.line_monitor import line_monitor
     from app.services.opcua_service import opcua_service
 
-    return {
-        "active_file": excel_service._active_file_name,
-        "cache": excel_service._cache,
-        "cache_mtime": excel_service._cache_mtime,
-        "cache_path": excel_service._cache_path,
-        "connected": opcua_service._connected,
-        "opcua_cache": opcua_service._cache.copy(),
-        "bath34": line_monitor._bath34_pallete,
-        "unload_events": list(line_monitor._unload_events),
-        "processed": list(line_monitor._processed_unloads),
-    }
+    line_monitor.clear_data()
+    opcua_service.clear_cache()
+    excel_service.use_file(None)
 
 
-def _restore_state(state: dict):
-    """Восстанавливает состояние сервисов."""
-    from app.services.excel_service import excel_service
-    from app.services.line_monitor import line_monitor
-    from app.services.opcua_service import opcua_service
-
-    excel_service._active_file_name = state["active_file"]
-    excel_service._cache = state["cache"]
-    excel_service._cache_mtime = state["cache_mtime"]
-    excel_service._cache_path = state["cache_path"]
-
-    opcua_service._connected = state["connected"]
-    opcua_service._cache = state["opcua_cache"]
-
-    line_monitor._bath34_pallete = state["bath34"]
-    line_monitor._unload_events.clear()
-    for ev in state["unload_events"]:
-        line_monitor._unload_events.append(ev)
-    line_monitor._processed_unloads.clear()
-    for pu in state["processed"]:
-        line_monitor._processed_unloads.append(pu)
+@pytest.fixture
+def clean_line():
+    """Подставить пустое состояние линии одним вызовом, до и после теста."""
+    _clean_state()
+    yield
+    _clean_state()
 
 
 async def trigger_unload(hanger_id: int) -> None:
@@ -145,23 +115,20 @@ async def trigger_unload(hanger_id: int) -> None:
     from app.services.line_monitor import line_monitor
     from app.services.opcua_service import opcua_service
 
-    def occupy(bath: int, pallete: int):
-        opcua_service._cache[f"ns=4;s=Bath[{bath}].InUse"] = 1
-        opcua_service._cache[f"ns=4;s=Bath[{bath}].Pallete"] = pallete
+    def occupy(bath: int, pallete: int) -> None:
+        opcua_service.set_value(f"ns=4;s=Bath[{bath}].InUse", 1)
+        opcua_service.set_value(f"ns=4;s=Bath[{bath}].Pallete", pallete)
 
-    def clear(bath: int):
-        opcua_service._cache[f"ns=4;s=Bath[{bath}].InUse"] = 0
-        opcua_service._cache[f"ns=4;s=Bath[{bath}].Pallete"] = 0
+    def clear(bath: int) -> None:
+        opcua_service.set_value(f"ns=4;s=Bath[{bath}].InUse", 0)
+        opcua_service.set_value(f"ns=4;s=Bath[{bath}].Pallete", 0)
 
     with patch("app.services.line_monitor.websocket_manager") as mock_ws:
         mock_ws.broadcast = AsyncMock(return_value=0)
         mock_ws.connection_count = 0
 
-        line_monitor._bath34_pallete = None
-        line_monitor._hangers.clear()
-
         # Инициализация: контрольная ванна пуста
-        opcua_service._cache["ns=4;s=Bath[34].Pallete"] = 0
+        opcua_service.set_value("ns=4;s=Bath[34].Pallete", 0)
         await line_monitor._check_unload()
 
         # Проход: подвес идёт 3 → 4 и доходит до контрольной ванны
@@ -174,7 +141,7 @@ async def trigger_unload(hanger_id: int) -> None:
 
         # Сход с линии: датчик 0 → N
         clear(34)
-        opcua_service._cache["ns=4;s=Bath[34].Pallete"] = hanger_id
+        opcua_service.set_value("ns=4;s=Bath[34].Pallete", hanger_id)
         await line_monitor._check_unload()
 
 
@@ -202,7 +169,7 @@ async def call_matched_api(limit: int = 10) -> list[dict]:
 # ===========================================================================
 
 
-async def test_correct_match_same_day(tmp_path: Path):
+async def test_correct_match_same_day(tmp_path: Path, clean_line):
     """
     Подвес 42 с данными в Excel (дата=сегодня, 2 часа назад).
     После выгрузки API должен вернуть event с правильными полями.
@@ -235,33 +202,27 @@ async def test_correct_match_same_day(tmp_path: Path):
         ],
     )
 
-    state = _save_state()
-    try:
-        _setup_excel(filepath)
-        _setup_opcua_and_monitor()
+    _setup_excel(filepath)
+    await trigger_unload(42)
+    data = await call_matched_api()
 
-        await trigger_unload(42)
-        data = await call_matched_api()
+    assert len(data) == 1, f"Ожидался 1 event, получили {len(data)}"
+    event = data[0]
 
-        assert len(data) == 1, f"Ожидался 1 event, получили {len(data)}"
-        event = data[0]
+    assert event["hanger"] == 42
+    assert event["client"] == "ТестКТМ"
+    assert event["profile"] == "4040"
+    assert event["color"] == "серебро"
+    assert event["lamels_qty"] == 29
+    assert event["kpz_number"] == "101"
+    assert event["material_type"] == "Пороги"
 
-        assert event["hanger"] == 42
-        assert event["client"] == "ТестКТМ"
-        assert event["profile"] == "4040"
-        assert event["color"] == "серебро"
-        assert event["lamels_qty"] == 29
-        assert event["kpz_number"] == "101"
-        assert event["material_type"] == "Пороги"
-
-        # entry_time должен содержать корректное время (HH:MM)
-        assert event["entry_time"] is not None
-        assert ":" in event["entry_time"]
-    finally:
-        _restore_state(state)
+    # entry_time должен содержать корректное время (HH:MM)
+    assert event["entry_time"] is not None
+    assert ":" in event["entry_time"]
 
 
-async def test_correct_match_cross_day(tmp_path: Path):
+async def test_correct_match_cross_day(tmp_path: Path, clean_line):
     """
     Подвес 15 загружен вчера в 22:00.
     Выгрузка сегодня → API должен смотчить через переход дня.
@@ -286,27 +247,21 @@ async def test_correct_match_cross_day(tmp_path: Path):
         ],
     )
 
-    state = _save_state()
-    try:
-        _setup_excel(filepath)
-        _setup_opcua_and_monitor()
+    _setup_excel(filepath)
+    await trigger_unload(15)
+    data = await call_matched_api()
 
-        await trigger_unload(15)
-        data = await call_matched_api()
+    assert len(data) == 1, f"Ожидался 1 event, получили {len(data)}"
+    event = data[0]
 
-        assert len(data) == 1, f"Ожидался 1 event, получили {len(data)}"
-        event = data[0]
-
-        assert event["hanger"] == 15
-        assert event["client"] == "РП"
-        assert event["profile"] == "ЮП-1401"
-        # entry_date должен быть вчерашним
-        assert event["entry_date"] is not None
-    finally:
-        _restore_state(state)
+    assert event["hanger"] == 15
+    assert event["client"] == "РП"
+    assert event["profile"] == "ЮП-1401"
+    # entry_date должен быть вчерашним
+    assert event["entry_date"] is not None
 
 
-async def test_no_match_different_hanger(tmp_path: Path):
+async def test_no_match_different_hanger(tmp_path: Path, clean_line):
     """
     Excel содержит только подвес 42.
     Триггерим выгрузку подвеса 99 — матч не найден.
@@ -339,25 +294,19 @@ async def test_no_match_different_hanger(tmp_path: Path):
         ],
     )
 
-    state = _save_state()
-    try:
-        _setup_excel(filepath)
-        _setup_opcua_and_monitor()
+    _setup_excel(filepath)
+    await trigger_unload(99)
+    data = await call_matched_api()
 
-        await trigger_unload(99)
-        data = await call_matched_api()
+    assert len(data) == 1, f"Ожидался 1 event, получили {len(data)}"
+    event = data[0]
 
-        assert len(data) == 1, f"Ожидался 1 event, получили {len(data)}"
-        event = data[0]
-
-        assert event["hanger"] == 99
-        assert event["client"] == "—"
-        assert event["profile"] == "—"
-    finally:
-        _restore_state(state)
+    assert event["hanger"] == 99
+    assert event["client"] == "—"
+    assert event["profile"] == "—"
 
 
-async def test_closest_match_wins(tmp_path: Path):
+async def test_closest_match_wins(tmp_path: Path, clean_line):
     """
     Две записи для подвеса 42: 5 часов назад («Старый») и 1 час назад («Новый»).
     Матчинг должен выбрать ближайшую по времени → «Новый».
@@ -409,19 +358,13 @@ async def test_closest_match_wins(tmp_path: Path):
         ],
     )
 
-    state = _save_state()
-    try:
-        _setup_excel(filepath)
-        _setup_opcua_and_monitor()
+    _setup_excel(filepath)
+    await trigger_unload(42)
+    data = await call_matched_api()
 
-        await trigger_unload(42)
-        data = await call_matched_api()
+    assert len(data) == 1, f"Ожидался 1 event, получили {len(data)}"
+    event = data[0]
 
-        assert len(data) == 1, f"Ожидался 1 event, получили {len(data)}"
-        event = data[0]
-
-        assert event["hanger"] == 42
-        assert event["client"] == "Новый", f"Ожидали клиента 'Новый' (ближайший), получили '{event['client']}'"
-        assert event["profile"] == "2020"
-    finally:
-        _restore_state(state)
+    assert event["hanger"] == 42
+    assert event["client"] == "Новый", f"Ожидали клиента 'Новый' (ближайший), получили '{event['client']}'"
+    assert event["profile"] == "2020"

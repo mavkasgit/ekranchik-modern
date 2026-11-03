@@ -30,10 +30,9 @@ def monitor_with_active(monkeypatch):
     state.entry_bath = 4
     state.path = [lm.HangerPathEntry(bath_name="4", entry_time=first_seen)]
 
-    class _Monitor:
-        _hangers = {44: state}
-
-    monkeypatch.setattr(opcua_route, "line_monitor", _Monitor())
+    monitor = lm.LineMonitorService()
+    monitor.restore_hangers([state])
+    monkeypatch.setattr(opcua_route, "line_monitor", monitor)
     return state
 
 

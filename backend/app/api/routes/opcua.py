@@ -311,7 +311,7 @@ async def get_plc_data():
             "status": "ok" if opcua_service.is_connected else "disconnected",
             "server_time": str(server_time) if server_time else None,
             "connected": opcua_service.is_connected,
-            "cache_size": len(opcua_service._cache),
+            "cache_size": opcua_service.cache_size,
         }
 
     except Exception as e:
@@ -329,28 +329,31 @@ async def scan_hangers():
         raise HTTPException(status_code=500, detail="Cannot connect to OPC UA server")
 
     await line_monitor._scan_baths()
-    active = [h for h in line_monitor._hangers.values() if h.current_bath is not None]
-    return {"status": "scanned", "total_hangers": len(line_monitor._hangers), "active_hangers": len(active)}
+    return {
+        "status": "scanned",
+        "total_hangers": len(line_monitor.get_all_hangers()),
+        "active_hangers": len(line_monitor.get_active_hangers()),
+    }
 
 
 @router.get("/hangers")
 async def get_all_hangers():
     """Получить все подвесы."""
-    hangers = list(line_monitor._hangers.values())
+    hangers = line_monitor.get_all_hangers()
     return {"total": len(hangers), "hangers": [_hanger_payload(h) for h in hangers]}
 
 
 @router.get("/hangers/active")
 async def get_active_hangers():
     """Получить активные подвесы (сейчас в ванне)."""
-    hangers = [h for h in line_monitor._hangers.values() if h.current_bath is not None]
+    hangers = line_monitor.get_active_hangers()
     return {"total": len(hangers), "hangers": [_hanger_payload(h) for h in hangers]}
 
 
 @router.get("/hangers/{hanger_number}")
 async def get_hanger(hanger_number: int):
     """Получить данные подвеса по номеру."""
-    hanger = line_monitor._hangers.get(hanger_number)
+    hanger = line_monitor.get_hanger_state(hanger_number)
     if not hanger:
         raise HTTPException(status_code=404, detail=f"Hanger {hanger_number} not found")
     return _hanger_payload(hanger)
@@ -359,19 +362,16 @@ async def get_hanger(hanger_number: int):
 @router.get("/baths/{bath_number}/hanger")
 async def get_hanger_in_bath(bath_number: int):
     """Получить подвес который сейчас в ванне."""
-    bath_name = str(bath_number)
-    for hanger in line_monitor._hangers.values():
-        if hanger.current_bath == bath_name:
-            return {
-                "bath_number": bath_number,
-                "hanger": {
-                    "number": hanger.id,
-                    "current_bath": int(hanger.current_bath)
-                    if hanger.current_bath and hanger.current_bath.isdigit()
-                    else None,
-                },
-            }
-    return {"bath_number": bath_number, "hanger": None}
+    hanger = line_monitor.get_hanger_in_bath(bath_number)
+    if hanger is None:
+        return {"bath_number": bath_number, "hanger": None}
+    return {
+        "bath_number": bath_number,
+        "hanger": {
+            "number": hanger.id,
+            "current_bath": int(hanger.current_bath) if hanger.current_bath and hanger.current_bath.isdigit() else None,
+        },
+    }
 
 
 # Line Monitoring Control Endpoints
@@ -497,11 +497,10 @@ async def get_completed_cycles(limit: int = 20):
     зафиксированный результат выгрузки. Оба описывают один и тот же проход
     по одной модели, поэтому полей не расходится.
     """
-    completed = [h for h in line_monitor._hangers.values() if h.current_bath is None and h.path]
-    completed.sort(key=lambda h: h.last_seen, reverse=True)
+    completed = line_monitor.get_completed_cycles(limit=limit)
 
     cycles = []
-    for hanger in completed[:limit]:
+    for hanger in completed:
         cycles.append(
             {
                 **line_monitor.cycle_snapshot(hanger),
@@ -543,13 +542,14 @@ async def get_system_health():
     opcua_diag = opcua_service.get_diagnostics()
 
     # Line Monitor диагностика
-    hangers_count = len(line_monitor._hangers)
+    hanger_stats = line_monitor.get_hanger_stats()
+    hangers_count = hanger_stats["tracked"]
     active_hangers = len(line_monitor.get_active_hangers())
     unload_events = len(line_monitor.get_unload_events())
 
-    # Подсчёт размера path у всех подвесов
-    total_path_entries = sum(len(h.path) for h in line_monitor._hangers.values())
-    max_path_length = max((len(h.path) for h in line_monitor._hangers.values()), default=0)
+    # Накопленная история проходов: по ней видно, не растёт ли память
+    total_path_entries = hanger_stats["path_entries"]
+    max_path_length = hanger_stats["max_path_length"]
 
     # WebSocket
     from app.services.websocket_manager import websocket_manager
