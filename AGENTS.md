@@ -15,7 +15,7 @@ npm run dev:kill        # освободить порты
 Проверка изменения — бэкенд:
 
 ```bash
-cd backend && .venv/Scripts/python -m pytest                             # все 218
+cd backend && .venv/Scripts/python -m pytest                             # все 239
 cd backend && .venv/Scripts/python -m pytest tests/test_hanger_journal.py -k day_change
 ```
 
