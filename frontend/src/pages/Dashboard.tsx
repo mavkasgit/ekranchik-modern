@@ -53,7 +53,6 @@ import {
   isBlankRow,
   mergeHangerMeta,
   rowClassName,
-  STICKS_LABEL,
 } from "@/lib/domain/dashboardRow";
 import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
 import { emptyRun, waitingRows } from "@/lib/domain/testRun";
@@ -749,6 +748,7 @@ function DataTable({
                 <>
                   <div
                     role="cell"
+                    data-column="date"
                     className="text-center py-1 text-sm flex items-center justify-center"
                     style={{
                       gridColumn: "date",
@@ -766,6 +766,7 @@ function DataTable({
                   </div>
                   <div
                     role="cell"
+                    data-column="time"
                     className="text-center py-1 text-sm flex items-center justify-center"
                     style={{
                       gridColumn: "time",
@@ -781,6 +782,7 @@ function DataTable({
               ) : (
                 <div
                   role="cell"
+                  data-column="date"
                   className="text-center py-1 flex items-center justify-center"
                   style={{
                     gridColumn: "date",
@@ -794,6 +796,7 @@ function DataTable({
               {/* Номер вешалки */}
               <div
                 role="cell"
+                data-column="num"
                 className="text-center font-bold py-1 flex items-center justify-center"
                 style={{
                   gridColumn: "num",
@@ -806,6 +809,7 @@ function DataTable({
               {/* Основные параметры детали (Тип, КПЗ, Клиент) */}
               <div
                 role="cell"
+                data-column="type"
                 className="text-center py-1 flex items-center justify-center"
                 style={{ gridColumn: "type", gridRow: "1" }}
               >
@@ -813,6 +817,7 @@ function DataTable({
               </div>
               <div
                 role="cell"
+                data-column="kpz"
                 className="text-center py-1 flex items-center justify-center"
                 style={{ gridColumn: "kpz", gridRow: "1" }}
               >
@@ -820,6 +825,7 @@ function DataTable({
               </div>
               <div
                 role="cell"
+                data-column="client"
                 className="text-left py-1 flex items-center justify-start truncate min-w-0 px-2"
                 style={{ gridColumn: "client", gridRow: "1" }}
                 title={hanger.client}
@@ -831,6 +837,7 @@ function DataTable({
               {meaning.photosBelow ? (
                 <div
                   role="cell"
+                  data-column="profile"
                   className="text-left py-1 flex items-center justify-start min-w-0 px-2"
                   style={{ gridColumn: "profile / lamels", gridRow: "1" }}
                   title={hanger.profile}
@@ -841,6 +848,7 @@ function DataTable({
                 <>
                   <div
                     role="cell"
+                    data-column="profile"
                     className="text-left py-1 flex items-center justify-start min-w-0 px-2"
                     style={{ gridColumn: "profile", gridRow: "1" }}
                     title={hanger.profile}
@@ -849,6 +857,7 @@ function DataTable({
                   </div>
                   <div
                     role="cell"
+                    data-column="photo"
                     className="py-1 flex items-center justify-center"
                     style={{
                       gridColumn: "photo",
@@ -863,6 +872,7 @@ function DataTable({
               {/* Ламели */}
               <div
                 role="cell"
+                data-column="lamels"
                 className="text-center font-bold py-1 flex items-center justify-center"
                 style={{
                   gridColumn: "lamels",
@@ -875,6 +885,7 @@ function DataTable({
               {/* Цвет */}
               <div
                 role="cell"
+                data-column="color"
                 className="text-center py-1 flex items-center justify-center"
                 style={{
                   gridColumn: "color",
@@ -896,6 +907,7 @@ function DataTable({
               {meaning.detailRow && (
                 <div
                   role="cell"
+                  data-column="detail"
                   className="py-1.5 px-3 flex flex-wrap items-center justify-start gap-x-4 gap-y-1.5"
                   style={{
                     gridRow: "2",
@@ -991,10 +1003,9 @@ function SidebarQueueTable({
                   const meaning = describeHangerRow(hanger, idx);
                   // Боковая очередь узкая: «Клюшки» уже короткие, остальное
                   // сжимаем до цифр книги, как и раньше.
-                  const cleanedProfile =
-                    meaning.profileLabel === STICKS_LABEL
-                      ? meaning.profileLabel
-                      : profileText(hanger.profile);
+                  const cleanedProfile = meaning.sticks
+                    ? meaning.profileLabel
+                    : profileText(hanger.profile);
                   const displayProfile =
                     cleanedProfile.length > 8 ? cleanedProfile.slice(0, 8) + ".." : cleanedProfile;
                   return (

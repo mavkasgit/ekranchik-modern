@@ -53,10 +53,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Имя ячейки профиля: плюсы книги на экране разделяются пробелом. */
-function profileCellName(profile: string): RegExp | string {
-  if (!profile.trim()) return "—";
-  return new RegExp(`^${profile.split("+").map(escapeRegExp).join("\\+\\s*")}$`);
+/** Ожидаемый текст ячейки профиля: плюсы книги на экране разделяются пробелом. */
+function profileCellText(profile: string): RegExp | string {
+  const trimmed = profile?.trim() ?? "";
+  if (!trimmed || trimmed === "—") return "—";
+  return new RegExp(`^${trimmed.split("+").map(escapeRegExp).join("\\+\\s*")}$`);
 }
 
 test.describe("OPC UA Hanger Realtime Live Demo", () => {
@@ -119,16 +120,13 @@ test.describe("OPC UA Hanger Realtime Live Demo", () => {
 
     await expect(unloadRow).toBeVisible({ timeout: 30000 });
 
-    // Строка нарисована целиком: подвес, клиент, профиль и цвет связаны.
-    await expect(
-      unloadRow.getByRole("cell", { name: pass.client, exact: true }).first(),
-    ).toBeVisible();
-    await expect(
-      unloadRow.getByRole("cell", { name: profileCellName(pass.profile) }).first(),
-    ).toBeVisible();
-    await expect(
-      unloadRow.getByRole("cell", { name: colorName(pass.color), exact: true }).first(),
-    ).toBeVisible();
+    // Колонки адресуются по data-column, а не по тексту: прочерк «—» стоит
+    // почти в каждой ячейке, и поиск по имени мог бы совпасть с чужой.
+    await expect(unloadRow.locator('[data-column="client"]')).toHaveText(pass.client);
+    await expect(unloadRow.locator('[data-column="profile"]')).toHaveText(
+      profileCellText(pass.profile),
+    );
+    await expect(unloadRow.locator('[data-column="color"]')).toHaveText(colorName(pass.color));
 
     console.log(`🎉 Подвес ${hangerNumber} выгружен и показан на дашборде`);
 
