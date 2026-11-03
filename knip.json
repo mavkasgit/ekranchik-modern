@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreBinaries": ["oxlint", "start"],
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.js", "e2e/tests/*.spec.mts"],
+      "ignoreDependencies": ["@commitlint/cli", "@commitlint/config-conventional"]
+    },
+    "frontend": {
+      "ignore": ["src/components/ui/**", "src/hooks/use-toast.ts"]
+    }
+  }
+}

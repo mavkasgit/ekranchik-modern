@@ -1,7 +1,13 @@
-import { test as base, chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import {
+  test as base,
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,16 +15,16 @@ const __dirname = path.dirname(__filename);
 // Ручной разбор .env файла
 function loadEnvFile(filePath: string): Record<string, string> {
   try {
-    const content = fs.readFileSync(filePath, 'utf8');
+    const content = fs.readFileSync(filePath, "utf8");
     const env: Record<string, string> = {};
-    for (const line of content.split('\n')) {
+    for (const line of content.split("\n")) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIdx = trimmed.indexOf('=');
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
       if (eqIdx === -1) continue;
       const key = trimmed.slice(0, eqIdx).trim();
       const val = trimmed.slice(eqIdx + 1).trim();
-      env[key] = val.replace(/^"|"$/g, '').replace(/^'|'$/g, '');
+      env[key] = val.replace(/^"|"$/g, "").replace(/^'|'$/g, "");
     }
     return env;
   } catch {
@@ -26,18 +32,18 @@ function loadEnvFile(filePath: string): Record<string, string> {
   }
 }
 
-const envPath = path.resolve(__dirname, '.env');
+const envPath = path.resolve(__dirname, ".env");
 const envVars = loadEnvFile(envPath);
 
 Object.entries(envVars).forEach(([k, v]) => {
-  if (process.env[k] === undefined || process.env[k] === '') process.env[k] = v;
+  if (process.env[k] === undefined || process.env[k] === "") process.env[k] = v;
 });
 
-const BROWSER_MODE = process.env.E2E_BROWSER_MODE || 'cdp';
-const BROWSER_PORT = process.env.BROWSER_PORT || '9222';
-const REMOTE_CHROME_HOST = process.env.REMOTE_CHROME_HOST || 'localhost';
+const BROWSER_MODE = process.env.E2E_BROWSER_MODE || "cdp";
+const BROWSER_PORT = process.env.BROWSER_PORT || "9222";
+const REMOTE_CHROME_HOST = process.env.REMOTE_CHROME_HOST || "localhost";
 const REMOTE_DEBUGGING_URL = `http://${REMOTE_CHROME_HOST}:${BROWSER_PORT}`;
-const CHROME_PATH = process.env.CHROME_PATH || '';
+const CHROME_PATH = process.env.CHROME_PATH || "";
 
 let managedBrowser: Browser | null = null;
 let cdpBrowser: Browser | null = null;
@@ -46,7 +52,7 @@ async function getManagedBrowser(): Promise<Browser> {
   if (managedBrowser && managedBrowser.isConnected()) {
     return managedBrowser;
   }
-  const launchOpts: any = { headless: BROWSER_MODE === 'headless' };
+  const launchOpts: any = { headless: BROWSER_MODE === "headless" };
   if (CHROME_PATH) {
     launchOpts.executablePath = CHROME_PATH;
   }
@@ -68,19 +74,17 @@ export const test = base.extend<{
   connectedBrowser: Browser;
   connectedPage: Page;
 }>({
-  connectedBrowser: async ({}, use) => {
-    const browser = BROWSER_MODE === 'cdp'
-      ? await getCdpBrowser()
-      : await getManagedBrowser();
+  connectedBrowser: async (_fixtures, use) => {
+    const browser = BROWSER_MODE === "cdp" ? await getCdpBrowser() : await getManagedBrowser();
     await use(browser);
   },
 
   connectedPage: async ({ connectedBrowser }, use) => {
-    if (BROWSER_MODE === 'cdp') {
+    if (BROWSER_MODE === "cdp") {
       const contexts = connectedBrowser.contexts();
-      const context = contexts[0] || await connectedBrowser.newContext();
+      const context = contexts[0] || (await connectedBrowser.newContext());
       const pages = context.pages();
-      const page = pages[0] || await context.newPage();
+      const page = pages[0] || (await context.newPage());
       await use(page);
     } else {
       const context: BrowserContext = await connectedBrowser.newContext();
@@ -94,4 +98,4 @@ export const test = base.extend<{
   },
 });
 
-export { expect } from '@playwright/test';
+export { expect } from "@playwright/test";

@@ -1,53 +1,53 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { realtime, type RealtimeState } from '@/realtime/connection'
-import { applyRealtimeMessage } from '@/realtime/applyMessage'
-import type { WebSocketMessage } from '@/types/dashboard'
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { realtime, type RealtimeState } from "@/realtime/connection";
+import { applyRealtimeMessage } from "@/realtime/applyMessage";
+import type { WebSocketMessage } from "@/types/dashboard";
 
 export interface RealtimeConnectionState extends RealtimeState {
-  isConnected: boolean
+  isConnected: boolean;
 }
 
 /** Состояние канала: статус, последнее сообщение и признак живого соединения. */
 export function useRealtimeConnection(): RealtimeConnectionState {
-  const state = useSyncExternalStore(realtime.subscribe, realtime.getState)
+  const state = useSyncExternalStore(realtime.subscribe, realtime.getState);
 
-  useEffect(() => realtime.acquire(), [])
+  useEffect(() => realtime.acquire(), []);
 
-  return { ...state, isConnected: state.status === 'connected' }
+  return { ...state, isConnected: state.status === "connected" };
 }
 
 /** Типизированная подписка на один вид сообщения сервера. */
 export function useRealtimeEvent(
-  type: WebSocketMessage['type'],
+  type: WebSocketMessage["type"],
   handler: (message: WebSocketMessage) => void,
 ): void {
-  const { lastMessage } = useRealtimeConnection()
-  const handlerRef = useRef(handler)
+  const { lastMessage } = useRealtimeConnection();
+  const handlerRef = useRef(handler);
   useEffect(() => {
-    handlerRef.current = handler
-  }, [handler])
+    handlerRef.current = handler;
+  }, [handler]);
 
   // Сообщение, пришедшее до монтирования, не должно срабатывать как событие
-  const seenRef = useRef(lastMessage)
+  const seenRef = useRef(lastMessage);
   useEffect(() => {
-    if (lastMessage === seenRef.current) return
-    seenRef.current = lastMessage
-    if (lastMessage?.type === type) handlerRef.current(lastMessage)
-  }, [lastMessage, type])
+    if (lastMessage === seenRef.current) return;
+    seenRef.current = lastMessage;
+    if (lastMessage?.type === type) handlerRef.current(lastMessage);
+  }, [lastMessage, type]);
 }
 
 /** Связывает канал с кэшем запросов: приложение владеет каналом целиком. */
 export function useRealtimeBridge(): void {
-  const client = useQueryClient()
+  const client = useQueryClient();
 
   useEffect(() => {
-    const release = realtime.acquire()
-    realtime.setMessageHandler((message) => applyRealtimeMessage(client, message))
+    const release = realtime.acquire();
+    realtime.setMessageHandler((message) => applyRealtimeMessage(client, message));
 
     return () => {
-      realtime.setMessageHandler(null)
-      release()
-    }
-  }, [client])
+      realtime.setMessageHandler(null);
+      release();
+    };
+  }, [client]);
 }

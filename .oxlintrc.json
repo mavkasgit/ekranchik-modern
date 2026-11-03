@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "react-hooks", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "react-hooks/exhaustive-deps": "off",
+    "react/set-state-in-effect": "off",
+    "react/static-components": "off",
+    "react/refs": "off",
+    "react/purity": "off",
+    "eslint/no-unused-vars": ["error", { "args": "after-used", "argsIgnorePattern": "^_" }]
+  },
+  "env": { "builtin": true },
+  "ignorePatterns": [
+    "dist-exe",
+    "dist-full",
+    "frontend/dist",
+    "journal",
+    "journal-dev",
+    "static",
+    "backend/.venv",
+    "node_modules"
+  ]
+}

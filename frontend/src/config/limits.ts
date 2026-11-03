@@ -13,4 +13,4 @@
  * лишнее — это строки, которые видны только после скролла, а оператор до
  * них не дотянется без мыши.
  */
-export const SIDEBAR_ROW_LIMIT = 20
+export const SIDEBAR_ROW_LIMIT = 20;

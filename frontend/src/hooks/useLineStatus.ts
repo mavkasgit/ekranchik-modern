@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
-import { lineApi } from '@/api/line'
-import { LINE_STATUS_KEY } from '@/lib/queryKeys'
-import { DATA_REFRESH_INTERVAL } from '@/config/intervals'
+import { useQuery } from "@tanstack/react-query";
+import { lineApi } from "@/api/line";
+import { LINE_STATUS_KEY } from "@/lib/queryKeys";
+import { DATA_REFRESH_INTERVAL } from "@/config/intervals";
 
 /**
  * Состояние линии: HTTP-запрос — первичная загрузка и fallback,
@@ -12,5 +12,5 @@ export function useLineStatus() {
     queryKey: LINE_STATUS_KEY,
     queryFn: lineApi.getStatus,
     refetchInterval: DATA_REFRESH_INTERVAL,
-  })
+  });
 }

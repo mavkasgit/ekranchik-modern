@@ -1,15 +1,25 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  RefreshCw, Wifi, WifiOff, FileSpreadsheet, Server,
-  Image, Maximize2, Minimize2, X, AlertTriangle, Inbox, Clock
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  FileSpreadsheet,
+  Server,
+  Image,
+  Maximize2,
+  Minimize2,
+  X,
+  AlertTriangle,
+  Inbox,
+  Clock,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -17,48 +27,53 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
+} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog'
-import { Checkbox } from '@/components/ui/checkbox'
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 
-import { useDashboard, useFileStatus, useOPCUAStatus, useOPCUAMatchedUnloadEvents } from '@/hooks/useDashboard'
-import { useRealtimeConnection } from '@/hooks/useRealtime'
-import { useTestRun } from '@/hooks/useTestRun'
-import { DASHBOARD_KEY } from '@/lib/queryKeys'
-import { SIDEBAR_ROW_LIMIT } from '@/config/limits'
-import { colorHex, colorName } from '@/lib/domain/color'
-import { buildTestRows, type TestMode } from '@/lib/domain/simRows'
-import { emptyRun, waitingRows } from '@/lib/domain/testRun'
-import { hangerKey } from '@/lib/domain/hanger'
-import { photoUrl } from '@/lib/domain/photo'
-import { profileText } from '@/lib/domain/profile'
-import type { Profile } from '@/types/profile'
-import { formatClock, formatLocalized } from '@/lib/domain/time'
-import { BathForecast } from '@/components/BathForecastTable'
-import { dashboardApi } from '@/api/dashboard'
-import type { HangerData, ProfileInfo } from '@/types/dashboard'
-import { useFullscreen } from '@/App'
+import {
+  useDashboard,
+  useFileStatus,
+  useOPCUAStatus,
+  useOPCUAMatchedUnloadEvents,
+} from "@/hooks/useDashboard";
+import { useRealtimeConnection } from "@/hooks/useRealtime";
+import { useTestRun } from "@/hooks/useTestRun";
+import { DASHBOARD_KEY } from "@/lib/queryKeys";
+import { SIDEBAR_ROW_LIMIT } from "@/config/limits";
+import { colorHex, colorName } from "@/lib/domain/color";
+import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
+import { emptyRun, waitingRows } from "@/lib/domain/testRun";
+import { hangerKey } from "@/lib/domain/hanger";
+import { photoUrl } from "@/lib/domain/photo";
+import { profileText } from "@/lib/domain/profile";
+import type { Profile } from "@/types/profile";
+import { formatClock, formatLocalized } from "@/lib/domain/time";
+import { BathForecast } from "@/components/BathForecastTable";
+import { dashboardApi } from "@/api/dashboard";
+import type { HangerData, ProfileInfo } from "@/types/dashboard";
+import { useFullscreen } from "@/App";
 
-const FILTERS_KEY = 'ekranchik_filters'
+const FILTERS_KEY = "ekranchik_filters";
 
 /** Рамка тестового режима: баннер убрали, подставные строки помечает заливка. */
-const TEST_FRAME = 'border-purple-500/40 bg-purple-500/5'
+const TEST_FRAME = "border-purple-500/40 bg-purple-500/5";
 
 /** Пустой прогон для витринных режимов: карточек нет, линия не подмешивается. */
-const EMPTY_RUN = emptyRun()
+const EMPTY_RUN = emptyRun();
 interface Filters {
-  loadingLimit: number
-  realtimeLimit: number
-  showLoading: boolean
-  showRealtime: boolean
-  showForecast: boolean
-  showTime: boolean
+  loadingLimit: number;
+  realtimeLimit: number;
+  showLoading: boolean;
+  showRealtime: boolean;
+  showForecast: boolean;
+  showTime: boolean;
 }
 
 const defaultFilters: Filters = {
@@ -68,49 +83,51 @@ const defaultFilters: Filters = {
   showRealtime: true,
   showForecast: true,
   showTime: true,
-}
+};
 
 function loadFilters(): Filters {
   try {
-    const saved = localStorage.getItem(FILTERS_KEY)
+    const saved = localStorage.getItem(FILTERS_KEY);
     if (saved) {
-      const parsed = JSON.parse(saved)
+      const parsed = JSON.parse(saved);
       return {
         ...defaultFilters,
         ...parsed,
         // Ensure limits are valid (min 1)
         loadingLimit: Math.max(1, parsed.loadingLimit || defaultFilters.loadingLimit),
         realtimeLimit: Math.max(1, parsed.realtimeLimit || defaultFilters.realtimeLimit),
-      }
+      };
     }
-  } catch { /* ignore */ }
-  return defaultFilters
+  } catch {
+    /* ignore */
+  }
+  return defaultFilters;
 }
 
 function saveFilters(filters: Filters) {
-  localStorage.setItem(FILTERS_KEY, JSON.stringify(filters))
+  localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
 }
 
 // Format date with year 2026 (DD.MM.YY -> DD.MM.2026). null — строка книги
 // не подобрана к этому проходу, показываем прочерк.
 function formatDate(date: string | null | undefined): string {
-  if (!date) return '—'
+  if (!date) return "—";
   // Handle formats like "28.10.26" or "29.11.2026"
-  const parts = date.split('.')
+  const parts = date.split(".");
   if (parts.length === 3) {
-    const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
-    return `${parts[0]}.${parts[1]}.${year}`
+    const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+    return `${parts[0]}.${parts[1]}.${year}`;
   }
-  return date
+  return date;
 }
 
 // Profile data type from catalog
 interface ProfileData {
-  id: number
-  name: string
-  quantity_per_hanger: number | null
-  length: number | null
-  notes: string | null
+  id: number;
+  name: string;
+  quantity_per_hanger: number | null;
+  length: number | null;
+  notes: string | null;
 }
 
 // Photo Modal - with fullscreen support
@@ -120,138 +137,140 @@ function PhotoModal({
   photoUrl,
   profileName,
 }: {
-  open: boolean
-  onClose: () => void
-  photoUrl: string | null
-  profileName: string
+  open: boolean;
+  onClose: () => void;
+  photoUrl: string | null;
+  profileName: string;
 }) {
-  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
-  const [profileData, setProfileData] = useState<ProfileData | null>(null)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [profileData, setProfileData] = useState<ProfileData | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Load image dimensions
   useEffect(() => {
-    setImageSize(null)
-    if (!photoUrl) return
+    setImageSize(null);
+    if (!photoUrl) return;
 
-    const img = new window.Image()
+    const img = new window.Image();
     img.onload = () => {
-      setImageSize({ width: img.naturalWidth, height: img.naturalHeight })
-    }
-    img.src = photoUrl
+      setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.src = photoUrl;
 
-    return () => { img.onload = null }
-  }, [photoUrl])
+    return () => {
+      img.onload = null;
+    };
+  }, [photoUrl]);
 
   // Load profile data from catalog API
   useEffect(() => {
-    setProfileData(null)
-    if (!open || !profileName) return
+    setProfileData(null);
+    if (!open || !profileName) return;
 
     fetch(`/api/catalog/${encodeURIComponent(profileName)}`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => setProfileData(data))
-      .catch(() => setProfileData(null))
-  }, [open, profileName])
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setProfileData(data))
+      .catch(() => setProfileData(null));
+  }, [open, profileName]);
 
   // Reset fullscreen when dialog closes
   useEffect(() => {
     if (!open) {
-      setIsFullscreen(false)
+      setIsFullscreen(false);
     }
-  }, [open])
+  }, [open]);
 
   // Handle ESC key
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         if (isFullscreen) {
-          setIsFullscreen(false)
+          setIsFullscreen(false);
         } else {
-          onClose()
+          onClose();
         }
       }
-    }
+    };
 
     if (open) {
-      window.addEventListener('keydown', handleEsc)
-      return () => window.removeEventListener('keydown', handleEsc)
+      window.addEventListener("keydown", handleEsc);
+      return () => window.removeEventListener("keydown", handleEsc);
     }
-  }, [open, isFullscreen, onClose])
+  }, [open, isFullscreen, onClose]);
 
   // Fullscreen API management
   useEffect(() => {
-    if (!isFullscreen) return
+    if (!isFullscreen) return;
 
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement) {
-        setIsFullscreen(false)
+        setIsFullscreen(false);
       }
-    }
+    };
 
     const handleEscFullscreen = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsFullscreen(false)
+      if (e.key === "Escape") {
+        setIsFullscreen(false);
       }
-    }
+    };
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    window.addEventListener('keydown', handleEscFullscreen)
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    window.addEventListener("keydown", handleEscFullscreen);
 
     return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange)
-      window.removeEventListener('keydown', handleEscFullscreen)
-    }
-  }, [isFullscreen])
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      window.removeEventListener("keydown", handleEscFullscreen);
+    };
+  }, [isFullscreen]);
 
   // Request fullscreen when isFullscreen becomes true
   useEffect(() => {
-    if (!isFullscreen) return
+    if (!isFullscreen) return;
 
-    const fullscreenElement = document.getElementById('fullscreen-photo-container')
+    const fullscreenElement = document.getElementById("fullscreen-photo-container");
     if (fullscreenElement && !document.fullscreenElement) {
       fullscreenElement.requestFullscreen().catch(() => {
-        console.log('Fullscreen not supported')
-      })
+        console.log("Fullscreen not supported");
+      });
     }
-  }, [isFullscreen])
+  }, [isFullscreen]);
 
   // Calculate dialog size based on actual image pixels (like Catalog)
   const dialogSize = useMemo(() => {
-    const rightPanelWidth = 280
-    const maxDialogHeight = typeof window !== 'undefined' ? window.innerHeight - 100 : 800
-    const maxDialogWidth = typeof window !== 'undefined' ? window.innerWidth - 100 : 1200
-    const minHeight = 400
+    const rightPanelWidth = 280;
+    const maxDialogHeight = typeof window !== "undefined" ? window.innerHeight - 100 : 800;
+    const maxDialogWidth = typeof window !== "undefined" ? window.innerWidth - 100 : 1200;
+    const minHeight = 400;
 
     if (!imageSize) {
-      return { width: Math.min(900, maxDialogWidth), height: minHeight }
+      return { width: Math.min(900, maxDialogWidth), height: minHeight };
     }
 
-    let imgDisplayWidth = imageSize.width
-    let imgDisplayHeight = imageSize.height
+    let imgDisplayWidth = imageSize.width;
+    let imgDisplayHeight = imageSize.height;
 
     // Scale down if image is too tall
     if (imgDisplayHeight > maxDialogHeight) {
-      const scale = maxDialogHeight / imgDisplayHeight
-      imgDisplayWidth = imgDisplayWidth * scale
-      imgDisplayHeight = maxDialogHeight
+      const scale = maxDialogHeight / imgDisplayHeight;
+      imgDisplayWidth = imgDisplayWidth * scale;
+      imgDisplayHeight = maxDialogHeight;
     }
 
     // Scale down if dialog would be too wide
-    const dialogWidth = imgDisplayWidth + rightPanelWidth
+    const dialogWidth = imgDisplayWidth + rightPanelWidth;
     if (dialogWidth > maxDialogWidth) {
-      const scale = (maxDialogWidth - rightPanelWidth) / imgDisplayWidth
-      imgDisplayWidth = imgDisplayWidth * scale
-      imgDisplayHeight = imgDisplayHeight * scale
+      const scale = (maxDialogWidth - rightPanelWidth) / imgDisplayWidth;
+      imgDisplayWidth = imgDisplayWidth * scale;
+      imgDisplayHeight = imgDisplayHeight * scale;
     }
 
     return {
       width: Math.max(600, imgDisplayWidth + rightPanelWidth),
-      height: Math.max(minHeight, imgDisplayHeight)
-    }
-  }, [imageSize])
+      height: Math.max(minHeight, imgDisplayHeight),
+    };
+  }, [imageSize]);
 
-  if (!photoUrl) return null
+  if (!photoUrl) return null;
 
   // Fullscreen mode - using browser fullscreen API (rendered at end of component)
 
@@ -260,7 +279,11 @@ function PhotoModal({
       <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
         <DialogContent
           className="p-0 gap-0 top-[5%] translate-y-0"
-          style={{ width: `${dialogSize.width}px`, height: `${dialogSize.height}px`, maxWidth: 'calc(100vw - 100px)' }}
+          style={{
+            width: `${dialogSize.width}px`,
+            height: `${dialogSize.height}px`,
+            maxWidth: "calc(100vw - 100px)",
+          }}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <div className="flex h-full">
@@ -288,17 +311,19 @@ function PhotoModal({
             </div>
 
             {/* Right panel - info (like Catalog view mode) */}
-            <div className="border-l bg-background p-4 flex flex-col" style={{ width: '280px' }}>
+            <div className="border-l bg-background p-4 flex flex-col" style={{ width: "280px" }}>
               <div className="flex-1 space-y-4 overflow-y-auto">
                 <h2 className="text-xl font-semibold">{profileName}</h2>
                 <div className="space-y-3 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Кол-во на подвесе:</span>
-                    <span className="font-medium">{profileData?.quantity_per_hanger ?? '—'}</span>
+                    <span className="font-medium">{profileData?.quantity_per_hanger ?? "—"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Длина:</span>
-                    <span className="font-medium">{profileData?.length ? `${profileData.length} мм` : '—'}</span>
+                    <span className="font-medium">
+                      {profileData?.length ? `${profileData.length} мм` : "—"}
+                    </span>
                   </div>
                 </div>
                 {profileData?.notes && (
@@ -314,19 +339,19 @@ function PhotoModal({
       </Dialog>
 
       {/* Fullscreen overlay - desktop only */}
-      {isFullscreen && photoUrl && typeof window !== 'undefined' && window.innerWidth >= 768 && (
+      {isFullscreen && photoUrl && typeof window !== "undefined" && window.innerWidth >= 768 && (
         <div
           id="fullscreen-photo-container"
           className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
           onClick={() => setIsFullscreen(false)}
         >
           {/* Large close area for mobile - top-left corner */}
-          {typeof window !== 'undefined' && window.innerWidth < 768 && (
+          {typeof window !== "undefined" && window.innerWidth < 768 && (
             <div
               className="absolute top-0 left-0 w-16 h-16 z-20 cursor-pointer"
               onClick={(e) => {
-                e.stopPropagation()
-                setIsFullscreen(false)
+                e.stopPropagation();
+                setIsFullscreen(false);
               }}
             />
           )}
@@ -336,8 +361,8 @@ function PhotoModal({
             size="icon"
             className="absolute top-4 right-4 text-white hover:bg-white/20 z-10"
             onClick={(e) => {
-              e.stopPropagation()
-              setIsFullscreen(false)
+              e.stopPropagation();
+              setIsFullscreen(false);
             }}
           >
             <Minimize2 className="h-6 w-6" />
@@ -347,9 +372,9 @@ function PhotoModal({
             size="icon"
             className="absolute top-4 right-16 text-white hover:bg-white/20 z-10"
             onClick={(e) => {
-              e.stopPropagation()
-              onClose()
-              setIsFullscreen(false)
+              e.stopPropagation();
+              onClose();
+              setIsFullscreen(false);
             }}
           >
             <X className="h-6 w-6" />
@@ -363,30 +388,30 @@ function PhotoModal({
         </div>
       )}
     </>
-  )
+  );
 }
 
 // Photo cell - wrapping layout, max 700px width, photos wrap to new rows
 function PhotoCell({
   hanger,
-  onPhotoClick
+  onPhotoClick,
 }: {
-  hanger: HangerData
-  onPhotoClick: (url: string, name: string) => void
+  hanger: HangerData;
+  onPhotoClick: (url: string, name: string) => void;
 }) {
-  const profilesInfo = hanger.profiles_info || []
+  const profilesInfo = hanger.profiles_info || [];
 
   if (profilesInfo.length > 0) {
     return (
-      <div 
-        className="flex flex-nowrap gap-2 items-center justify-start overflow-x-auto py-1 px-0.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 dark:[&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-thumb]:rounded-full" 
-        style={{ maxWidth: '350px' }}
+      <div
+        className="flex flex-nowrap gap-2 items-center justify-start overflow-x-auto py-1 px-0.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 dark:[&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-thumb]:rounded-full"
+        style={{ maxWidth: "350px" }}
       >
         {profilesInfo.map((prof, idx) => (
           <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} />
         ))}
       </div>
-    )
+    );
   }
 
   // Helper to render profile name next to photo
@@ -396,30 +421,32 @@ function PhotoCell({
         {hanger.canonical_name || hanger.profile}
       </p>
     </div>
-  )
+  );
 
-  const thumbUrl = photoUrl(hanger.profile_photo_thumb)
+  const thumbUrl = photoUrl(hanger.profile_photo_thumb);
   if (thumbUrl) {
     return (
-      <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: '800px' }}>
+      <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: "800px" }}>
         <div className="flex items-center">
           <img
             src={thumbUrl}
             alt={hanger.profile}
             className="w-auto h-auto max-h-[40px] max-w-[90px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
-            onClick={() => onPhotoClick(
-              photoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || '',
-              hanger.profile
-            )}
+            onClick={() =>
+              onPhotoClick(
+                photoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || "",
+                hanger.profile,
+              )
+            }
           />
           <ProfileName />
         </div>
       </div>
-    )
+    );
   }
 
   return (
-    <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: '800px' }}>
+    <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: "800px" }}>
       <div className="flex items-center">
         <div className="w-10 h-10 bg-muted rounded flex items-center justify-center flex-shrink-0">
           <Image className="w-5 h-5 text-muted-foreground" />
@@ -427,21 +454,21 @@ function PhotoCell({
         <ProfileName />
       </div>
     </div>
-  )
+  );
 }
 
 function ProfilePhoto({
   profile,
   onPhotoClick,
-  hideText = false
+  hideText = false,
 }: {
-  profile: ProfileInfo
-  onPhotoClick: (url: string, name: string) => void
-  hideText?: boolean
+  profile: ProfileInfo;
+  onPhotoClick: (url: string, name: string) => void;
+  hideText?: boolean;
 }) {
-  const thumbUrl = photoUrl(profile.photo_thumb, profile.updated_at)
-  const fullUrl = photoUrl(profile.photo_full || profile.photo_thumb, profile.updated_at)
-  const hasPhoto = profile.has_photo && thumbUrl
+  const thumbUrl = photoUrl(profile.photo_thumb, profile.updated_at);
+  const fullUrl = photoUrl(profile.photo_full || profile.photo_thumb, profile.updated_at);
+  const hasPhoto = profile.has_photo && thumbUrl;
 
   return (
     <div className="flex items-center gap-2">
@@ -450,7 +477,7 @@ function ProfilePhoto({
           src={thumbUrl}
           alt={profile.name}
           className="w-auto h-auto max-h-[40px] max-w-[90px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary flex-shrink-0"
-          onClick={() => onPhotoClick(fullUrl || '', profile.canonical_name || profile.name)}
+          onClick={() => onPhotoClick(fullUrl || "", profile.canonical_name || profile.name)}
         />
       ) : (
         <div className="w-12 h-12 bg-muted rounded flex items-center justify-center flex-shrink-0">
@@ -465,7 +492,10 @@ function ProfilePhoto({
           {profile.processing && profile.processing.length > 0 && (
             <div className="flex gap-1 mt-1 flex-wrap">
               {profile.processing.map((proc, i) => (
-                <Badge key={i} className="text-[10px] px-1 py-0 bg-yellow-400 text-yellow-900 hover:bg-yellow-500">
+                <Badge
+                  key={i}
+                  className="text-[10px] px-1 py-0 bg-yellow-400 text-yellow-900 hover:bg-yellow-500"
+                >
                   {proc}
                 </Badge>
               ))}
@@ -474,7 +504,7 @@ function ProfilePhoto({
         </div>
       )}
     </div>
-  )
+  );
 }
 
 function StatusBar({
@@ -484,20 +514,20 @@ function StatusBar({
   onOpenPathModal: () => void;
   isFetching: boolean;
 }) {
-  const { data: fileStatus } = useFileStatus()
-  const { data: opcuaStatus } = useOPCUAStatus()
-  const { isConnected, lastMessage } = useRealtimeConnection()
+  const { data: fileStatus } = useFileStatus();
+  const { data: opcuaStatus } = useOPCUAStatus();
+  const { isConnected, lastMessage } = useRealtimeConnection();
 
-  const fileIsOpen = fileStatus?.is_open
+  const fileIsOpen = fileStatus?.is_open;
   const statusColor = fileStatus?.error
-    ? 'bg-yellow-500'
+    ? "bg-yellow-500"
     : fileIsOpen
-      ? 'bg-green-500'
-      : 'bg-destructive'
+      ? "bg-green-500"
+      : "bg-destructive";
 
   // Полный путь: имя файла его не содержит, а оператору нужен — по нему
   // видно, что сервер читает действительно тот файл и с сетевого диска.
-  const filePath = fileStatus?.file_path
+  const filePath = fileStatus?.file_path;
 
   return (
     <Card>
@@ -507,13 +537,13 @@ function StatusBar({
             <div className="flex items-center gap-2">
               <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
               <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-              <span className="font-medium">{fileStatus?.status_text || '—'}</span>
+              <span className="font-medium">{fileStatus?.status_text || "—"}</span>
               <span className="text-foreground font-medium truncate max-w-[250px] text-xs">
-                {fileStatus?.file_name || '—'}
+                {fileStatus?.file_name || "—"}
               </span>
               {fileStatus?.last_modified && (
                 <span className="text-muted-foreground text-xs">
-                  ({new Date(fileStatus.last_modified).toLocaleString('ru')})
+                  ({new Date(fileStatus.last_modified).toLocaleString("ru")})
                 </span>
               )}
               {filePath && (
@@ -541,8 +571,10 @@ function StatusBar({
 
             <div className="flex items-center gap-2">
               <Server className="w-4 h-4 text-muted-foreground" />
-              <div className={`w-2 h-2 rounded-full ${opcuaStatus?.is_open ? 'bg-green-500' : 'bg-destructive'}`} />
-              <span>OPC UA: {opcuaStatus?.is_open ? 'OK' : 'Откл'}</span>
+              <div
+                className={`w-2 h-2 rounded-full ${opcuaStatus?.is_open ? "bg-green-500" : "bg-destructive"}`}
+              />
+              <span>OPC UA: {opcuaStatus?.is_open ? "OK" : "Откл"}</span>
               {opcuaStatus?.last_modified && (
                 <span className="text-muted-foreground text-xs">
                   ({formatLocalized(opcuaStatus.last_modified)})
@@ -558,7 +590,7 @@ function StatusBar({
               ) : (
                 <WifiOff className="w-4 h-4 text-destructive" />
               )}
-              <span>WS: {isConnected ? 'Онлайн' : 'Офлайн'}</span>
+              <span>WS: {isConnected ? "Онлайн" : "Офлайн"}</span>
               {lastMessage?.timestamp && (
                 <span className="text-muted-foreground text-xs">
                   ({formatLocalized(lastMessage.timestamp)})
@@ -569,26 +601,28 @@ function StatusBar({
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 const isSticks = (hanger: HangerData) => {
-  return hanger.material_type?.toLowerCase().includes('клюш') || 
-         hanger.profile?.toLowerCase().includes('клюш');
-}
+  return (
+    hanger.material_type?.toLowerCase().includes("клюш") ||
+    hanger.profile?.toLowerCase().includes("клюш")
+  );
+};
 
 const getRowClassName = (hanger: HangerData, idx: number) => {
   if (hanger.is_defect) {
-    return 'bg-red-300 hover:bg-red-400 dark:bg-red-900 dark:hover:bg-red-800 text-red-950 dark:text-red-50 font-semibold';
+    return "bg-red-300 hover:bg-red-400 dark:bg-red-900 dark:hover:bg-red-800 text-red-950 dark:text-red-50 font-semibold";
   }
   if (isSticks(hanger)) {
-    return 'bg-sky-300 hover:bg-sky-400 dark:bg-sky-900 dark:hover:bg-sky-800 text-sky-950 dark:text-sky-50 font-semibold';
+    return "bg-sky-300 hover:bg-sky-400 dark:bg-sky-900 dark:hover:bg-sky-800 text-sky-950 dark:text-sky-50 font-semibold";
   }
   if (hanger.time_warning) {
-    return 'bg-orange-200 hover:bg-orange-300/80 dark:bg-orange-950/40';
+    return "bg-orange-200 hover:bg-orange-300/80 dark:bg-orange-950/40";
   }
-  return idx % 2 === 0 ? 'bg-slate-200 dark:bg-slate-800/50' : '';
-}
+  return idx % 2 === 0 ? "bg-slate-200 dark:bg-slate-800/50" : "";
+};
 
 // Причины пометки строки — оператору показываем только то, что он может
 // понять и на что может отреагировать: долгий проход и выгрузку без прохода.
@@ -597,28 +631,25 @@ const getRowClassName = (hanger: HangerData, idx: number) => {
 // NO_ROW бейджа не имеет: пустая строка читается сама.
 const WARNING_BADGES: Record<string, { label: string; className: string }> = {
   DELAY: {
-    label: '⚠ ЗАДЕРЖКА',
-    className: 'text-orange-700 bg-orange-200 dark:text-orange-400 dark:bg-orange-950/60 border-orange-300/50',
+    label: "⚠ ЗАДЕРЖКА",
+    className:
+      "text-orange-700 bg-orange-200 dark:text-orange-400 dark:bg-orange-950/60 border-orange-300/50",
   },
   CYCLE_ERROR: {
-    label: '⚠ ОШИБКА',
-    className: 'text-red-700 bg-red-200 dark:text-red-400 dark:bg-red-950/60 border-red-300/50',
+    label: "⚠ ОШИБКА",
+    className: "text-red-700 bg-red-200 dark:text-red-400 dark:bg-red-950/60 border-red-300/50",
   },
-}
-
-
+};
 
 function ClockInline() {
-  const [time, setTime] = useState(new Date())
+  const [time, setTime] = useState(new Date());
 
   useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000)
-    return () => clearInterval(timer)
-  }, [])
+    const timer = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-  return (
-    <span>{formatLocalized(time, 'ru-RU')}</span>
-  )
+  return <span>{formatLocalized(time, "ru-RU")}</span>;
 }
 
 // Data table
@@ -628,39 +659,87 @@ function DataTable({
   isFullscreen = false,
   showEntryExit = false,
 }: {
-  data: HangerData[]
-  onPhotoClick: (url: string, name: string) => void
-  isFullscreen?: boolean
-  showEntryExit?: boolean
+  data: HangerData[];
+  onPhotoClick: (url: string, name: string) => void;
+  isFullscreen?: boolean;
+  showEntryExit?: boolean;
 }) {
   const gridTemplateColumns = showEntryExit
-    ? '[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px'
-    : '[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px';
+    ? "[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px"
+    : "[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px";
 
   return (
-    <div className={`overflow-auto text-sm border border-slate-200 dark:border-slate-800 ${isFullscreen ? 'max-h-screen rounded-none border-none' : 'rounded-md max-h-[500px]'}`}>
-      <div 
-        className="grid w-full text-sm"
-        style={{ gridTemplateColumns }}
-      >
-
+    <div
+      className={`overflow-auto text-sm border border-slate-200 dark:border-slate-800 ${isFullscreen ? "max-h-screen rounded-none border-none" : "rounded-md max-h-[500px]"}`}
+    >
+      <div className="grid w-full text-sm" style={{ gridTemplateColumns }}>
         {/* Шапка таблицы */}
-        <div 
+        <div
           className="sticky top-0 bg-muted z-20 text-[14px] font-semibold text-foreground/85 tracking-tight border-b border-slate-300 dark:border-slate-700 grid col-span-full"
-          style={{ gridTemplateColumns, display: 'grid' }}
+          style={{ gridTemplateColumns, display: "grid" }}
         >
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'date' }}>Дата</div>
+          <div
+            className="text-center py-1.5 flex items-center justify-center"
+            style={{ gridColumn: "date" }}
+          >
+            Дата
+          </div>
           {showEntryExit && (
-            <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'time' }}>Время</div>
+            <div
+              className="text-center py-1.5 flex items-center justify-center"
+              style={{ gridColumn: "time" }}
+            >
+              Время
+            </div>
           )}
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'num' }}>№</div>
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'type' }}>Тип</div>
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'kpz' }}>№ КПЗ</div>
-          <div className="text-left py-1.5 px-2 flex items-center justify-start" style={{ gridColumn: 'client' }}>Клиент</div>
-          <div className="text-left py-1.5 px-2 flex items-center justify-start" style={{ gridColumn: 'profile' }}>Профиль</div>
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'photo' }}>Фото</div>
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'lamels' }}>Ламели</div>
-          <div className="text-center py-1.5 flex items-center justify-center" style={{ gridColumn: 'color' }}>Цвет</div>
+          <div
+            className="text-center py-1.5 flex items-center justify-center"
+            style={{ gridColumn: "num" }}
+          >
+            №
+          </div>
+          <div
+            className="text-center py-1.5 flex items-center justify-center"
+            style={{ gridColumn: "type" }}
+          >
+            Тип
+          </div>
+          <div
+            className="text-center py-1.5 flex items-center justify-center"
+            style={{ gridColumn: "kpz" }}
+          >
+            № КПЗ
+          </div>
+          <div
+            className="text-left py-1.5 px-2 flex items-center justify-start"
+            style={{ gridColumn: "client" }}
+          >
+            Клиент
+          </div>
+          <div
+            className="text-left py-1.5 px-2 flex items-center justify-start"
+            style={{ gridColumn: "profile" }}
+          >
+            Профиль
+          </div>
+          <div
+            className="text-center py-1.5 flex items-center justify-center"
+            style={{ gridColumn: "photo" }}
+          >
+            Фото
+          </div>
+          <div
+            className="text-center py-1.5 flex items-center justify-center"
+            style={{ gridColumn: "lamels" }}
+          >
+            Ламели
+          </div>
+          <div
+            className="text-center py-1.5 flex items-center justify-center"
+            style={{ gridColumn: "color" }}
+          >
+            Цвет
+          </div>
         </div>
 
         {/* Тело таблицы */}
@@ -677,16 +756,16 @@ function DataTable({
             <div
               key={`${hanger.number}-${idx}`}
               className={`grid col-span-full border-b border-slate-200 dark:border-slate-800 group ${getRowClassName(hanger, idx)}`}
-              style={{ gridTemplateColumns, display: 'grid' }}
+              style={{ gridTemplateColumns, display: "grid" }}
             >
               {/* Дата и Время (с вертикальным объединением) */}
               {showEntryExit ? (
                 <>
-                  <div 
-                    className="text-center py-1 text-sm flex items-center justify-center" 
-                    style={{ 
-                      gridColumn: 'date', 
-                      gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                  <div
+                    className="text-center py-1 text-sm flex items-center justify-center"
+                    style={{
+                      gridColumn: "date",
+                      gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
                     }}
                   >
                     {formatDate(hanger.entry_date) === formatDate(hanger.exit_date) ? (
@@ -698,11 +777,11 @@ function DataTable({
                       </div>
                     )}
                   </div>
-                  <div 
-                    className="text-center py-1 text-sm flex items-center justify-center" 
-                    style={{ 
-                      gridColumn: 'time', 
-                      gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                  <div
+                    className="text-center py-1 text-sm flex items-center justify-center"
+                    style={{
+                      gridColumn: "time",
+                      gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
                     }}
                   >
                     <div className="flex flex-col">
@@ -712,11 +791,11 @@ function DataTable({
                   </div>
                 </>
               ) : (
-                <div 
-                  className="text-center py-1 flex items-center justify-center" 
-                  style={{ 
-                    gridColumn: 'date', 
-                    gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+                <div
+                  className="text-center py-1 flex items-center justify-center"
+                  style={{
+                    gridColumn: "date",
+                    gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
                   }}
                 >
                   {hanger.date}
@@ -724,32 +803,32 @@ function DataTable({
               )}
 
               {/* Номер вешалки */}
-              <div 
-                className="text-center font-bold py-1 flex items-center justify-center" 
-                style={{ 
-                  gridColumn: 'num', 
-                  gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+              <div
+                className="text-center font-bold py-1 flex items-center justify-center"
+                style={{
+                  gridColumn: "num",
+                  gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
                 }}
               >
                 {hanger.number}
               </div>
 
               {/* Основные параметры детали (Тип, КПЗ, Клиент) */}
-              <div 
-                className="text-center py-1 flex items-center justify-center" 
-                style={{ gridColumn: 'type', gridRow: '1' }}
+              <div
+                className="text-center py-1 flex items-center justify-center"
+                style={{ gridColumn: "type", gridRow: "1" }}
               >
                 {hanger.material_type}
               </div>
-              <div 
-                className="text-center py-1 flex items-center justify-center" 
-                style={{ gridColumn: 'kpz', gridRow: '1' }}
+              <div
+                className="text-center py-1 flex items-center justify-center"
+                style={{ gridColumn: "kpz", gridRow: "1" }}
               >
                 {hanger.kpz_number}
               </div>
-              <div 
-                className="text-left py-1 flex items-center justify-start truncate min-w-0 px-2" 
-                style={{ gridColumn: 'client', gridRow: '1' }}
+              <div
+                className="text-left py-1 flex items-center justify-start truncate min-w-0 px-2"
+                style={{ gridColumn: "client", gridRow: "1" }}
                 title={hanger.client}
               >
                 {hanger.client}
@@ -757,35 +836,37 @@ function DataTable({
 
               {/* Профиль и Фото в зависимости от showPhotosBelow */}
               {showPhotosBelow ? (
-                <div 
-                  className="text-left py-1 flex items-center justify-start min-w-0 px-2" 
-                  style={{ gridColumn: 'profile / lamels', gridRow: '1' }}
+                <div
+                  className="text-left py-1 flex items-center justify-start min-w-0 px-2"
+                  style={{ gridColumn: "profile / lamels", gridRow: "1" }}
                   title={hanger.profile}
                 >
                   <span className="truncate font-bold text-foreground">
-                    {(isSticks(hanger) && (hanger.profile === '—' || !hanger.profile || hanger.profile.trim() === ''))
-                      ? 'Клюшки'
-                      : (hanger.profile?.replace(/\+/g, '+ ') || '—')}
+                    {isSticks(hanger) &&
+                    (hanger.profile === "—" || !hanger.profile || hanger.profile.trim() === "")
+                      ? "Клюшки"
+                      : hanger.profile?.replace(/\+/g, "+ ") || "—"}
                   </span>
                 </div>
               ) : (
                 <>
-                  <div 
-                    className="text-left py-1 flex items-center justify-start min-w-0 px-2" 
-                    style={{ gridColumn: 'profile', gridRow: '1' }}
+                  <div
+                    className="text-left py-1 flex items-center justify-start min-w-0 px-2"
+                    style={{ gridColumn: "profile", gridRow: "1" }}
                     title={hanger.profile}
                   >
                     <span className="truncate">
-                      {(isSticks(hanger) && (hanger.profile === '—' || !hanger.profile || hanger.profile.trim() === ''))
-                        ? 'Клюшки'
-                        : (hanger.profile?.replace(/\+/g, '+ ') || '—')}
+                      {isSticks(hanger) &&
+                      (hanger.profile === "—" || !hanger.profile || hanger.profile.trim() === "")
+                        ? "Клюшки"
+                        : hanger.profile?.replace(/\+/g, "+ ") || "—"}
                     </span>
                   </div>
-                  <div 
-                    className="py-1 flex items-center justify-center" 
-                    style={{ 
-                      gridColumn: 'photo', 
-                      gridRow: `span ${totalRowsForHanger}` 
+                  <div
+                    className="py-1 flex items-center justify-center"
+                    style={{
+                      gridColumn: "photo",
+                      gridRow: `span ${totalRowsForHanger}`,
                     }}
                   >
                     <PhotoCell hanger={hanger} onPhotoClick={onPhotoClick} />
@@ -794,29 +875,31 @@ function DataTable({
               )}
 
               {/* Ламели */}
-              <div 
-                className="text-center font-bold py-1 flex items-center justify-center" 
-                style={{ 
-                  gridColumn: 'lamels', 
-                  gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+              <div
+                className="text-center font-bold py-1 flex items-center justify-center"
+                style={{
+                  gridColumn: "lamels",
+                  gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
                 }}
               >
                 {hanger.lamels_qty}
               </div>
 
               {/* Цвет */}
-              <div 
-                className="text-center py-1 flex items-center justify-center" 
-                style={{ 
-                  gridColumn: 'color', 
-                  gridRow: showPhotosBelow ? '1' : `span ${totalRowsForHanger}` 
+              <div
+                className="text-center py-1 flex items-center justify-center"
+                style={{
+                  gridColumn: "color",
+                  gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
                 }}
               >
                 <div className="inline-flex flex-col items-center max-w-[80px]">
-                  <span className="text-sm leading-tight text-center break-words">{colorName(hanger.color)}</span>
+                  <span className="text-sm leading-tight text-center break-words">
+                    {colorName(hanger.color)}
+                  </span>
                   <div
                     className="w-full h-1.5 rounded-full mt-0.5"
-                    style={{ backgroundColor: colorHex(hanger.color), minWidth: '50px' }}
+                    style={{ backgroundColor: colorHex(hanger.color), minWidth: "50px" }}
                   />
                 </div>
               </div>
@@ -825,9 +908,9 @@ function DataTable({
               {numAdditionalRows > 0 && (
                 <div
                   className="py-1.5 px-3 flex flex-wrap items-center justify-start gap-x-4 gap-y-1.5"
-                  style={{ 
-                    gridRow: '2', 
-                    gridColumn: showPhotosBelow ? '1 / -1' : 'type / photo' 
+                  style={{
+                    gridRow: "2",
+                    gridColumn: showPhotosBelow ? "1 / -1" : "type / photo",
                   }}
                 >
                   {/* Пометки строки: причина из бэкенда + брак */}
@@ -842,9 +925,7 @@ function DataTable({
                         </span>
                       )}
                       {hanger.is_defect && (
-                        <span
-                          className="text-red-700 font-bold text-[10px] px-2 py-0.5 bg-red-200 dark:bg-red-950/60 dark:text-red-400 rounded whitespace-nowrap inline-block border border-red-300/50"
-                        >
+                        <span className="text-red-700 font-bold text-[10px] px-2 py-0.5 bg-red-200 dark:bg-red-950/60 dark:text-red-400 rounded whitespace-nowrap inline-block border border-red-300/50">
                           ⚠ БРАК
                         </span>
                       )}
@@ -854,7 +935,12 @@ function DataTable({
                   {showPhotosBelow && (
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                       {profilesInfo.map((prof, pIdx) => (
-                        <ProfilePhoto key={pIdx} profile={prof} onPhotoClick={onPhotoClick} hideText={false} />
+                        <ProfilePhoto
+                          key={pIdx}
+                          profile={prof}
+                          onPhotoClick={onPhotoClick}
+                          hideText={false}
+                        />
                       ))}
                     </div>
                   )}
@@ -865,7 +951,7 @@ function DataTable({
         })}
       </div>
     </div>
-  )
+  );
 }
 
 function SidebarQueueTable({
@@ -873,20 +959,29 @@ function SidebarQueueTable({
   isLoading,
   isFullscreen = false,
 }: {
-  data?: HangerData[]
-  isLoading: boolean
-  isFullscreen?: boolean
+  data?: HangerData[];
+  isLoading: boolean;
+  isFullscreen?: boolean;
 }) {
   const filteredData = useMemo(() => {
-    const nonEmpty = data?.filter(hanger => {
-      const hasTime = hanger.time && hanger.time.trim() !== '—' && hanger.time.trim() !== '';
-      const hasProfile = hanger.profile && hanger.profile.trim() !== '—' && hanger.profile.trim() !== '';
-      const hasMaterial = hanger.material_type && hanger.material_type.trim() !== '—' && hanger.material_type.trim() !== '';
-      return hasTime || hasProfile || hasMaterial;
-    }) || [];
+    const nonEmpty =
+      data?.filter((hanger) => {
+        const hasTime = hanger.time && hanger.time.trim() !== "—" && hanger.time.trim() !== "";
+        const hasProfile =
+          hanger.profile && hanger.profile.trim() !== "—" && hanger.profile.trim() !== "";
+        const hasMaterial =
+          hanger.material_type &&
+          hanger.material_type.trim() !== "—" &&
+          hanger.material_type.trim() !== "";
+        return hasTime || hasProfile || hasMaterial;
+      }) || [];
 
-    const withoutTime = nonEmpty.filter(h => !h.time || h.time.trim() === '—' || h.time.trim() === '');
-    const withTime = nonEmpty.filter(h => h.time && h.time.trim() !== '—' && h.time.trim() !== '');
+    const withoutTime = nonEmpty.filter(
+      (h) => !h.time || h.time.trim() === "—" || h.time.trim() === "",
+    );
+    const withTime = nonEmpty.filter(
+      (h) => h.time && h.time.trim() !== "—" && h.time.trim() !== "",
+    );
 
     // Ограничиваем планируемые/активные (без времени) до 6 ближайших к выгрузке
     const recentWithoutTime = withoutTime.slice(-6);
@@ -896,7 +991,9 @@ function SidebarQueueTable({
   }, [data]);
 
   return (
-    <Card className={`border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col w-full ${isFullscreen ? 'max-h-screen h-screen rounded-none border-none' : 'max-h-[500px] xl:max-h-[600px]'}`}>
+    <Card
+      className={`border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col w-full ${isFullscreen ? "max-h-screen h-screen rounded-none border-none" : "max-h-[500px] xl:max-h-[600px]"}`}
+    >
       <CardContent className="p-0 overflow-hidden flex flex-col flex-1">
         {isLoading ? (
           <div className="space-y-1.5 p-3">
@@ -918,30 +1015,36 @@ function SidebarQueueTable({
                 {filteredData.map((hanger, idx) => {
                   const isSticksHanger = isSticks(hanger);
                   let cleanedProfile = profileText(hanger.profile);
-                  if (isSticksHanger && (cleanedProfile === '—' || !cleanedProfile)) {
-                    cleanedProfile = 'Клюшки';
+                  if (isSticksHanger && (cleanedProfile === "—" || !cleanedProfile)) {
+                    cleanedProfile = "Клюшки";
                   }
-                  const displayProfile = cleanedProfile.length > 8 ? cleanedProfile.slice(0, 8) + '..' : cleanedProfile;
+                  const displayProfile =
+                    cleanedProfile.length > 8 ? cleanedProfile.slice(0, 8) + ".." : cleanedProfile;
                   return (
                     <TableRow
                       key={`sidebar-${hanger.number}-${idx}`}
                       className={getRowClassName(hanger, idx)}
                     >
                       <TableCell className="text-center py-1.5 px-2 font-mono whitespace-nowrap">
-                        {hanger.time || '—'}
+                        {hanger.time || "—"}
                       </TableCell>
                       <TableCell className="text-center py-1.5 px-2 font-bold font-mono">
-                        {hanger.number || '—'}
+                        {hanger.number || "—"}
                       </TableCell>
-                      <TableCell className="text-left py-1.5 px-2 font-semibold truncate max-w-[120px]" title={hanger.profile}>
+                      <TableCell
+                        className="text-left py-1.5 px-2 font-semibold truncate max-w-[120px]"
+                        title={hanger.profile}
+                      >
                         <div className="flex items-center gap-1.5">
-                          {hanger.color && hanger.color.trim() !== '—' && hanger.color.trim() !== '' && (
-                            <span 
-                              className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-black/15 dark:border-white/15" 
-                              style={{ backgroundColor: colorHex(hanger.color) }}
-                              title={colorName(hanger.color)}
-                            />
-                          )}
+                          {hanger.color &&
+                            hanger.color.trim() !== "—" &&
+                            hanger.color.trim() !== "" && (
+                              <span
+                                className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-black/15 dark:border-white/15"
+                                style={{ backgroundColor: colorHex(hanger.color) }}
+                                title={colorName(hanger.color)}
+                              />
+                            )}
                           <span className="truncate">{displayProfile}</span>
                         </div>
                       </TableCell>
@@ -958,7 +1061,7 @@ function SidebarQueueTable({
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
 function TableSkeleton() {
@@ -968,7 +1071,7 @@ function TableSkeleton() {
         <Skeleton key={i} className="h-16 w-full" />
       ))}
     </div>
-  )
+  );
 }
 
 // Filters
@@ -983,22 +1086,23 @@ function FiltersPanel({
   testMode,
   testError,
 }: {
-  filters: Filters
-  onChange: (filters: Filters) => void
-  onApply: () => void
-  onReset: () => void
-  onToggleLast100: () => void
-  isLast100Mode: boolean
-  onToggleTestMode: (mode: TestMode) => void
-  testMode: TestMode | null
-  testError: string | null
+  filters: Filters;
+  onChange: (filters: Filters) => void;
+  onApply: () => void;
+  onReset: () => void;
+  onToggleLast100: () => void;
+  isLast100Mode: boolean;
+  onToggleTestMode: (mode: TestMode) => void;
+  testMode: TestMode | null;
+  testError: string | null;
 }) {
   // В режиме симуляции фильтры остаются живыми: окно загрузки и выгрузки
   // берётся из них. В режимах «Все профили» и «Все цвета» витрина показывает
   // весь круг, поэтому потолок «Загрузка» к нему не относится и число гасится;
   // галка остаётся живой — она включает и выключает саму таблицу.
   const otherFiltersDisabled = isLast100Mode;
-  const loadingLimitDisabled = otherFiltersDisabled || testMode === 'catalog' || testMode === 'colors';
+  const loadingLimitDisabled =
+    otherFiltersDisabled || testMode === "catalog" || testMode === "colors";
 
   return (
     <Card>
@@ -1007,7 +1111,9 @@ function FiltersPanel({
           {/* Top row - Filters */}
           <div className="flex items-center gap-4">
             {/* Loading */}
-            <div className={`flex items-center gap-2 border rounded-md px-2 py-1.5 ${otherFiltersDisabled ? 'opacity-50' : 'border-blue-500/50 bg-blue-500/10'}`}>
+            <div
+              className={`flex items-center gap-2 border rounded-md px-2 py-1.5 ${otherFiltersDisabled ? "opacity-50" : "border-blue-500/50 bg-blue-500/10"}`}
+            >
               <Checkbox
                 id="show-loading"
                 className="h-3.5 w-3.5"
@@ -1015,18 +1121,23 @@ function FiltersPanel({
                 onCheckedChange={(c) => onChange({ ...filters, showLoading: !!c })}
                 disabled={otherFiltersDisabled}
               />
-              <Label htmlFor="show-loading" className={`text-sm cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Загрузка:</Label>
+              <Label
+                htmlFor="show-loading"
+                className={`text-sm cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? "cursor-not-allowed" : ""}`}
+              >
+                Загрузка:
+              </Label>
               <Input
                 type="number"
                 value={filters.loadingLimit}
-                onChange={e => {
-                  const val = e.target.value
-                  onChange({ ...filters, loadingLimit: val === '' ? '' as any : Number(val) })
+                onChange={(e) => {
+                  const val = e.target.value;
+                  onChange({ ...filters, loadingLimit: val === "" ? ("" as any) : Number(val) });
                 }}
-                onBlur={e => {
-                  const val = e.target.value
-                  if (val === '' || Number(val) < 1) {
-                    onChange({ ...filters, loadingLimit: 1 })
+                onBlur={(e) => {
+                  const val = e.target.value;
+                  if (val === "" || Number(val) < 1) {
+                    onChange({ ...filters, loadingLimit: 1 });
                   }
                 }}
                 className="w-12 h-7 text-center text-xs px-1"
@@ -1037,7 +1148,9 @@ function FiltersPanel({
             </div>
 
             {/* Realtime */}
-            <div className={`flex items-center gap-2 border rounded-md px-2 py-1.5 ${otherFiltersDisabled ? 'opacity-50' : 'border-green-500/50 bg-green-500/10'}`}>
+            <div
+              className={`flex items-center gap-2 border rounded-md px-2 py-1.5 ${otherFiltersDisabled ? "opacity-50" : "border-green-500/50 bg-green-500/10"}`}
+            >
               <Checkbox
                 id="show-realtime"
                 className="h-3.5 w-3.5"
@@ -1045,18 +1158,23 @@ function FiltersPanel({
                 onCheckedChange={(c) => onChange({ ...filters, showRealtime: !!c })}
                 disabled={otherFiltersDisabled}
               />
-              <Label htmlFor="show-realtime" className={`text-sm cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? 'cursor-not-allowed' : ''}`}>Выгрузка:</Label>
+              <Label
+                htmlFor="show-realtime"
+                className={`text-sm cursor-pointer whitespace-nowrap ${otherFiltersDisabled ? "cursor-not-allowed" : ""}`}
+              >
+                Выгрузка:
+              </Label>
               <Input
                 type="number"
                 value={filters.realtimeLimit}
-                onChange={e => {
-                  const val = e.target.value
-                  onChange({ ...filters, realtimeLimit: val === '' ? '' as any : Number(val) })
+                onChange={(e) => {
+                  const val = e.target.value;
+                  onChange({ ...filters, realtimeLimit: val === "" ? ("" as any) : Number(val) });
                 }}
-                onBlur={e => {
-                  const val = e.target.value
-                  if (val === '' || Number(val) < 1) {
-                    onChange({ ...filters, realtimeLimit: 1 })
+                onBlur={(e) => {
+                  const val = e.target.value;
+                  if (val === "" || Number(val) < 1) {
+                    onChange({ ...filters, realtimeLimit: 1 });
                   }
                 }}
                 className="w-12 h-7 text-center text-xs px-1"
@@ -1074,40 +1192,39 @@ function FiltersPanel({
                 checked={filters.showForecast}
                 onCheckedChange={(c) => onChange({ ...filters, showForecast: !!c })}
               />
-              <Label htmlFor="show-forecast" className="text-sm cursor-pointer whitespace-nowrap">Прогноз выхода</Label>
+              <Label htmlFor="show-forecast" className="text-sm cursor-pointer whitespace-nowrap">
+                Прогноз выхода
+              </Label>
             </div>
           </div>
 
           {/* Bottom row - Buttons */}
           <div className="flex flex-wrap gap-4 items-center justify-between">
             <div className="flex gap-4">
-              <Button
-                variant={isLast100Mode ? "default" : "outline"}
-                onClick={onToggleLast100}
-              >
+              <Button variant={isLast100Mode ? "default" : "outline"} onClick={onToggleLast100}>
                 Последние 100
               </Button>
 
               <Button
-                variant={testMode === 'catalog' ? "default" : "outline"}
-                onClick={() => onToggleTestMode('catalog')}
-                className={testMode === 'catalog' ? "bg-purple-600 hover:bg-purple-700" : ""}
+                variant={testMode === "catalog" ? "default" : "outline"}
+                onClick={() => onToggleTestMode("catalog")}
+                className={testMode === "catalog" ? "bg-purple-600 hover:bg-purple-700" : ""}
               >
                 Все профили
               </Button>
 
               <Button
-                variant={testMode === 'colors' ? "default" : "outline"}
-                onClick={() => onToggleTestMode('colors')}
-                className={testMode === 'colors' ? "bg-purple-600 hover:bg-purple-700" : ""}
+                variant={testMode === "colors" ? "default" : "outline"}
+                onClick={() => onToggleTestMode("colors")}
+                className={testMode === "colors" ? "bg-purple-600 hover:bg-purple-700" : ""}
               >
                 Все цвета
               </Button>
 
               <Button
-                variant={testMode === 'sim' ? "default" : "outline"}
-                onClick={() => onToggleTestMode('sim')}
-                className={testMode === 'sim' ? "bg-purple-600 hover:bg-purple-700" : ""}
+                variant={testMode === "sim" ? "default" : "outline"}
+                onClick={() => onToggleTestMode("sim")}
+                className={testMode === "sim" ? "bg-purple-600 hover:bg-purple-700" : ""}
               >
                 Симуляция дашборда
               </Button>
@@ -1118,27 +1235,31 @@ function FiltersPanel({
             )}
 
             <div className="flex gap-2">
-              <Button onClick={onApply} disabled={otherFiltersDisabled}>Применить</Button>
-              <Button variant="outline" onClick={onReset} disabled={otherFiltersDisabled}>Сбросить</Button>
+              <Button onClick={onApply} disabled={otherFiltersDisabled}>
+                Применить
+              </Button>
+              <Button variant="outline" onClick={onReset} disabled={otherFiltersDisabled}>
+                Сбросить
+              </Button>
             </div>
           </div>
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 const formatLastModified = (isoString?: string) => {
-  if (!isoString) return '—';
+  if (!isoString) return "—";
   try {
     const d = new Date(isoString);
     if (isNaN(d.getTime())) return isoString;
-    const day = String(d.getDate()).padStart(2, '0');
-    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
     const year = d.getFullYear();
-    const hours = String(d.getHours()).padStart(2, '0');
-    const minutes = String(d.getMinutes()).padStart(2, '0');
-    const seconds = String(d.getSeconds()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const seconds = String(d.getSeconds()).padStart(2, "0");
     return `${day}.${month}.${year}, ${hours}:${minutes}:${seconds}`;
   } catch {
     return isoString;
@@ -1146,38 +1267,38 @@ const formatLastModified = (isoString?: string) => {
 };
 // Текст ошибки API: detail от FastAPI (HTTPException) либо message транспорта.
 function apiErrorMessage(err: unknown, fallback: string): string {
-  if (typeof err === 'object' && err !== null) {
-    if ('response' in err && typeof err.response === 'object' && err.response !== null) {
-      const response = err.response
-      if ('data' in response && typeof response.data === 'object' && response.data !== null) {
-        const data = response.data
-        if ('detail' in data && typeof data.detail === 'string') return data.detail
+  if (typeof err === "object" && err !== null) {
+    if ("response" in err && typeof err.response === "object" && err.response !== null) {
+      const response = err.response;
+      if ("data" in response && typeof response.data === "object" && response.data !== null) {
+        const data = response.data;
+        if ("detail" in data && typeof data.detail === "string") return data.detail;
       }
     }
-    if ('message' in err && typeof err.message === 'string') return err.message
+    if ("message" in err && typeof err.message === "string") return err.message;
   }
-  return fallback
+  return fallback;
 }
 
 // Main
 export default function Dashboard() {
-  const [filters, setFilters] = useState<Filters>(loadFilters)
-  const { isFullscreen, setIsFullscreen } = useFullscreen()
-  const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null)
-  const [isPathModalOpen, setIsPathModalOpen] = useState(false)
-  const [customPathInput, setCustomPathInput] = useState('')
-  const [hasNewRows, setHasNewRows] = useState(false)
-  const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false)
-  const lastModifiedRef = useRef<string | null>(null)
-  const prevDataRef = useRef<HangerData[]>([])
-  const prevUnloadDataRef = useRef<any[]>([])
-  const prevSimLoadingKeyRef = useRef('')
-  const prevSimUnloadKeyRef = useRef('')
-  
+  const [filters, setFilters] = useState<Filters>(loadFilters);
+  const { isFullscreen, setIsFullscreen } = useFullscreen();
+  const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null);
+  const [isPathModalOpen, setIsPathModalOpen] = useState(false);
+  const [customPathInput, setCustomPathInput] = useState("");
+  const [hasNewRows, setHasNewRows] = useState(false);
+  const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false);
+  const lastModifiedRef = useRef<string | null>(null);
+  const prevDataRef = useRef<HangerData[]>([]);
+  const prevUnloadDataRef = useRef<any[]>([]);
+  const prevSimLoadingKeyRef = useRef("");
+  const prevSimUnloadKeyRef = useRef("");
+
   // Таймер автовозврата в fullscreen
-  const [autoReturnCountdown, setAutoReturnCountdown] = useState<number | null>(null)
-  const autoReturnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [autoReturnCountdown, setAutoReturnCountdown] = useState<number | null>(null);
+  const autoReturnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // State for "Последние 100" toggle
   const [isLast100Mode, setIsLast100Mode] = useState(false);
@@ -1189,16 +1310,25 @@ export default function Dashboard() {
   const [testError, setTestError] = useState<string | null>(null);
 
   // Тестовый прогон витрины: подвесы идут по ваннам и уходят в выгрузку
-  const run = useTestRun(testMode === 'sim' ? testRows : undefined, filters.realtimeLimit)
+  const run = useTestRun(testMode === "sim" ? testRows : undefined, filters.realtimeLimit);
 
   // Determine if the API should filter for loading_only rows
   const loadingOnly = !isLast100Mode;
 
-  const queryClient = useQueryClient()
-  const { data, isLoading, refetch, isFetching } = useDashboard(7, filters.loadingLimit, loadingOnly)
-  const { data: recentAllData, isLoading: isLoadingAll, refetch: refetchRecentAll, isFetching: isRecentAllFetching } = useDashboard(7, SIDEBAR_ROW_LIMIT, false)
-  const { data: fileStatus } = useFileStatus()
-  const { data: matchedEvents } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit)
+  const queryClient = useQueryClient();
+  const { data, isLoading, refetch, isFetching } = useDashboard(
+    7,
+    filters.loadingLimit,
+    loadingOnly,
+  );
+  const {
+    data: recentAllData,
+    isLoading: isLoadingAll,
+    refetch: refetchRecentAll,
+    isFetching: isRecentAllFetching,
+  } = useDashboard(7, SIDEBAR_ROW_LIMIT, false);
+  const { data: fileStatus } = useFileStatus();
+  const { data: matchedEvents } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit);
 
   // Выбор книги учёта — только вводом пути: файл лежит на сетевом диске,
   // который видит сервер, а не браузер, и каталог книги на проде read-only.
@@ -1207,39 +1337,42 @@ export default function Dashboard() {
       const res = await dashboardApi.selectExcelFile(filePath);
       if (res.success) {
         // Строка статуса берёт имя книги из /status/file: тот же префикс ключа.
-        queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY })
+        queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY });
       }
     } catch (err: unknown) {
-      console.error('Ошибка выбора Excel-файла:', err);
-      alert(apiErrorMessage(err, 'Ошибка выбора файла'));
+      console.error("Ошибка выбора Excel-файла:", err);
+      alert(apiErrorMessage(err, "Ошибка выбора файла"));
     }
   };
 
-  const [now, setNow] = useState(new Date())
+  const [now, setNow] = useState(new Date());
 
   // Обновление текущего времени каждые 10 секунд для актуализации разницы времени
   useEffect(() => {
     const timer = setInterval(() => {
-      setNow(new Date())
-    }, 10000)
-    return () => clearInterval(timer)
-  }, [])
+      setNow(new Date());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   const isDataOutdated = useMemo(() => {
-    if (!fileStatus) return false
-    
+    if (!fileStatus) return false;
+
     // 1. Если бэкенд возвращает seconds_since_modified (безопасно к таймзонам)
-    if (fileStatus.seconds_since_modified !== undefined && fileStatus.seconds_since_modified !== null) {
-      return fileStatus.seconds_since_modified > 1800 // 30 минут
+    if (
+      fileStatus.seconds_since_modified !== undefined &&
+      fileStatus.seconds_since_modified !== null
+    ) {
+      return fileStatus.seconds_since_modified > 1800; // 30 минут
     }
-    
+
     // 2. Резервный расчет на клиенте
-    if (!fileStatus.last_modified) return false
-    const lastMod = new Date(fileStatus.last_modified).getTime()
+    if (!fileStatus.last_modified) return false;
+    const lastMod = new Date(fileStatus.last_modified).getTime();
     if (isNaN(lastMod)) return false;
-    const diffMin = (now.getTime() - lastMod) / (1000 * 60)
-    return diffMin > 30
-  }, [fileStatus, now])
+    const diffMin = (now.getTime() - lastMod) / (1000 * 60);
+    return diffMin > 30;
+  }, [fileStatus, now]);
 
   const renderWarning = () => {
     if (!isDataOutdated) return null;
@@ -1247,58 +1380,60 @@ export default function Dashboard() {
       <div className="bg-gradient-to-r from-red-600 via-rose-600 to-red-600 border border-red-500 text-white p-3 rounded-lg flex items-center justify-center gap-3 animate-pulse shadow-md">
         <AlertTriangle className="w-5 h-5 text-white shrink-0 animate-bounce" />
         <div className="text-xs md:text-sm text-center font-medium">
-          <strong>Внимание!</strong> Файл не сохранялся более 30 минут. 
-          Отображаемые данные могут быть неверными! 
-          (Последнее сохранение: {formatLastModified(fileStatus?.last_modified)}). 
+          <strong>Внимание!</strong> Файл не сохранялся более 30 минут. Отображаемые данные могут
+          быть неверными! (Последнее сохранение: {formatLastModified(fileStatus?.last_modified)}).
           Настройте сохранение файла либо выберите другую книгу учёта.
         </div>
       </div>
     );
-  }
+  };
 
   const hangerMetaByNumber = useMemo(() => {
-    const rows = data?.products ?? []
-    const events = matchedEvents ?? []
+    const rows = data?.products ?? [];
+    const events = matchedEvents ?? [];
 
     const normalizeValue = (value?: string | null): string | undefined => {
-      const trimmed = value?.trim()
-      return trimmed ? trimmed : undefined
-    }
+      const trimmed = value?.trim();
+      return trimmed ? trimmed : undefined;
+    };
     const mergeMeta = (
       acc: Record<string, { profile?: string; color?: string }>,
       key: string,
       profile?: string | null,
       color?: string | null,
     ) => {
-      const current = acc[key] ?? {}
+      const current = acc[key] ?? {};
       acc[key] = {
         profile: normalizeValue(profile) ?? current.profile,
         color: normalizeValue(color) ?? current.color,
-      }
-    }
+      };
+    };
 
-    const metaFromRows = rows.reduce<Record<string, { profile?: string; color?: string }>>((acc, row) => {
-      const key = hangerKey(row.number)
-      if (!key) return acc
+    const metaFromRows = rows.reduce<Record<string, { profile?: string; color?: string }>>(
+      (acc, row) => {
+        const key = hangerKey(row.number);
+        if (!key) return acc;
 
-      mergeMeta(acc, key, row.profile, row.color)
-      return acc
-    }, {})
+        mergeMeta(acc, key, row.profile, row.color);
+        return acc;
+      },
+      {},
+    );
 
     return events.reduce<Record<string, { profile?: string; color?: string }>>((acc, event) => {
-      const key = hangerKey(event.hanger)
-      if (!key) return acc
+      const key = hangerKey(event.hanger);
+      if (!key) return acc;
 
-      mergeMeta(acc, key, event.profile, event.color)
-      return acc
-    }, metaFromRows)
-  }, [data?.products, matchedEvents])
+      mergeMeta(acc, key, event.profile, event.color);
+      return acc;
+    }, metaFromRows);
+  }, [data?.products, matchedEvents]);
 
   // Выгрузка: события линии, а в режиме симуляции — подвесы, сошедшие с линии по прогону.
   const unloadRows = useMemo<HangerData[]>(() => {
-    if (testMode) return testMode === 'sim' ? run.unloaded : []
+    if (testMode) return testMode === "sim" ? run.unloaded : [];
 
-    return (matchedEvents ?? []).map(event => ({
+    return (matchedEvents ?? []).map((event) => ({
       number: String(event.hanger),
       date: event.exit_date,
       time: event.exit_time,
@@ -1319,15 +1454,15 @@ export default function Dashboard() {
       time_warning: event.time_warning,
       time_warning_code: event.time_warning_code,
       is_defect: event.is_defect,
-    }))
-  }, [testMode, run.unloaded, matchedEvents])
+    }));
+  }, [testMode, run.unloaded, matchedEvents]);
 
   const leaveTestMode = () => {
     setTestMode(null);
     setTestRows([]);
     setTestError(null);
-    prevSimLoadingKeyRef.current = '';
-    prevSimUnloadKeyRef.current = '';
+    prevSimLoadingKeyRef.current = "";
+    prevSimUnloadKeyRef.current = "";
   };
 
   const handleToggleLast100 = () => {
@@ -1363,15 +1498,15 @@ export default function Dashboard() {
     setTestError(null);
 
     try {
-      const res = await fetch('/api/catalog/all?limit=1000');
-      if (!res.ok) throw new Error('Failed to fetch catalog');
+      const res = await fetch("/api/catalog/all?limit=1000");
+      if (!res.ok) throw new Error("Failed to fetch catalog");
       const profiles: Profile[] = await res.json();
 
       const rows = buildTestRows(profiles, mode);
       if (rows.length === 0) {
         setTestRows([]);
         setTestMode(null);
-        setTestError('В каталоге нет профилей — витрине нечего показывать');
+        setTestError("В каталоге нет профилей — витрине нечего показывать");
         return;
       }
 
@@ -1381,7 +1516,7 @@ export default function Dashboard() {
       console.error("Error loading catalog for test mode:", e);
       setTestRows([]);
       setTestMode(null);
-      setTestError('Каталог не загрузился — витрина недоступна');
+      setTestError("Каталог не загрузился — витрина недоступна");
     }
   };
 
@@ -1393,18 +1528,17 @@ export default function Dashboard() {
     await loadTestRows(mode);
   };
 
-
   // Track file changes and auto-refresh
   useEffect(() => {
-    if (testMode) return
+    if (testMode) return;
     if (fileStatus?.last_modified) {
-      const newModified = fileStatus.last_modified
+      const newModified = fileStatus.last_modified;
       if (lastModifiedRef.current && lastModifiedRef.current !== newModified) {
         // File was modified - refetch data
         refetchRecentAll();
         refetch().then((result) => {
-          const newData = result.data?.products ?? []
-          const prevData = prevDataRef.current
+          const newData = result.data?.products ?? [];
+          const prevData = prevDataRef.current;
 
           // Deep compare function for rows
           const rowsEqual = (r1: HangerData, r2: HangerData): boolean => {
@@ -1418,35 +1552,35 @@ export default function Dashboard() {
               r1.kpz_number === r2.kpz_number &&
               r1.material_type === r2.material_type &&
               r1.lamels_qty === r2.lamels_qty
-            )
-          }
+            );
+          };
 
           // Check if there are actual changes in rows
           const hasActualChanges =
             newData.length !== prevData.length ||
             newData.some((newRow, idx) => {
-              const prevRow = prevData[idx]
-              return !prevRow || !rowsEqual(newRow, prevRow)
-            })
+              const prevRow = prevData[idx];
+              return !prevRow || !rowsEqual(newRow, prevRow);
+            });
 
           if (hasActualChanges) {
             // Show blue highlight only if there are actual changes
-            setHasNewRows(true)
-            prevDataRef.current = newData
+            setHasNewRows(true);
+            prevDataRef.current = newData;
             // Auto-hide highlight after 3 seconds
-            setTimeout(() => setHasNewRows(false), 3000)
+            setTimeout(() => setHasNewRows(false), 3000);
           }
-        })
+        });
       }
-      lastModifiedRef.current = newModified
+      lastModifiedRef.current = newModified;
     }
-  }, [fileStatus?.last_modified, refetch])
+  }, [fileStatus?.last_modified, refetch]);
 
   // Track unload events changes
   useEffect(() => {
-    if (testMode) return
+    if (testMode) return;
     if (matchedEvents && matchedEvents.length > 0) {
-      const prevUnloadData = prevUnloadDataRef.current
+      const prevUnloadData = prevUnloadDataRef.current;
 
       // Deep compare function for unload events
       const eventsEqual = (e1: any, e2: any): boolean => {
@@ -1459,82 +1593,82 @@ export default function Dashboard() {
           e1.profile === e2.profile &&
           e1.color === e2.color &&
           e1.client === e2.client
-        )
-      }
+        );
+      };
 
       // Check if there are actual changes
       const hasActualChanges =
         matchedEvents.length !== prevUnloadData.length ||
         matchedEvents.some((newEvent, idx) => {
-          const prevEvent = prevUnloadData[idx]
-          return !prevEvent || !eventsEqual(newEvent, prevEvent)
-        })
+          const prevEvent = prevUnloadData[idx];
+          return !prevEvent || !eventsEqual(newEvent, prevEvent);
+        });
 
       if (hasActualChanges) {
-        setHasNewUnloadEvents(true)
-        prevUnloadDataRef.current = matchedEvents
+        setHasNewUnloadEvents(true);
+        prevUnloadDataRef.current = matchedEvents;
         // Auto-hide highlight after 3 seconds
-        setTimeout(() => setHasNewUnloadEvents(false), 3000)
+        setTimeout(() => setHasNewUnloadEvents(false), 3000);
       }
     }
-  }, [matchedEvents])
+  }, [matchedEvents]);
 
   // Очередь загрузки в режиме симуляции: окно фильтра, а не весь круг прогона.
   const simLoadingRows = useMemo(
-    () => (testMode === 'sim' ? waitingRows(run, filters.loadingLimit) : []),
+    () => (testMode === "sim" ? waitingRows(run, filters.loadingLimit) : []),
     [testMode, run, filters.loadingLimit],
-  )
+  );
 
   // Таблица загрузки: в симуляции — окно очереди прогона, в «Все профили» и
   // «Все цвета» — весь круг витрины. Потолок «Загрузка» к витрине не
   // относится: назначение этих кнопок — показать всё, иначе половина
   // справочника не попадает на экран.
   const loadingRows = useMemo(() => {
-    if (testMode === 'sim') return simLoadingRows
-    if (testMode) return testRows
-    return data?.products ?? []
-  }, [testMode, simLoadingRows, testRows, data?.products])
+    if (testMode === "sim") return simLoadingRows;
+    if (testMode) return testRows;
+    return data?.products ?? [];
+  }, [testMode, simLoadingRows, testRows, data?.products]);
 
-  const onLineRows = useMemo(() => run.line.map(hanger => hanger.row), [run])
+  const onLineRows = useMemo(() => run.line.map((hanger) => hanger.row), [run]);
 
   // Боковая очередь — общий список подвесов, как последние строки книги учёта:
   // сверху очередь загрузки, ниже кто стоит на ваннах, ниже кто уже сошёл.
   const sidebarRows = useMemo(() => {
-    if (!testMode) return recentAllData?.products
-    if (testMode !== 'sim') return []
+    if (!testMode) return recentAllData?.products;
+    if (testMode !== "sim") return [];
     // Очередь загрузки в боковой очереди — без времени: на живой линии прочерк
     // значит «ещё не встал», и витрина показывает то же. В таблице загрузки
     // время остаётся — там витринные строки доигрывают роль строк книги.
-    const queued = simLoadingRows.map(row => ({ ...row, time: '' }))
+    const queued = simLoadingRows.map((row) => ({ ...row, time: "" }));
     return [...queued, ...onLineRows, ...run.unloaded]
       .sort((a, b) => Number(b.number) - Number(a.number))
-      .slice(0, SIDEBAR_ROW_LIMIT)
-  }, [testMode, simLoadingRows, onLineRows, run.unloaded, recentAllData?.products])
+      .slice(0, SIDEBAR_ROW_LIMIT);
+  }, [testMode, simLoadingRows, onLineRows, run.unloaded, recentAllData?.products]);
 
   // Плашки «Обновление» в режиме симуляции реагируют на прогон, а не на файл Excel.
   // Ключи — состав строк: эффект перезапускается только когда состав действительно
   // изменился, иначе гашение плашки каждый тик сбрасывалось бы.
   // Гашение короче боевого: строка в симуляции приходит каждые 5 секунд, и
   // полутора секунд хватает, чтобы плашка мигнула и не горела постоянно.
-  const SIM_BLINK_MS = 1500
-  const simLoadingKey = simLoadingRows.map(row => row.number).join(',')
-  const simUnloadKey = run.unloaded.map(row => row.number).join(',')
+  const SIM_BLINK_MS = 1500;
+  const simLoadingKey = simLoadingRows.map((row) => row.number).join(",");
+  const simUnloadKey = run.unloaded.map((row) => row.number).join(",");
 
   useEffect(() => {
-    if (testMode !== 'sim' || simLoadingKey === prevSimLoadingKeyRef.current) return
-    prevSimLoadingKeyRef.current = simLoadingKey
+    if (testMode !== "sim" || simLoadingKey === prevSimLoadingKeyRef.current) return;
+    prevSimLoadingKeyRef.current = simLoadingKey;
 
-    setHasNewRows(true)
-    setTimeout(() => setHasNewRows(false), SIM_BLINK_MS)
-  }, [testMode, simLoadingKey])
+    setHasNewRows(true);
+    setTimeout(() => setHasNewRows(false), SIM_BLINK_MS);
+  }, [testMode, simLoadingKey]);
 
   useEffect(() => {
-    if (testMode !== 'sim' || simUnloadKey === prevSimUnloadKeyRef.current) return
-    prevSimUnloadKeyRef.current = simUnloadKey
+    if (testMode !== "sim" || simUnloadKey === prevSimUnloadKeyRef.current) return;
+    prevSimUnloadKeyRef.current = simUnloadKey;
 
-    setHasNewUnloadEvents(true)
-    setTimeout(() => setHasNewUnloadEvents(false), SIM_BLINK_MS)
-  }, [testMode, simUnloadKey])
+    setHasNewUnloadEvents(true);
+    setTimeout(() => setHasNewUnloadEvents(false), SIM_BLINK_MS);
+  }, [testMode, simUnloadKey]);
 
   // ESC обработчик удален - не закрываем окно по ESC, чтобы работники не могли случайно закрыть киоск
 
@@ -1542,107 +1676,125 @@ export default function Dashboard() {
   useEffect(() => {
     // Проверяем, запущен ли дашборд в окне pywebview (наш киоск)
     // или размеры окна совпадают с экраном
-    const isKioskMode = (window as any).pywebview || (window.innerHeight === screen.height && window.innerWidth === screen.width)
+    const isKioskMode =
+      (window as any).pywebview ||
+      (window.innerHeight === screen.height && window.innerWidth === screen.width);
 
     if (isKioskMode && !isFullscreen) {
       // Автоматически включаем псевдо-фуллскрин
-      setIsFullscreen(true)
+      setIsFullscreen(true);
     }
-  }, [])
+  }, []);
 
-  useEffect(() => { saveFilters(filters) }, [filters])
+  useEffect(() => {
+    saveFilters(filters);
+  }, [filters]);
 
   // Автовозврат в fullscreen через 30 секунд
   useEffect(() => {
     // Очищаем предыдущие таймеры
     if (autoReturnTimerRef.current) {
-      clearTimeout(autoReturnTimerRef.current)
-      autoReturnTimerRef.current = null
+      clearTimeout(autoReturnTimerRef.current);
+      autoReturnTimerRef.current = null;
     }
     if (countdownIntervalRef.current) {
-      clearInterval(countdownIntervalRef.current)
-      countdownIntervalRef.current = null
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
     }
-    
+
     // Если вышли из fullscreen, запускаем таймер
     if (!isFullscreen) {
-      setAutoReturnCountdown(30)
-      
+      setAutoReturnCountdown(30);
+
       // Обратный отсчет каждую секунду
       countdownIntervalRef.current = setInterval(() => {
-        setAutoReturnCountdown(prev => {
-          if (prev === null || prev <= 1) return null
-          return prev - 1
-        })
-      }, 1000)
-      
+        setAutoReturnCountdown((prev) => {
+          if (prev === null || prev <= 1) return null;
+          return prev - 1;
+        });
+      }, 1000);
+
       // Автовозврат через 30 секунд
       autoReturnTimerRef.current = setTimeout(() => {
-        setIsFullscreen(true)
-        setAutoReturnCountdown(null)
-      }, 30000)
+        setIsFullscreen(true);
+        setAutoReturnCountdown(null);
+      }, 30000);
     } else {
-      setAutoReturnCountdown(null)
+      setAutoReturnCountdown(null);
     }
-    
+
     // Cleanup
     return () => {
       if (autoReturnTimerRef.current) {
-        clearTimeout(autoReturnTimerRef.current)
+        clearTimeout(autoReturnTimerRef.current);
       }
       if (countdownIntervalRef.current) {
-        clearInterval(countdownIntervalRef.current)
+        clearInterval(countdownIntervalRef.current);
       }
-    }
-  }, [isFullscreen, setIsFullscreen])
+    };
+  }, [isFullscreen, setIsFullscreen]);
 
   const handleCancelAutoReturn = useCallback(() => {
     if (autoReturnTimerRef.current) {
-      clearTimeout(autoReturnTimerRef.current)
-      autoReturnTimerRef.current = null
+      clearTimeout(autoReturnTimerRef.current);
+      autoReturnTimerRef.current = null;
     }
     if (countdownIntervalRef.current) {
-      clearInterval(countdownIntervalRef.current)
-      countdownIntervalRef.current = null
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
     }
-    setAutoReturnCountdown(null)
-  }, [])
+    setAutoReturnCountdown(null);
+  }, []);
 
   // Псевдо-фуллскрин: просто переключаем состояние React без браузерного fullscreen API
   const toggleFullscreen = useCallback(() => {
-    setIsFullscreen(!isFullscreen)
-  }, [isFullscreen, setIsFullscreen])
-  
+    setIsFullscreen(!isFullscreen);
+  }, [isFullscreen, setIsFullscreen]);
+
   // Обработчик применения фильтров - сбрасывает таймер автовозврата
   const handleApplyFilters = useCallback(() => {
     // Сбрасываем таймер
-    handleCancelAutoReturn()
-    
+    handleCancelAutoReturn();
+
     // Применяем фильтры
-    refetch()
-    refetchRecentAll()
-  }, [refetch, refetchRecentAll, handleCancelAutoReturn])
+    refetch();
+    refetchRecentAll();
+  }, [refetch, refetchRecentAll, handleCancelAutoReturn]);
 
   const handlePhotoClick = useCallback((url: string, name: string) => {
-    setPhotoModal({ url, name })
-  }, [])
+    setPhotoModal({ url, name });
+  }, []);
 
   return (
-    <div className={`${isFullscreen ? 'p-0' : 'container mx-auto p-6 space-y-4'}`}>
+    <div className={`${isFullscreen ? "p-0" : "container mx-auto p-6 space-y-4"}`}>
       {/* Header */}
       {!isFullscreen && (
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">📊 Учет КПЗ - Подвесы</h1>
           <div className="flex items-center gap-4">
-            <Badge variant="secondary">Всего: {data?.total_all ?? '—'}</Badge>
-            <Badge variant="outline">Показано: {data?.total ?? '—'}</Badge>
-            <Button variant="outline" size="sm" onClick={() => { refetch(); refetchRecentAll(); }} disabled={isFetching || isRecentAllFetching}>
-              <RefreshCw className={`w-4 h-4 mr-2 ${(isFetching || isRecentAllFetching) ? 'animate-spin' : ''}`} />
+            <Badge variant="secondary">Всего: {data?.total_all ?? "—"}</Badge>
+            <Badge variant="outline">Показано: {data?.total ?? "—"}</Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                refetch();
+                refetchRecentAll();
+              }}
+              disabled={isFetching || isRecentAllFetching}
+            >
+              <RefreshCw
+                className={`w-4 h-4 mr-2 ${isFetching || isRecentAllFetching ? "animate-spin" : ""}`}
+              />
               Обновить
             </Button>
             <Button variant="outline" size="sm" onClick={toggleFullscreen}>
-              {isFullscreen ? <Minimize2 className="w-4 h-4 mr-1" /> : <Maximize2 className="w-4 h-4 mr-1" />}
-              {isFullscreen ? 'Свернуть' : 'На весь экран'}
+              {isFullscreen ? (
+                <Minimize2 className="w-4 h-4 mr-1" />
+              ) : (
+                <Maximize2 className="w-4 h-4 mr-1" />
+              )}
+              {isFullscreen ? "Свернуть" : "На весь экран"}
             </Button>
           </div>
         </div>
@@ -1655,7 +1807,7 @@ export default function Dashboard() {
           </Button>
         </div>
       )}
-      
+
       {/* Уведомление об автовозврате в fullscreen */}
       {!isFullscreen && autoReturnCountdown !== null && (
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
@@ -1681,10 +1833,7 @@ export default function Dashboard() {
       )}
 
       {!isFullscreen && (
-        <StatusBar
-          onOpenPathModal={() => setIsPathModalOpen(true)}
-          isFetching={isFetching}
-        />
+        <StatusBar onOpenPathModal={() => setIsPathModalOpen(true)} isFetching={isFetching} />
       )}
 
       {!isFullscreen && (
@@ -1701,29 +1850,34 @@ export default function Dashboard() {
         />
       )}
 
-      <div className={`grid ${isFullscreen ? 'grid-cols-5' : 'grid-cols-1 xl:grid-cols-5'} gap-4 items-start relative`}>
-        <div className={`${isFullscreen ? 'col-span-4 space-y-4' : 'xl:col-span-4 space-y-4'}`}>
+      <div
+        className={`grid ${isFullscreen ? "grid-cols-5" : "grid-cols-1 xl:grid-cols-5"} gap-4 items-start relative`}
+      >
+        <div className={`${isFullscreen ? "col-span-4 space-y-4" : "xl:col-span-4 space-y-4"}`}>
           {filters.showLoading && (
             <div className="flex flex-col gap-0">
               {renderWarning()}
-              <Card className={`border-8 relative ${testMode && testMode !== 'sim' ? TEST_FRAME : 'border-blue-500'}`}>
-                {testMode === 'sim' && (
+              <Card
+                className={`border-8 relative ${testMode && testMode !== "sim" ? TEST_FRAME : "border-blue-500"}`}
+              >
+                {testMode === "sim" && (
                   <span className="absolute -top-3 right-3 z-50 rounded-full bg-purple-600 px-3 py-0.5 text-xs font-bold text-white shadow">
                     СИМУЛЯЦИЯ
                   </span>
                 )}
-                {hasNewRows && testMode !== 'catalog' && testMode !== 'colors' && (
+                {hasNewRows && testMode !== "catalog" && testMode !== "colors" && (
                   <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
                     <span className="text-white text-3xl font-bold">Обновление</span>
                   </div>
                 )}
                 <CardContent className="p-0">
-                  {isLoading && !testMode ? <TableSkeleton /> : loadingRows?.length ? (
+                  {isLoading && !testMode ? (
+                    <TableSkeleton />
+                  ) : loadingRows?.length ? (
                     <DataTable
                       data={loadingRows}
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
-
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -1738,26 +1892,33 @@ export default function Dashboard() {
 
           {filters.showRealtime && (
             <>
-              {console.log('[Dashboard] matchedEvents:', matchedEvents)}
+              {console.log("[Dashboard] matchedEvents:", matchedEvents)}
               {matchedEvents && matchedEvents.length > 0 && (
                 <>
-                  {console.log('[Dashboard] First event:', matchedEvents[0])}
-                  {console.log('[Dashboard] Rendering table with', matchedEvents.length, 'events')}
+                  {console.log("[Dashboard] First event:", matchedEvents[0])}
+                  {console.log("[Dashboard] Rendering table with", matchedEvents.length, "events")}
                 </>
               )}
 
               {/* Forecast Row - Outside the green border */}
-              {filters.showForecast && <BathForecast hangerMetaByNumber={hangerMetaByNumber} testRun={testMode ? (testMode === 'sim' ? run : EMPTY_RUN) : undefined} />}
+              {filters.showForecast && (
+                <BathForecast
+                  hangerMetaByNumber={hangerMetaByNumber}
+                  testRun={testMode ? (testMode === "sim" ? run : EMPTY_RUN) : undefined}
+                />
+              )}
 
               <div className="flex flex-col gap-0">
                 {renderWarning()}
-                <Card className={`border-8 relative ${testMode && testMode !== 'sim' ? TEST_FRAME : 'border-green-500'}`}>
-                  {testMode === 'sim' && (
+                <Card
+                  className={`border-8 relative ${testMode && testMode !== "sim" ? TEST_FRAME : "border-green-500"}`}
+                >
+                  {testMode === "sim" && (
                     <span className="absolute -top-3 right-3 z-50 rounded-full bg-purple-600 px-3 py-0.5 text-xs font-bold text-white shadow">
                       СИМУЛЯЦИЯ
                     </span>
                   )}
-                  {hasNewUnloadEvents && testMode !== 'catalog' && testMode !== 'colors' && (
+                  {hasNewUnloadEvents && testMode !== "catalog" && testMode !== "colors" && (
                     <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
                       <span className="text-white text-3xl font-bold">Обновление</span>
                     </div>
@@ -1783,8 +1944,12 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className={`${isFullscreen ? 'col-span-1' : 'xl:col-span-1'} w-full`}>
-          <SidebarQueueTable data={sidebarRows} isLoading={testMode ? false : isLoadingAll} isFullscreen={isFullscreen} />
+        <div className={`${isFullscreen ? "col-span-1" : "xl:col-span-1"} w-full`}>
+          <SidebarQueueTable
+            data={sidebarRows}
+            isLoading={testMode ? false : isLoadingAll}
+            isFullscreen={isFullscreen}
+          />
         </div>
       </div>
 
@@ -1792,10 +1957,18 @@ export default function Dashboard() {
         open={!!photoModal}
         onClose={() => setPhotoModal(null)}
         photoUrl={photoModal?.url || null}
-        profileName={photoModal?.name || ''}
+        profileName={photoModal?.name || ""}
       />
 
-      <Dialog open={isPathModalOpen} onOpenChange={(open) => { if (!open) { setIsPathModalOpen(false); setCustomPathInput(''); } }}>
+      <Dialog
+        open={isPathModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setIsPathModalOpen(false);
+            setCustomPathInput("");
+          }
+        }}
+      >
         <DialogContent className="max-w-xl bg-background border-border text-foreground p-6 rounded-lg shadow-2xl flex flex-col gap-4">
           <DialogHeader className="space-y-1.5">
             <DialogTitle className="text-xl font-bold flex items-center gap-2 text-emerald-600">
@@ -1808,7 +1981,9 @@ export default function Dashboard() {
           </DialogHeader>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="custom-path-input" className="text-xs text-slate-700 font-medium">Путь к файлу:</label>
+            <label htmlFor="custom-path-input" className="text-xs text-slate-700 font-medium">
+              Путь к файлу:
+            </label>
             <Input
               id="custom-path-input"
               type="text"
@@ -1824,7 +1999,7 @@ export default function Dashboard() {
               variant="outline"
               onClick={() => {
                 setIsPathModalOpen(false);
-                setCustomPathInput('');
+                setCustomPathInput("");
               }}
               className="h-8 text-xs font-medium px-4"
             >
@@ -1836,7 +2011,7 @@ export default function Dashboard() {
                 if (cleaned) {
                   await handleSelectExcelFile(cleaned);
                   setIsPathModalOpen(false);
-                  setCustomPathInput('');
+                  setCustomPathInput("");
                 }
               }}
               className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4"
@@ -1848,7 +2023,6 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
-
       {/* Фиксированные часы в правом нижнем углу */}
       <div className="fixed bottom-4 right-4 z-50 bg-background/95 dark:bg-slate-900/95 backdrop-blur-sm border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-2 shadow-lg flex items-center gap-2">
         <Clock className="w-5 h-5 text-slate-500" />
@@ -1857,5 +2031,5 @@ export default function Dashboard() {
         </span>
       </div>
     </div>
-  )
+  );
 }

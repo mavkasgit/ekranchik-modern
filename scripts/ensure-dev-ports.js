@@ -16,7 +16,6 @@
 
 const { execFileSync, spawnSync } = require("child_process");
 const readline = require("readline");
-const os = require("os");
 
 const DEFAULT_PORTS = [8013, 5173];
 const isWin = process.platform === "win32";
@@ -38,7 +37,7 @@ function parseArgs(argv) {
         ...argv[i + 1]
           .split(",")
           .map((p) => Number(p.trim()))
-          .filter((n) => Number.isFinite(n) && n > 0)
+          .filter((n) => Number.isFinite(n) && n > 0),
       );
       i++;
     }
@@ -229,7 +228,9 @@ function printOccupants(rows) {
     if (row.isDocker) {
       console.log(`   :${row.port}  PID ${row.pid}  ${row.name} [DOCKER - PROTECTED]`);
       if (row.cmd) console.log(`           ${row.cmd}`);
-      console.log(`           ℹ Docker process detected — skipping kill to protect Docker Desktop.`);
+      console.log(
+        `           ℹ Docker process detected — skipping kill to protect Docker Desktop.`,
+      );
     } else {
       console.log(`   :${row.port}  PID ${row.pid}  ${row.name}`);
       if (row.cmd) console.log(`           ${row.cmd}`);
@@ -247,7 +248,9 @@ function askYesNo(question) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(question, (answer) => {
       rl.close();
-      const a = String(answer || "").trim().toLowerCase();
+      const a = String(answer || "")
+        .trim()
+        .toLowerCase();
       // Pressing Enter (empty string) defaults to YES (true). Also accepts y/yes/д/да.
       resolve(a === "" || a === "y" || a === "yes" || a === "д" || a === "да");
     });
@@ -279,7 +282,7 @@ function startDockerDesktop() {
           "-Command",
           `if (Test-Path '${exePath}') { Start-Process '${exePath}' } else { Start-Process 'Docker Desktop' }`,
         ],
-        { windowsHide: true }
+        { windowsHide: true },
       );
       return true;
     } catch {
@@ -356,7 +359,7 @@ async function main() {
           }
         } else {
           console.error(
-            "Non-interactive shell: ports busy. Run npm run dev:kill or set EKRANCHIK_DEV_KILL=1"
+            "Non-interactive shell: ports busy. Run npm run dev:kill or set EKRANCHIK_DEV_KILL=1",
           );
           process.exit(1);
         }
@@ -388,7 +391,7 @@ async function main() {
       if (finalKillable.length > 0) {
         printOccupants(finalKillable);
         console.error(
-          "✗ Could not free all dev ports from non-Docker processes. Close them manually and retry."
+          "✗ Could not free all dev ports from non-Docker processes. Close them manually and retry.",
         );
         process.exit(1);
       }

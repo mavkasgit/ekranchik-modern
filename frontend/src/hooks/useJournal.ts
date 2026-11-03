@@ -1,8 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
-import { journalApi } from '@/api/journal'
-import { JOURNAL_KEY } from '@/lib/queryKeys'
-import { DATA_REFRESH_INTERVAL } from '@/config/intervals'
-import type { JournalQuery } from '@/lib/domain/journal'
+import { useQuery } from "@tanstack/react-query";
+import { journalApi } from "@/api/journal";
+import { JOURNAL_KEY } from "@/lib/queryKeys";
+import { DATA_REFRESH_INTERVAL } from "@/config/intervals";
+import type { JournalQuery } from "@/lib/domain/journal";
 
 /**
  * Страница проходов из файла журнала подвесов.
@@ -19,6 +19,6 @@ export function useJournal(query: JournalQuery) {
     // Пока вкладка не видна, опрос не идёт: журнал лежит на диске и переживает
     // перезапуск, а оператор вернётся к тем же фильтрам.
     refetchIntervalInBackground: false,
-    placeholderData: previous => previous,
-  })
+    placeholderData: (previous) => previous,
+  });
 }

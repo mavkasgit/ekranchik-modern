@@ -6,90 +6,90 @@
 
 /** Колонки, по которым журнал умеет сортироваться (бэкенд отдаёт тот же набор). */
 export type JournalSortField =
-  | 'exit_at'
-  | 'first_seen_at'
-  | 'hanger'
-  | 'cycle_id'
-  | 'entry_delta_sec'
-  | 'code'
-  | 'profile'
+  | "exit_at"
+  | "first_seen_at"
+  | "hanger"
+  | "cycle_id"
+  | "entry_delta_sec"
+  | "code"
+  | "profile";
 
-export type SortDirection = 'asc' | 'desc'
+type SortDirection = "asc" | "desc";
 
-export const JOURNAL_PAGE_SIZE = 50
+const JOURNAL_PAGE_SIZE = 50;
 
 export interface JournalPass {
-  recorded_at?: string | null
-  cycle_id?: number | null
-  hanger?: number | null
-  code: string
-  source?: string | null
-  entry_bath?: number | null
-  first_seen_at?: string | null
-  exit_at?: string | null
-  total_time_sec?: number | null
-  type?: string | null
-  reason?: string | null
+  recorded_at?: string | null;
+  cycle_id?: number | null;
+  hanger?: number | null;
+  code: string;
+  source?: string | null;
+  entry_bath?: number | null;
+  first_seen_at?: string | null;
+  exit_at?: string | null;
+  total_time_sec?: number | null;
+  type?: string | null;
+  reason?: string | null;
   // Моменты прохода по источнику: по линии — оба, по книге — только
   // вход. Выхода по книге нет и не будет: книга ведёт лишь загрузку
   // в линию, поэтому и поля такого нет.
-  line_entry_at?: string | null
-  line_exit_at?: string | null
-  book_entry_at?: string | null
-  path: Array<{ bath: string; in?: string | null; out?: string | null }>
-  row_date?: string | null
-  row_time?: string | null
-  row_number?: string | null
+  line_entry_at?: string | null;
+  line_exit_at?: string | null;
+  book_entry_at?: string | null;
+  path: Array<{ bath: string; in?: string | null; out?: string | null }>;
+  row_date?: string | null;
+  row_time?: string | null;
+  row_number?: string | null;
   // Номер строки ЛИСТА в книге учёта: оператор встаёт на неё прямо в
   // книге. Не путать с row_number — это «№ по порядку» из самой строки.
-  sheet_row?: number | null
-  profile?: string | null
-  color?: string | null
-  kpz_number?: string | null
-  lamels_qty?: number | string | null
-  client?: string | null
-  material_type?: string | null
-  is_defect?: boolean | null
-  entry_delta_sec?: number | null
-  rows_after_exit?: number
-  note?: string | null
+  sheet_row?: number | null;
+  profile?: string | null;
+  color?: string | null;
+  kpz_number?: string | null;
+  lamels_qty?: number | string | null;
+  client?: string | null;
+  material_type?: string | null;
+  is_defect?: boolean | null;
+  entry_delta_sec?: number | null;
+  rows_after_exit?: number;
+  note?: string | null;
 }
 
-export interface JournalFile {
-  name: string
-  size_bytes: number
-  modified_at: string
+interface JournalFile {
+  name: string;
+  size_bytes: number;
+  modified_at: string;
 }
 
 export interface JournalPage {
-  items: JournalPass[]
-  total: number
-  limit: number
-  offset: number
-  directory: string
-  files: JournalFile[]
-  retention_days: number
+  items: JournalPass[];
+  total: number;
+  limit: number;
+  offset: number;
+  directory: string;
+  files: JournalFile[];
+  retention_days: number;
 }
 
 export interface JournalQuery {
-  search: string
-  dateFrom: string
-  dateTo: string
-  sort: JournalSortField
-  direction: SortDirection
-  limit: number
-  offset: number
+  search: string;
+  dateFrom: string;
+  dateTo: string;
+  sort: JournalSortField;
+  direction: SortDirection;
+  limit: number;
+  offset: number;
 }
 
 export const EMPTY_JOURNAL_QUERY: JournalQuery = {
-  search: '',
-  dateFrom: '',
-  dateTo: '',
-  sort: 'exit_at',
-  direction: 'desc',
+  search: "",
+  dateFrom: "",
+  dateTo: "",
+  sort: "exit_at",
+  direction: "desc",
   limit: JOURNAL_PAGE_SIZE,
   offset: 0,
-}
+};
 
 /**
  * Параметры запроса выборки. Пустые поля не уходят на сервер: пустой поиск
@@ -101,11 +101,11 @@ export function journalQueryParams(query: JournalQuery): Record<string, string |
     direction: query.direction,
     limit: query.limit,
     offset: query.offset,
-  }
-  if (query.search.trim()) params.search = query.search.trim()
-  if (query.dateFrom) params.date_from = query.dateFrom
-  if (query.dateTo) params.date_to = query.dateTo
-  return params
+  };
+  if (query.search.trim()) params.search = query.search.trim();
+  if (query.dateFrom) params.date_from = query.dateFrom;
+  if (query.dateTo) params.date_to = query.dateTo;
+  return params;
 }
 
 /**
@@ -113,89 +113,83 @@ export function journalQueryParams(query: JournalQuery): Record<string, string |
  * новая — встаёт в начало (от большего к меньшему), потому что журнал
  * читается свежими сверху.
  */
-export function toggleSort(
-  query: JournalQuery,
-  field: JournalSortField,
-): JournalQuery {
+export function toggleSort(query: JournalQuery, field: JournalSortField): JournalQuery {
   const direction: SortDirection =
-    query.sort === field ? (query.direction === 'desc' ? 'asc' : 'desc') : 'desc'
-  return { ...query, sort: field, direction, offset: 0 }
+    query.sort === field ? (query.direction === "desc" ? "asc" : "desc") : "desc";
+  return { ...query, sort: field, direction, offset: 0 };
 }
 
 /** Любое изменение выборки возвращает на первую страницу. */
-export function withFilter(
-  query: JournalQuery,
-  patch: Partial<JournalQuery>,
-): JournalQuery {
-  const offset = 'offset' in patch ? (patch.offset ?? 0) : 0
-  return { ...query, ...patch, offset }
+export function withFilter(query: JournalQuery, patch: Partial<JournalQuery>): JournalQuery {
+  const offset = "offset" in patch ? (patch.offset ?? 0) : 0;
+  return { ...query, ...patch, offset };
 }
 
 /** Страницы пагинации по общему числу записей. */
 export function pageCount(total: number, limit: number): number {
-  if (limit <= 0) return 1
-  return Math.max(1, Math.ceil(total / limit))
+  if (limit <= 0) return 1;
+  return Math.max(1, Math.ceil(total / limit));
 }
 
 /** Расхождение входа: часы и минуты со знаком, как в разборе прохода. */
 export function formatDelta(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined) return '—'
-  const sign = seconds < 0 ? '−' : '+'
-  const minutes = Math.round(Math.abs(seconds) / 60)
-  const hours = Math.floor(minutes / 60)
-  const rest = minutes % 60
-  return hours > 0 ? `${sign}${hours}ч ${rest}м` : `${sign}${rest}м`
+  if (seconds === null || seconds === undefined) return "—";
+  const sign = seconds < 0 ? "−" : "+";
+  const minutes = Math.round(Math.abs(seconds) / 60);
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return hours > 0 ? `${sign}${hours}ч ${rest}м` : `${sign}${rest}м`;
 }
 
 /** Время выхода прохода: HH:MM:SS из ISO-метки. */
 export function passClock(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  const match = /T(\d{2}:\d{2}:\d{2})/.exec(iso)
-  return match ? match[1] : '—'
+  if (!iso) return "—";
+  const match = /T(\d{2}:\d{2}:\d{2})/.exec(iso);
+  return match ? match[1] : "—";
 }
 
 /** Сутки выхода прохода: YYYY-MM-DD из ISO-метки. */
 export function passDay(iso: string | null | undefined): string {
-  if (!iso) return ''
-  const match = /^(\d{4}-\d{2}-\d{2})/.exec(iso)
-  return match ? match[1] : ''
+  if (!iso) return "";
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(iso);
+  return match ? match[1] : "";
 }
 
 /** Путь по ваннам строкой: ``3 → 4 → 34``. */
-export function formatPath(path: JournalPass['path']): string {
-  if (!path || path.length === 0) return '—'
-  return path.map(step => step.bath).join(' → ')
+export function formatPath(path: JournalPass["path"]): string {
+  if (!path || path.length === 0) return "—";
+  return path.map((step) => step.bath).join(" → ");
 }
 
 /** Человекочитаемый размер файла журнала. */
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} Б`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
 /** Строка книги учёта: ``28.09.2026 18:31`` либо прочерк. */
 export function formatBookRow(pass: JournalPass): string {
-  if (!pass.row_date || !pass.row_time) return '—'
-  return `${pass.row_date} ${pass.row_time.slice(0, 5)}`
+  if (!pass.row_date || !pass.row_time) return "—";
+  return `${pass.row_date} ${pass.row_time.slice(0, 5)}`;
 }
 
 /** Откуда момент: линия (монитор) или книга учёта (запись оператора). */
-export type PassTimeSource = 'линия' | 'книга'
+type PassTimeSource = "линия" | "книга";
 
 /** Один момент прохода: откуда он и вход это или выход. */
 export interface PassTime {
-  source: PassTimeSource
-  role: 'вход' | 'выход'
-  at: string
+  source: PassTimeSource;
+  role: "вход" | "выход";
+  at: string;
 }
 
 /** Сутки и время момента: ``28.09 18:31``. */
 function stamp(iso: string): string {
-  const day = /^\d{4}-(\d{2})-(\d{2})/.exec(iso)
-  const clock = /T(\d{2}:\d{2})/.exec(iso)
-  if (!clock) return '—'
-  return day ? `${day[2]}.${day[1]} ${clock[1]}` : clock[1]
+  const day = /^\d{4}-(\d{2})-(\d{2})/.exec(iso);
+  const clock = /T(\d{2}:\d{2})/.exec(iso);
+  if (!clock) return "—";
+  return day ? `${day[2]}.${day[1]} ${clock[1]}` : clock[1];
 }
 
 /**
@@ -205,12 +199,15 @@ function stamp(iso: string): string {
  * Двузначный год разворачивается в 2000-е — книгу ведут в этом веке, и
  * ``69 → 2069`` оператор бы увидел как ошибку записи.
  */
-function joinBookDateTime(date: string | null | undefined, time: string | null | undefined): string | null {
-  if (!date || !time) return null
-  const parsed = /^(\d{2})\.(\d{2})\.(\d{2,4})$/.exec(date.trim())
-  if (!parsed) return null
-  const year = parsed[3].length === 2 ? `20${parsed[3]}` : parsed[3]
-  return `${year}-${parsed[2]}-${parsed[1]}T${time.trim().slice(0, 8).padEnd(8, ':00').slice(0, 8)}`
+function joinBookDateTime(
+  date: string | null | undefined,
+  time: string | null | undefined,
+): string | null {
+  if (!date || !time) return null;
+  const parsed = /^(\d{2})\.(\d{2})\.(\d{2,4})$/.exec(date.trim());
+  if (!parsed) return null;
+  const year = parsed[3].length === 2 ? `20${parsed[3]}` : parsed[3];
+  return `${year}-${parsed[2]}-${parsed[1]}T${time.trim().slice(0, 8).padEnd(8, ":00").slice(0, 8)}`;
 }
 
 /**
@@ -230,24 +227,25 @@ export function passTimes(pass: JournalPass): PassTime[] {
   // Запасной путь: записи, сделанные до появления полей line_*/book_*,
   // лежат в том же файле (срок хранения 30 суток). Читаем их по прежним
   // полям, иначе колонка времён у них молчала бы пустотой.
-  const bookEntry = pass.book_entry_at ?? joinBookDateTime(pass.row_date, pass.row_time)
-  const moments: Array<[PassTimeSource, 'вход' | 'выход', string | null | undefined]> = [
-    ['книга', 'вход', bookEntry],
-    ['линия', 'вход', pass.line_entry_at ?? pass.first_seen_at],
-    ['линия', 'выход', pass.line_exit_at ?? pass.exit_at],
-  ]
+  const bookEntry = pass.book_entry_at ?? joinBookDateTime(pass.row_date, pass.row_time);
+  const moments: Array<[PassTimeSource, "вход" | "выход", string | null | undefined]> = [
+    ["книга", "вход", bookEntry],
+    ["линия", "вход", pass.line_entry_at ?? pass.first_seen_at],
+    ["линия", "выход", pass.line_exit_at ?? pass.exit_at],
+  ];
   const present = moments
     .filter(([, , at]) => !!at)
-    .map(([source, role, at]) => ({ source, role, at: at as string }))
-  if (present.length <= 1) return present.map(({ source, role, at }) => ({ source, role, at: stamp(at) }))
+    .map(([source, role, at]) => ({ source, role, at: at as string }));
+  if (present.length <= 1)
+    return present.map(({ source, role, at }) => ({ source, role, at: stamp(at) }));
 
-  const days = new Set(present.map(({ at }) => at.slice(0, 10)))
-  const showDay = days.size > 1
+  const days = new Set(present.map(({ at }) => at.slice(0, 10)));
+  const showDay = days.size > 1;
   return present.map(({ source, role, at }) => ({
     source,
     role,
-    at: showDay ? stamp(at) : stamp(at).split(' ').pop() as string,
-  }))
+    at: showDay ? stamp(at) : (stamp(at).split(" ").pop() as string),
+  }));
 }
 
 /**
@@ -256,7 +254,7 @@ export function passTimes(pass: JournalPass): PassTime[] {
  * что замер сделан в момент, когда монитор посмотрел, а не когда подвес
  * появился.
  */
-export const TRUSTED_FIRST_SEEN = 'watched'
+const TRUSTED_FIRST_SEEN = "watched";
 
 /**
  * Сколько подвес простоял на линии: от первого замера до ``now``.
@@ -274,13 +272,13 @@ export function formatInLine(
   now: Date,
   firstSeenSource?: string | null,
 ): string {
-  if (!iso) return '—'
-  if (firstSeenSource != null && firstSeenSource !== TRUSTED_FIRST_SEEN) return '—'
-  const since = new Date(iso).getTime()
-  if (Number.isNaN(since)) return '—'
-  const minutes = Math.floor((now.getTime() - since) / 60000)
-  if (minutes < 0) return '—'
-  if (minutes >= 24 * 60) return '>1сут'
-  const hours = Math.floor(minutes / 60)
-  return hours > 0 ? `${hours}ч ${minutes % 60}м` : `${minutes}м`
+  if (!iso) return "—";
+  if (firstSeenSource != null && firstSeenSource !== TRUSTED_FIRST_SEEN) return "—";
+  const since = new Date(iso).getTime();
+  if (Number.isNaN(since)) return "—";
+  const minutes = Math.floor((now.getTime() - since) / 60000);
+  if (minutes < 0) return "—";
+  if (minutes >= 24 * 60) return ">1сут";
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours}ч ${minutes % 60}м` : `${minutes}м`;
 }

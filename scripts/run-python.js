@@ -35,7 +35,7 @@ const venvPython = path.join(
   backendDir,
   ".venv",
   isWindows ? "Scripts" : "bin",
-  isWindows ? "python.exe" : "python"
+  isWindows ? "python.exe" : "python",
 );
 
 const fs = require("fs");
@@ -45,7 +45,7 @@ if (!fs.existsSync(venvPython)) {
   process.stderr.write(
     `[run-python] venv not found at ${venvPython}, falling back to "python" from PATH.\n` +
       `[run-python] create it with:  py -3.12 -m venv backend/.venv\n` +
-      `[run-python] then install deps: backend\\.venv\\Scripts\\python.exe -m pip install -r backend\\requirements.txt\n`
+      `[run-python] then install deps: backend\\.venv\\Scripts\\python.exe -m pip install -r backend\\requirements.txt\n`,
   );
 }
 
@@ -55,7 +55,6 @@ if (!fs.existsSync(venvPython)) {
  * остановки.
  */
 function splitEnv(argv) {
-  const args = [];
   const env = { ...process.env };
   let i = 0;
   for (; i < argv.length; i++) {
@@ -63,9 +62,7 @@ function splitEnv(argv) {
     const pair = argv[i + 1];
     const eq = pair ? pair.indexOf("=") : -1;
     if (eq < 1) {
-      process.stderr.write(
-        `[run-python] --env expects KEY=VALUE, got ${JSON.stringify(pair)}\n`
-      );
+      process.stderr.write(`[run-python] --env expects KEY=VALUE, got ${JSON.stringify(pair)}\n`);
       process.exit(2);
     }
     env[pair.slice(0, eq)] = pair.slice(eq + 1);

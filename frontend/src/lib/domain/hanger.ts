@@ -3,14 +3,14 @@
 // в BathForecastTable считали её двумя независимыми копиями.
 
 export function hangerKey(value: string | number | null | undefined): string {
-  if (value === null || value === undefined) return ''
-  const raw = String(value).trim()
-  if (!raw) return ''
+  if (value === null || value === undefined) return "";
+  const raw = String(value).trim();
+  if (!raw) return "";
 
-  const numeric = Number(raw.replace(',', '.'))
+  const numeric = Number(raw.replace(",", "."));
   if (Number.isFinite(numeric)) {
-    return String(Math.trunc(numeric))
+    return String(Math.trunc(numeric));
   }
 
-  return raw
+  return raw;
 }

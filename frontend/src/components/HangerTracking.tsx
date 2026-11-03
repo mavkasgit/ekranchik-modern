@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState } from "react";
 import {
   RefreshCw,
   CheckCircle,
@@ -9,8 +9,8 @@ import {
   ArrowDown,
   ChevronLeft,
   ChevronRight,
-} from 'lucide-react'
-import { useJournal } from '@/hooks/useJournal'
+} from "lucide-react";
+import { useJournal } from "@/hooks/useJournal";
 import {
   EMPTY_JOURNAL_QUERY,
   formatBookRow,
@@ -25,130 +25,129 @@ import {
   withFilter,
   type JournalQuery,
   type JournalSortField,
-} from '@/lib/domain/journal'
+} from "@/lib/domain/journal";
 
 interface Hanger {
-  number: number
-  current_bath: number | string | null
-  baths_visited: (number | string)[]
-  cycle_id: number | null
-  line_entry_at: string | null
-  entry_bath: number | null
-  first_seen_source: string
+  number: number;
+  current_bath: number | string | null;
+  baths_visited: (number | string)[];
+  cycle_id: number | null;
+  line_entry_at: string | null;
+  entry_bath: number | null;
+  first_seen_source: string;
 }
 
 interface OPCUAStatus {
-  connected: boolean
-  endpoint: string
+  connected: boolean;
+  endpoint: string;
 }
 
 /** Заголовок колонки журнала: сортируется она или нет. */
 interface Column {
-  title: string
-  sort?: JournalSortField
+  title: string;
+  sort?: JournalSortField;
 }
 
 const COLUMNS: Column[] = [
-  { title: 'Времена подвеса', sort: 'exit_at' },
-  { title: 'Подвес', sort: 'hanger' },
-  { title: 'Строка книги' },
-  { title: 'Профиль', sort: 'profile' },
-  { title: 'Расхождение', sort: 'entry_delta_sec' },
-  { title: 'Путь по ваннам' },
-]
+  { title: "Времена подвеса", sort: "exit_at" },
+  { title: "Подвес", sort: "hanger" },
+  { title: "Строка книги" },
+  { title: "Профиль", sort: "profile" },
+  { title: "Расхождение", sort: "entry_delta_sec" },
+  { title: "Путь по ваннам" },
+];
 
 /** Бейдж вердикта сопоставления: пустой код — обычный проход. */
 const CODE_LABELS: Record<string, string> = {
-  NO_ROW: 'НЕТ СТРОКИ',
-  CYCLE_ERROR: 'ОШИБКА ПРОХОДА',
-}
-
+  NO_ROW: "НЕТ СТРОКИ",
+  CYCLE_ERROR: "ОШИБКА ПРОХОДА",
+};
 
 export function HangerTracking() {
-  const [hangers, setHangers] = useState<Hanger[]>([])
-  const [activeHangers, setActiveHangers] = useState<Hanger[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [autoRefresh, setAutoRefresh] = useState(true)
-  const [opcuaStatus, setOpcuaStatus] = useState<OPCUAStatus | null>(null)
-  const [query, setQuery] = useState<JournalQuery>(EMPTY_JOURNAL_QUERY)
-  const [searchDraft, setSearchDraft] = useState('')
+  const [hangers, setHangers] = useState<Hanger[]>([]);
+  const [activeHangers, setActiveHangers] = useState<Hanger[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [opcuaStatus, setOpcuaStatus] = useState<OPCUAStatus | null>(null);
+  const [query, setQuery] = useState<JournalQuery>(EMPTY_JOURNAL_QUERY);
+  const [searchDraft, setSearchDraft] = useState("");
   // Секундный тик: «в линии» должно расти само, как на живой линии, а не
   // обновляться раз в десять секунд вместе с опросом сервера.
-  const [now, setNow] = useState(() => new Date())
+  const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(timer)
-  }, [])
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-  const journal = useJournal(query)
-  const passes = journal.data?.items ?? []
-  const pages = pageCount(journal.data?.total ?? 0, query.limit)
+  const journal = useJournal(query);
+  const passes = journal.data?.items ?? [];
+  const pages = pageCount(journal.data?.total ?? 0, query.limit);
 
   const fetchOPCUAStatus = async () => {
     try {
-      const res = await fetch('/api/opcua/status')
+      const res = await fetch("/api/opcua/status");
       if (res.ok) {
-        const data = await res.json()
-        setOpcuaStatus(data)
+        const data = await res.json();
+        setOpcuaStatus(data);
       }
     } catch (err) {
-      console.error('Failed to fetch OPC UA status:', err)
+      console.error("Failed to fetch OPC UA status:", err);
     }
-  }
+  };
 
   const fetchHangers = async () => {
-    setLoading(true)
+    setLoading(true);
     try {
       const [allRes, activeRes] = await Promise.all([
-        fetch('/api/opcua/hangers'),
-        fetch('/api/opcua/hangers/active')
-      ])
+        fetch("/api/opcua/hangers"),
+        fetch("/api/opcua/hangers/active"),
+      ]);
 
       if (!allRes.ok || !activeRes.ok) {
-        const errorText = await allRes.text()
-        throw new Error(`Failed to fetch hanger data: ${errorText}`)
+        const errorText = await allRes.text();
+        throw new Error(`Failed to fetch hanger data: ${errorText}`);
       }
 
-      const allData = await allRes.json()
-      const activeData = await activeRes.json()
+      const allData = await allRes.json();
+      const activeData = await activeRes.json();
 
-      setHangers(allData.hangers || [])
-      setActiveHangers(activeData.hangers || [])
-      setError(null)
+      setHangers(allData.hangers || []);
+      setActiveHangers(activeData.hangers || []);
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const scanHangers = async () => {
     try {
-      const response = await fetch('/api/opcua/hangers/scan', { method: 'POST' })
-      if (!response.ok) throw new Error('Failed to scan hangers')
-      await fetchHangers()
+      const response = await fetch("/api/opcua/hangers/scan", { method: "POST" });
+      if (!response.ok) throw new Error("Failed to scan hangers");
+      await fetchHangers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to scan')
+      setError(err instanceof Error ? err.message : "Failed to scan");
     }
-  }
+  };
 
   useEffect(() => {
-    fetchOPCUAStatus()
-    fetchHangers()
+    fetchOPCUAStatus();
+    fetchHangers();
 
     if (autoRefresh) {
       const interval = setInterval(() => {
-        fetchOPCUAStatus()
-        fetchHangers()
-      }, 10000)
-      return () => clearInterval(interval)
+        fetchOPCUAStatus();
+        fetchHangers();
+      }, 10000);
+      return () => clearInterval(interval);
     }
-  }, [autoRefresh])
+  }, [autoRefresh]);
 
   // Поля дат показывают ровно то, что в запросе: подставлять туда сутки
   // последнего прохода значило бы показать границу, которой нет.
-  const hasDateFilter = Boolean(query.dateFrom || query.dateTo)
+  const hasDateFilter = Boolean(query.dateFrom || query.dateTo);
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -179,7 +178,7 @@ export function HangerTracking() {
             disabled={loading}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             Scan
           </button>
         </div>
@@ -218,27 +217,29 @@ export function HangerTracking() {
         <div className="bg-purple-50 rounded-lg p-4">
           <div className="text-sm text-purple-600 font-medium">Avg Baths/Hanger</div>
           <div className="text-2xl font-bold text-purple-900">
-            {hangers.length > 0 ? (hangers.reduce((sum, h) => sum + (h.baths_visited?.length || 0), 0) / hangers.length).toFixed(1) : '—'}
+            {hangers.length > 0
+              ? (
+                  hangers.reduce((sum, h) => sum + (h.baths_visited?.length || 0), 0) /
+                  hangers.length
+                ).toFixed(1)
+              : "—"}
           </div>
         </div>
       </div>
-
 
       {/* Журнал проходов: файл, а не память монитора (issue #34) */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold text-gray-900">Журнал подвесов</h3>
-          <span className="text-xs text-gray-500">
-            {journal.data?.total ?? 0} записей
-          </span>
+          <span className="text-xs text-gray-500">{journal.data?.total ?? 0} записей</span>
         </div>
 
         <div className="flex flex-wrap items-end gap-3 mb-3">
           <form
             className="flex items-end gap-2"
             onSubmit={(e) => {
-              e.preventDefault()
-              setQuery(current => withFilter(current, { search: searchDraft }))
+              e.preventDefault();
+              setQuery((current) => withFilter(current, { search: searchDraft }));
             }}
           >
             <div>
@@ -272,8 +273,10 @@ export function HangerTracking() {
               id="journal-from"
               type="date"
               value={query.dateFrom}
-              onChange={(e) => setQuery(current => withFilter(current, { dateFrom: e.target.value }))}
-              title={hasDateFilter ? undefined : 'Пусто — весь журнал'}
+              onChange={(e) =>
+                setQuery((current) => withFilter(current, { dateFrom: e.target.value }))
+              }
+              title={hasDateFilter ? undefined : "Пусто — весь журнал"}
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
             />
           </div>
@@ -285,16 +288,20 @@ export function HangerTracking() {
               id="journal-to"
               type="date"
               value={query.dateTo}
-              onChange={(e) => setQuery(current => withFilter(current, { dateTo: e.target.value }))}
-              title={hasDateFilter ? undefined : 'Пусто — весь журнал'}
+              onChange={(e) =>
+                setQuery((current) => withFilter(current, { dateTo: e.target.value }))
+              }
+              title={hasDateFilter ? undefined : "Пусто — весь журнал"}
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
             />
           </div>
           {(query.search || query.dateFrom || query.dateTo) && (
             <button
               onClick={() => {
-                setSearchDraft('')
-                setQuery(current => withFilter(current, { search: '', dateFrom: '', dateTo: '' }))
+                setSearchDraft("");
+                setQuery((current) =>
+                  withFilter(current, { search: "", dateFrom: "", dateTo: "" }),
+                );
               }}
               className="px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
             >
@@ -307,12 +314,12 @@ export function HangerTracking() {
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
             <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
             <p className="text-gray-600 font-medium mb-1">
-              {journal.isLoading ? 'Читаем журнал…' : 'Подвесов в журнале нет'}
+              {journal.isLoading ? "Читаем журнал…" : "Подвесов в журнале нет"}
             </p>
             <p className="text-sm text-gray-500">
               {journal.isError
-                ? 'Журнал недоступен'
-                : 'Запись идёт сама, как только подвес сходит с линии'}
+                ? "Журнал недоступен"
+                : "Запись идёт сама, как только подвес сходит с линии"}
             </p>
           </div>
         ) : (
@@ -321,19 +328,19 @@ export function HangerTracking() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-200">
-                    {COLUMNS.map(column => (
+                    {COLUMNS.map((column) => (
                       <th
                         key={column.title}
                         className="text-left py-2 px-3 font-medium text-gray-600"
                       >
                         {column.sort ? (
                           <button
-                            onClick={() => setQuery(current => toggleSort(current, column.sort!))}
+                            onClick={() => setQuery((current) => toggleSort(current, column.sort!))}
                             className="inline-flex items-center gap-1 hover:text-gray-900"
                           >
                             {column.title}
                             {query.sort === column.sort ? (
-                              query.direction === 'desc' ? (
+                              query.direction === "desc" ? (
                                 <ArrowDown className="w-3 h-3" />
                               ) : (
                                 <ArrowUp className="w-3 h-3" />
@@ -350,9 +357,9 @@ export function HangerTracking() {
                   </tr>
                 </thead>
                 <tbody>
-                  {passes.map(pass => (
+                  {passes.map((pass) => (
                     <tr
-                      key={`${pass.cycle_id ?? 'err'}-${pass.exit_at ?? ''}-${pass.hanger}`}
+                      key={`${pass.cycle_id ?? "err"}-${pass.exit_at ?? ""}-${pass.hanger}`}
                       className="border-b border-gray-100 hover:bg-gray-50"
                     >
                       <td className="py-2 px-3">
@@ -377,7 +384,7 @@ export function HangerTracking() {
                             ID {pass.cycle_id}
                           </span>
                         )}
-                        <span className="font-semibold">{pass.hanger ?? '—'}</span>
+                        <span className="font-semibold">{pass.hanger ?? "—"}</span>
                       </td>
                       <td className="py-3 px-3 text-gray-700">
                         {pass.code ? (
@@ -387,9 +394,7 @@ export function HangerTracking() {
                           </span>
                         ) : (
                           <span className="flex items-baseline gap-2">
-                            <span className="font-mono text-gray-700">
-                              {formatBookRow(pass)}
-                            </span>
+                            <span className="font-mono text-gray-700">{formatBookRow(pass)}</span>
                             {pass.sheet_row != null && (
                               <span
                                 className="font-mono text-xs text-gray-400"
@@ -402,7 +407,7 @@ export function HangerTracking() {
                         )}
                       </td>
                       <td className="py-3 px-3 text-gray-700">
-                        {pass.profile ?? '—'}
+                        {pass.profile ?? "—"}
                         {pass.kpz_number && (
                           <span className="ml-2 text-xs text-gray-500">КПЗ {pass.kpz_number}</span>
                         )}
@@ -421,11 +426,16 @@ export function HangerTracking() {
 
             <div className="flex items-center justify-between mt-3">
               <p className="text-xs text-gray-500">
-                Показано {query.offset + 1}–{query.offset + passes.length} из {journal.data?.total ?? 0}
+                Показано {query.offset + 1}–{query.offset + passes.length} из{" "}
+                {journal.data?.total ?? 0}
               </p>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setQuery(current => withFilter(current, { offset: Math.max(0, current.offset - current.limit) }))}
+                  onClick={() =>
+                    setQuery((current) =>
+                      withFilter(current, { offset: Math.max(0, current.offset - current.limit) }),
+                    )
+                  }
                   disabled={query.offset === 0}
                   className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm disabled:opacity-40 hover:bg-gray-50"
                 >
@@ -436,7 +446,11 @@ export function HangerTracking() {
                   {Math.floor(query.offset / query.limit) + 1} / {pages}
                 </span>
                 <button
-                  onClick={() => setQuery(current => withFilter(current, { offset: current.offset + current.limit }))}
+                  onClick={() =>
+                    setQuery((current) =>
+                      withFilter(current, { offset: current.offset + current.limit }),
+                    )
+                  }
                   disabled={query.offset + query.limit >= (journal.data?.total ?? 0)}
                   className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm disabled:opacity-40 hover:bg-gray-50"
                 >
@@ -453,19 +467,15 @@ export function HangerTracking() {
             <p className="text-xs text-gray-600 font-medium mb-1">
               Файлы журнала ({journal.data.retention_days} суток хранения)
             </p>
-            <p className="text-xs text-gray-500 font-mono break-all">
-              {journal.data.directory}
-            </p>
+            <p className="text-xs text-gray-500 font-mono break-all">{journal.data.directory}</p>
             <ul className="mt-1 space-y-0.5">
-              {journal.data.files.slice(0, 5).map(file => (
+              {journal.data.files.slice(0, 5).map((file) => (
                 <li key={file.name} className="text-xs text-gray-500 font-mono">
                   {file.name} — {formatBytes(file.size_bytes)}
                 </li>
               ))}
               {journal.data.files.length > 5 && (
-                <li className="text-xs text-gray-400">
-                  …и ещё {journal.data.files.length - 5}
-                </li>
+                <li className="text-xs text-gray-400">…и ещё {journal.data.files.length - 5}</li>
               )}
             </ul>
           </div>
@@ -496,7 +506,7 @@ export function HangerTracking() {
                 </tr>
               </thead>
               <tbody>
-                {activeHangers.filter(Boolean).map(hanger => (
+                {activeHangers.filter(Boolean).map((hanger) => (
                   <tr
                     key={hanger.number}
                     className="border-b border-gray-100 odd:bg-green-50/60 hover:bg-green-50"
@@ -508,7 +518,7 @@ export function HangerTracking() {
                         </span>
                       )}
                       <span className="font-semibold">
-                        #{String(hanger.number).padStart(3, '0')}
+                        #{String(hanger.number).padStart(3, "0")}
                       </span>
                     </td>
                     <td className="py-1 px-2 font-mono text-gray-700 whitespace-nowrap">
@@ -523,12 +533,10 @@ export function HangerTracking() {
                       {formatInLine(hanger.line_entry_at, now, hanger.first_seen_source)}
                     </td>
                     <td className="py-1 px-2 font-mono text-gray-700">
-                      {hanger.current_bath ?? '—'}
+                      {hanger.current_bath ?? "—"}
                     </td>
                     <td className="py-1 px-2 font-mono text-gray-500 truncate max-w-[280px]">
-                      {hanger.baths_visited?.length
-                        ? hanger.baths_visited.join(' → ')
-                        : '—'}
+                      {hanger.baths_visited?.length ? hanger.baths_visited.join(" → ") : "—"}
                     </td>
                     <td className="py-1 px-2 text-right font-mono text-gray-500">
                       {hanger.baths_visited?.length ?? 0}
@@ -541,5 +549,5 @@ export function HangerTracking() {
         </div>
       )}
     </div>
-  )
+  );
 }

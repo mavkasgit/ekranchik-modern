@@ -1,31 +1,31 @@
-import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
-import { LayoutDashboard, BookOpen, Gauge } from 'lucide-react'
-import { useState, createContext, useContext, useEffect } from 'react'
-import { Toaster } from '@/components/ui/toaster'
-import Dashboard from '@/pages/Dashboard'
-import Catalog from '@/pages/Catalog'
-import { OPCUAPage } from '@/pages/OPCUAPage'
-import { useRealtimeBridge } from '@/hooks/useRealtime'
+import { BrowserRouter, Routes, Route, Navigate, NavLink } from "react-router-dom";
+import { LayoutDashboard, BookOpen, Gauge } from "lucide-react";
+import { useState, createContext, useContext, useEffect } from "react";
+import { Toaster } from "@/components/ui/toaster";
+import Dashboard from "@/pages/Dashboard";
+import Catalog from "@/pages/Catalog";
+import { OPCUAPage } from "@/pages/OPCUAPage";
+import { useRealtimeBridge } from "@/hooks/useRealtime";
 
 // Fullscreen context
 const FullscreenContext = createContext({
   isFullscreen: false,
   setIsFullscreen: (_: boolean) => {},
-})
+});
 
-export const useFullscreen = () => useContext(FullscreenContext)
+export const useFullscreen = () => useContext(FullscreenContext);
 
 function Navigation() {
-  const { isFullscreen } = useFullscreen()
-  
+  const { isFullscreen } = useFullscreen();
+
   const links = [
-    { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
-    { to: '/catalog', icon: BookOpen, label: 'Каталог' },
-    { to: '/opcua', icon: Gauge, label: 'OPC UA' },
-  ]
+    { to: "/", icon: LayoutDashboard, label: "Дашборд" },
+    { to: "/catalog", icon: BookOpen, label: "Каталог" },
+    { to: "/opcua", icon: Gauge, label: "OPC UA" },
+  ];
 
   // Hide navigation in fullscreen
-  if (isFullscreen) return null
+  if (isFullscreen) return null;
 
   return (
     <header className="border-b bg-card">
@@ -37,9 +37,10 @@ function Navigation() {
               to={to}
               className={({ isActive }) =>
                 `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors
-                ${isActive 
-                  ? 'bg-primary text-primary-foreground' 
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                ${
+                  isActive
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
                 }`
               }
             >
@@ -50,23 +51,23 @@ function Navigation() {
         </nav>
       </div>
     </header>
-  )
+  );
 }
 function Footer() {
-  const { isFullscreen } = useFullscreen()
-  const [backendVersion, setBackendVersion] = useState<string | null>(null)
+  const { isFullscreen } = useFullscreen();
+  const [backendVersion, setBackendVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/version')
+    fetch("/api/version")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d && typeof d.version === 'string') setBackendVersion(d.version)
+        if (d && typeof d.version === "string") setBackendVersion(d.version);
       })
-      .catch(() => {})
-  }, [])
+      .catch(() => {});
+  }, []);
 
   // Hide footer in fullscreen
-  if (isFullscreen) return null
+  if (isFullscreen) return null;
 
   return (
     <footer className="border-t bg-card">
@@ -75,13 +76,12 @@ function Footer() {
         {backendVersion && <span>· API v{backendVersion}</span>}
       </div>
     </footer>
-  )
+  );
 }
 
-
 function App() {
-  const [isFullscreen, setIsFullscreen] = useState(false)
-  useRealtimeBridge()
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useRealtimeBridge();
 
   return (
     <FullscreenContext.Provider value={{ isFullscreen, setIsFullscreen }}>
@@ -101,7 +101,7 @@ function App() {
         <Toaster />
       </BrowserRouter>
     </FullscreenContext.Provider>
-  )
+  );
 }
 
-export default App
+export default App;

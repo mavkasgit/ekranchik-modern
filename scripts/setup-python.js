@@ -25,7 +25,7 @@ const isWindows = process.platform === "win32";
 const venvPython = path.join(
   venvDir,
   isWindows ? "Scripts" : "bin",
-  isWindows ? "python.exe" : "python"
+  isWindows ? "python.exe" : "python",
 );
 const requirements = path.join(backendDir, "requirements.txt");
 
@@ -46,12 +46,16 @@ if (fs.existsSync(venvPython)) {
   process.stdout.write(`venv already exists: ${venvDir}\n`);
 } else {
   const launcher = isWindows ? "py" : "python3";
-  run(launcher, ["-" + TARGET_PYTHON, "-m", "venv", venvDir], `Creating venv with Python ${TARGET_PYTHON}`);
+  run(
+    launcher,
+    ["-" + TARGET_PYTHON, "-m", "venv", venvDir],
+    `Creating venv with Python ${TARGET_PYTHON}`,
+  );
 
   if (!fs.existsSync(venvPython)) {
     process.stderr.write(
       `\nvenv was not created at ${venvPython}.\n` +
-        `Is Python ${TARGET_PYTHON} installed? On Windows:  winget install Python.Python.${TARGET_PYTHON.replace(".", "")}\n`
+        `Is Python ${TARGET_PYTHON} installed? On Windows:  winget install Python.Python.${TARGET_PYTHON.replace(".", "")}\n`,
     );
     process.exit(1);
   }
@@ -60,4 +64,6 @@ if (fs.existsSync(venvPython)) {
 run(venvPython, ["-m", "pip", "install", "--upgrade", "pip"], "Upgrading pip");
 run(venvPython, ["-m", "pip", "install", "-r", requirements], "Installing backend requirements");
 
-process.stdout.write(`\nBackend environment ready: ${venvPython}\nRun the dev stack with:  npm run dev\n`);
+process.stdout.write(
+  `\nBackend environment ready: ${venvPython}\nRun the dev stack with:  npm run dev\n`,
+);

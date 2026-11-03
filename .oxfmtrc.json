@@ -1,0 +1,14 @@
+{
+  "quoteStyle": "single",
+  "semi": true,
+  "ignorePatterns": [
+    "dist-exe",
+    "dist-full",
+    "frontend/dist",
+    "journal",
+    "journal-dev",
+    "static",
+    "backend/.venv",
+    "node_modules"
+  ]
+}

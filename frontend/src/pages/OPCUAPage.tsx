@@ -1,121 +1,132 @@
-import { useEffect, useState } from 'react'
-import { AlertCircle, CheckCircle, Loader, RefreshCw, Activity, Zap, Clock, Settings, FlaskConical, Cpu } from 'lucide-react'
-import { LineVisualization } from '@/components/LineVisualization'
-import { HangerTracking } from '@/components/HangerTracking'
-import { formatLocalized } from '@/lib/domain/time'
+import { useEffect, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle,
+  Loader,
+  RefreshCw,
+  Activity,
+  Zap,
+  Clock,
+  Settings,
+  FlaskConical,
+  Cpu,
+} from "lucide-react";
+import { LineVisualization } from "@/components/LineVisualization";
+import { HangerTracking } from "@/components/HangerTracking";
+import { formatLocalized } from "@/lib/domain/time";
 
 interface PLCData {
-  status: string
-  server_time: string
-  num_vars?: number
-  num_values?: number
-  device_status?: string
-  connected: boolean
+  status: string;
+  server_time: string;
+  num_vars?: number;
+  num_values?: number;
+  device_status?: string;
+  connected: boolean;
 }
 
 interface OPCUAStatus {
-  available: boolean
-  enabled: boolean
-  connected: boolean
-  state: string
-  endpoint?: string
+  available: boolean;
+  enabled: boolean;
+  connected: boolean;
+  state: string;
+  endpoint?: string;
   stats: {
-    reads: number
-    errors: number
-    reconnects: number
-  }
+    reads: number;
+    errors: number;
+    reconnects: number;
+  };
 }
 
 interface SettingsState {
-  simulation_enabled: boolean
-  excel_path: string
-  opcua_endpoint: string
+  simulation_enabled: boolean;
+  excel_path: string;
+  opcua_endpoint: string;
 }
 
 export function OPCUAPage() {
-  const [data, setData] = useState<PLCData | null>(null)
-  const [status, setStatus] = useState<OPCUAStatus | null>(null)
-  const [settings, setSettings] = useState<SettingsState | null>(null)
-  const [updatingSettings, setUpdatingSettings] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'line' | 'hangers' | 'settings'>('line')
+  const [data, setData] = useState<PLCData | null>(null);
+  const [status, setStatus] = useState<OPCUAStatus | null>(null);
+  const [settings, setSettings] = useState<SettingsState | null>(null);
+  const [updatingSettings, setUpdatingSettings] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"line" | "hangers" | "settings">("line");
 
   const fetchData = async () => {
     try {
       const [dataRes, statusRes, settingsRes] = await Promise.all([
-        fetch('/api/opcua/data'),
-        fetch('/api/opcua/status'),
-        fetch('/api/dashboard/settings')
-      ])
-      
+        fetch("/api/opcua/data"),
+        fetch("/api/opcua/status"),
+        fetch("/api/dashboard/settings"),
+      ]);
+
       if (dataRes.ok) {
-        const plcData = await dataRes.json()
-        setData(plcData)
+        const plcData = await dataRes.json();
+        setData(plcData);
       }
-      
+
       if (statusRes.ok) {
-        const statusData = await statusRes.json()
-        setStatus(statusData)
+        const statusData = await statusRes.json();
+        setStatus(statusData);
       }
 
       if (settingsRes.ok) {
-        const settingsData = await settingsRes.json()
-        setSettings(settingsData)
+        const settingsData = await settingsRes.json();
+        setSettings(settingsData);
       }
-      
-      setError(null)
+
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchData()
-    const interval = setInterval(fetchData, 10000)
-    return () => clearInterval(interval)
-  }, [])
+    fetchData();
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleConnect = async () => {
     try {
-      const response = await fetch('/api/opcua/connect', { method: 'POST' })
-      if (!response.ok) throw new Error('Failed to connect')
-      await fetchData()
+      const response = await fetch("/api/opcua/connect", { method: "POST" });
+      if (!response.ok) throw new Error("Failed to connect");
+      await fetchData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Connection failed')
+      setError(err instanceof Error ? err.message : "Connection failed");
     }
-  }
+  };
 
   const handleDisconnect = async () => {
     try {
-      await fetch('/api/opcua/disconnect', { method: 'POST' })
-      await fetchData()
+      await fetch("/api/opcua/disconnect", { method: "POST" });
+      await fetchData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Disconnect failed')
+      setError(err instanceof Error ? err.message : "Disconnect failed");
     }
-  }
+  };
 
   const handleToggleSimulationMode = async () => {
-    if (!settings) return
-    setUpdatingSettings(true)
+    if (!settings) return;
+    setUpdatingSettings(true);
     try {
-      const response = await fetch('/api/dashboard/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ simulation_enabled: !settings.simulation_enabled })
-      })
-      if (!response.ok) throw new Error('Failed to change settings')
-      const newSettings = await response.json()
-      setSettings(newSettings)
-      await fetchData()
+      const response = await fetch("/api/dashboard/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ simulation_enabled: !settings.simulation_enabled }),
+      });
+      if (!response.ok) throw new Error("Failed to change settings");
+      const newSettings = await response.json();
+      setSettings(newSettings);
+      await fetchData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to switch mode')
+      setError(err instanceof Error ? err.message : "Failed to switch mode");
     } finally {
-      setUpdatingSettings(false)
+      setUpdatingSettings(false);
     }
-  }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -128,9 +139,11 @@ export function OPCUAPage() {
           </div>
           <div className="flex items-center gap-3">
             {/* Connection Status */}
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
-              status?.connected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-            }`}>
+            <div
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
+                status?.connected ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+              }`}
+            >
               {loading ? (
                 <Loader className="w-4 h-4 animate-spin" />
               ) : status?.connected ? (
@@ -139,10 +152,10 @@ export function OPCUAPage() {
                 <AlertCircle className="w-4 h-4" />
               )}
               <span className="font-medium">
-                {status?.connected ? 'Connected' : 'Disconnected'}
+                {status?.connected ? "Connected" : "Disconnected"}
               </span>
             </div>
-            
+
             {/* Connect/Disconnect Button */}
             {status?.connected ? (
               <button
@@ -159,13 +172,13 @@ export function OPCUAPage() {
                 Connect
               </button>
             )}
-            
+
             <button
               onClick={fetchData}
               disabled={loading}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             </button>
           </div>
         </div>
@@ -188,80 +201,76 @@ export function OPCUAPage() {
               {formatLocalized(data?.server_time)}
             </div>
           </div>
-          
+
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-gray-600">Total Variables</span>
               <Zap className="w-4 h-4 text-blue-500" />
             </div>
-            <div className="text-2xl font-bold text-gray-900">
-              {data?.num_vars ?? '—'}
-            </div>
+            <div className="text-2xl font-bold text-gray-900">{data?.num_vars ?? "—"}</div>
           </div>
-          
+
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-gray-600">Active Values</span>
               <Activity className="w-4 h-4 text-green-500" />
             </div>
-            <div className="text-2xl font-bold text-gray-900">
-              {data?.num_values ?? '—'}
-            </div>
+            <div className="text-2xl font-bold text-gray-900">{data?.num_values ?? "—"}</div>
           </div>
-          
+
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-gray-600">Read Operations</span>
               <Activity className="w-4 h-4 text-purple-500" />
             </div>
-            <div className="text-2xl font-bold text-gray-900">
-              {status?.stats?.reads ?? '—'}
-            </div>
+            <div className="text-2xl font-bold text-gray-900">{status?.stats?.reads ?? "—"}</div>
           </div>
         </div>
 
         {/* Tabs */}
         <div className="flex gap-2 mb-6">
           <button
-            onClick={() => setActiveTab('line')}
+            onClick={() => setActiveTab("line")}
             className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-              activeTab === 'line'
-                ? 'bg-blue-600 text-white'
-                : 'bg-white text-gray-700 hover:bg-gray-100'
+              activeTab === "line"
+                ? "bg-blue-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
             }`}
           >
             Production Line
           </button>
           <button
-            onClick={() => setActiveTab('hangers')}
+            onClick={() => setActiveTab("hangers")}
             className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-              activeTab === 'hangers'
-                ? 'bg-blue-600 text-white'
-                : 'bg-white text-gray-700 hover:bg-gray-100'
+              activeTab === "hangers"
+                ? "bg-blue-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
             }`}
           >
             Hanger Tracking
           </button>
           <button
-            onClick={() => setActiveTab('settings')}
+            onClick={() => setActiveTab("settings")}
             className={`px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 ${
-              activeTab === 'settings'
-                ? 'bg-blue-600 text-white'
-                : 'bg-white text-gray-700 hover:bg-gray-100'
+              activeTab === "settings"
+                ? "bg-blue-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
             }`}
           >
             <Settings className="w-4 h-4" />
             <span>Settings</span>
             {settings && (
-              <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase transition-all ${
-                activeTab === 'settings'
-                  ? settings.simulation_enabled
-                    ? 'bg-yellow-500/30 text-yellow-200 border border-yellow-400/40'
-                    : 'bg-green-500/30 text-green-200 border border-green-400/40'
-                  : settings.simulation_enabled
-                    ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                    : 'bg-green-100 text-green-800 border border-green-200'
-              }`}>
+              <span
+                className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase transition-all ${
+                  activeTab === "settings"
+                    ? settings.simulation_enabled
+                      ? "bg-yellow-500/30 text-yellow-200 border border-yellow-400/40"
+                      : "bg-green-500/30 text-green-200 border border-green-400/40"
+                    : settings.simulation_enabled
+                      ? "bg-yellow-100 text-yellow-800 border border-yellow-200"
+                      : "bg-green-100 text-green-800 border border-green-200"
+                }`}
+              >
                 {settings.simulation_enabled ? (
                   <>
                     <FlaskConical className="w-2.5 h-2.5" />
@@ -279,14 +288,14 @@ export function OPCUAPage() {
         </div>
 
         {/* Tab Content */}
-        {activeTab === 'line' && <LineVisualization />}
-        
-        {activeTab === 'hangers' && <HangerTracking />}
-        
-        {activeTab === 'settings' && (
+        {activeTab === "line" && <LineVisualization />}
+
+        {activeTab === "hangers" && <HangerTracking />}
+
+        {activeTab === "settings" && (
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <h2 className="text-xl font-semibold mb-6">OPC UA Settings</h2>
-            
+
             <div className="space-y-6">
               {/* Режим работы системы */}
               <div>
@@ -294,12 +303,14 @@ export function OPCUAPage() {
                 <div className="bg-gray-50 rounded-lg p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div>
                     <span className="font-semibold text-gray-900 block">
-                      {settings?.simulation_enabled ? '🧪 Тестовый режим (симуляция)' : '⚙️ Рабочий режим'}
+                      {settings?.simulation_enabled
+                        ? "🧪 Тестовый режим (симуляция)"
+                        : "⚙️ Рабочий режим"}
                     </span>
                     <p className="text-xs text-gray-500 mt-1">
-                      {settings?.simulation_enabled 
-                        ? 'Используются локальные файлы и симулятор OPC UA. Сетевые ресурсы не затрагиваются.' 
-                        : 'Используются реальные данные с производства. Подключение к реальному PLC и сетевому диску.'}
+                      {settings?.simulation_enabled
+                        ? "Используются локальные файлы и симулятор OPC UA. Сетевые ресурсы не затрагиваются."
+                        : "Используются реальные данные с производства. Подключение к реальному PLC и сетевому диску."}
                     </p>
                   </div>
                   <button
@@ -311,7 +322,11 @@ export function OPCUAPage() {
                         : "bg-green-100 border-green-300 text-green-800 hover:bg-green-200"
                     }`}
                   >
-                    {updatingSettings ? 'Переключение...' : settings?.simulation_enabled ? 'Включить РАБОЧИЙ' : 'Включить ТЕСТ'}
+                    {updatingSettings
+                      ? "Переключение..."
+                      : settings?.simulation_enabled
+                        ? "Включить РАБОЧИЙ"
+                        : "Включить ТЕСТ"}
                   </button>
                 </div>
               </div>
@@ -323,7 +338,7 @@ export function OPCUAPage() {
                   <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
                     <span className="text-gray-600 shrink-0">Путь на сервере:</span>
                     <span className="font-mono text-sm text-gray-900 text-right break-all">
-                      {settings?.excel_path || 'не задан'}
+                      {settings?.excel_path || "не задан"}
                     </span>
                   </div>
                 </div>
@@ -335,25 +350,29 @@ export function OPCUAPage() {
                 <div className="bg-gray-50 rounded-lg p-4 space-y-2">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Endpoint:</span>
-                    <span className="font-mono text-sm">{status?.endpoint || 'opc.tcp://172.17.11.115:4840'}</span>
+                    <span className="font-mono text-sm">
+                      {status?.endpoint || "opc.tcp://172.17.11.115:4840"}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">State:</span>
-                    <span className={`font-medium ${status?.connected ? 'text-green-600' : 'text-red-600'}`}>
-                      {status?.state || 'Unknown'}
+                    <span
+                      className={`font-medium ${status?.connected ? "text-green-600" : "text-red-600"}`}
+                    >
+                      {status?.state || "Unknown"}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Available:</span>
-                    <span>{status?.available ? 'Yes' : 'No'}</span>
+                    <span>{status?.available ? "Yes" : "No"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Enabled:</span>
-                    <span>{status?.enabled ? 'Yes' : 'No'}</span>
+                    <span>{status?.enabled ? "Yes" : "No"}</span>
                   </div>
                 </div>
               </div>
-              
+
               {/* Statistics */}
               <div>
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Statistics</h3>
@@ -372,7 +391,7 @@ export function OPCUAPage() {
                   </div>
                 </div>
               </div>
-              
+
               {/* Line Configuration */}
               <div>
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Line Configuration</h3>
@@ -399,12 +418,13 @@ export function OPCUAPage() {
         <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="font-semibold text-blue-900 mb-2">About Line Monitoring</h3>
           <p className="text-sm text-blue-800">
-            This page displays real-time data from the galvanic production line via OPC UA.
-            The line consists of 39 baths. Pallets enter at Bath[1] and exit at Bath[34] (control point).
-            Colors indicate bath status: green (active, normal), yellow (70-90% time), red (90%+ time).
+            This page displays real-time data from the galvanic production line via OPC UA. The line
+            consists of 39 baths. Pallets enter at Bath[1] and exit at Bath[34] (control point).
+            Colors indicate bath status: green (active, normal), yellow (70-90% time), red (90%+
+            time).
           </p>
         </div>
       </div>
     </div>
-  )
+  );
 }
