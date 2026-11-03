@@ -11,11 +11,11 @@ name: Release full installer
 on:
   push:
     tags:
-      - 'full-v*'
+      - "full-v*"
   workflow_dispatch:
     inputs:
       version:
-        description: 'Версия установщика (например 1.0.4)'
+        description: "Версия установщика (например 1.0.4)"
         required: true
 
 permissions:

@@ -121,7 +121,6 @@ services:
         max-size: "20m"
         max-file: "3"
 
-
 # Каталог книги. На прод-сервере — тот же bind /mnt/ktm-disk, что и раньше
 # (значения по умолчанию), поэтому deploy_prod.sh и mount_and_start.sh не
 # затронуты. На Windows (Docker Desktop) bind-mount сетевого диска не

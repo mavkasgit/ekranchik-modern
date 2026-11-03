@@ -32,13 +32,13 @@ diagnostics = opcua_service.get_diagnostics()
 
 ## API Endpoints
 
-| Endpoint | Описание |
-|----------|----------|
-| `GET /api/opcua/status` | Статус подключения |
-| `GET /api/opcua/diagnose` | Полная диагностика |
-| `POST /api/opcua/connect` | Подключиться |
-| `POST /api/opcua/disconnect` | Отключиться |
-| `GET /api/opcua/line/status` | Статус всех ванн |
+| Endpoint                     | Описание           |
+| ---------------------------- | ------------------ |
+| `GET /api/opcua/status`      | Статус подключения |
+| `GET /api/opcua/diagnose`    | Полная диагностика |
+| `POST /api/opcua/connect`    | Подключиться       |
+| `POST /api/opcua/disconnect` | Отключиться        |
+| `GET /api/opcua/line/status` | Статус всех ванн   |
 
 ## Диагностика Проблем
 
@@ -51,18 +51,18 @@ ping 172.17.11.115
 # 2. Проверить порт
 nc -zv 172.17.11.115 4840
 
-# 3. Проверить API
-curl http://localhost:8000/api/opcua/diagnose
+# 3. Проверить API (dev-стенд: порт 8013, прод через nginx: 8083)
+curl http://localhost:8013/api/opcua/diagnose
 ```
 
 ### Типичные Ошибки
 
-| Ошибка | Причина | Решение |
-|--------|---------|---------|
-| Connection timeout | Сервер недоступен | Проверить IP, firewall, сеть |
-| Connection refused | Сервер не запущен | Запустить OPC UA сервер |
-| BadSessionIdInvalid | Сессия истекла | Автоматическое переподключение |
-| Error in watchdog loop | Сервер зависает | Перезагрузить сервер |
+| Ошибка                 | Причина           | Решение                        |
+| ---------------------- | ----------------- | ------------------------------ |
+| Connection timeout     | Сервер недоступен | Проверить IP, firewall, сеть   |
+| Connection refused     | Сервер не запущен | Запустить OPC UA сервер        |
+| BadSessionIdInvalid    | Сессия истекла    | Автоматическое переподключение |
+| Error in watchdog loop | Сервер зависает   | Перезагрузить сервер           |
 
 ### Проверка на сервере OPC UA
 
@@ -87,7 +87,7 @@ netstat -an | grep 4840
 
 ```python
 client = Client(endpoint, timeout=30)  # Запрос: 30 сек
-client.session_timeout = 60000         # Сессия: 60 сек
+client.session_timeout = 60000  # Сессия: 60 сек
 client.secure_channel_timeout = 3600000  # Канал: 1 час
 ```
 
@@ -123,26 +123,26 @@ diagnostics = opcua_service.get_diagnostics()
 ### API Endpoint
 
 ```bash
-curl http://localhost:8000/api/opcua/metrics
+curl http://localhost:8013/api/opcua/metrics
 ```
 
 ### Доступные метрики
 
-| Метрика | Описание |
-|---------|----------|
-| `connects.total` | Общее количество подключений |
-| `connects.avg_ms` | Среднее время подключения |
-| `connects.p95_ms` | 95-й перцентиль времени подключения |
-| `disconnects.total` | Общее количество отключений |
-| `reads.avg_ms` | Среднее время чтения узла |
-| `reads.p95_ms` | 95-й перцентиль времени чтения |
-| `errors.total` | Общее количество ошибок |
-| `errors.timeouts` | Количество таймаутов |
-| `errors.session_errors` | Количество ошибок сессии |
-| `session.current_uptime_seconds` | Текущее время работы сессии |
-| `session.longest_session_seconds` | Самая длинная сессия |
-| `network.last_ping_ms` | Последний ping до сервера |
-| `network.avg_ping_ms` | Средний ping |
+| Метрика                           | Описание                            |
+| --------------------------------- | ----------------------------------- |
+| `connects.total`                  | Общее количество подключений        |
+| `connects.avg_ms`                 | Среднее время подключения           |
+| `connects.p95_ms`                 | 95-й перцентиль времени подключения |
+| `disconnects.total`               | Общее количество отключений         |
+| `reads.avg_ms`                    | Среднее время чтения узла           |
+| `reads.p95_ms`                    | 95-й перцентиль времени чтения      |
+| `errors.total`                    | Общее количество ошибок             |
+| `errors.timeouts`                 | Количество таймаутов                |
+| `errors.session_errors`           | Количество ошибок сессии            |
+| `session.current_uptime_seconds`  | Текущее время работы сессии         |
+| `session.longest_session_seconds` | Самая длинная сессия                |
+| `network.last_ping_ms`            | Последний ping до сервера           |
+| `network.avg_ping_ms`             | Средний ping                        |
 
 ### Пример ответа
 
@@ -152,22 +152,22 @@ curl http://localhost:8000/api/opcua/metrics
   "state": "connected",
   "current_ping_ms": 2.5,
   "metrics": {
-    "connects": {"total": 5, "avg_ms": 1250.0, "p95_ms": 2100.0},
-    "disconnects": {"total": 4},
-    "reads": {"total": 15000, "avg_ms": 3.2, "p95_ms": 8.5},
-    "errors": {"total": 12, "timeouts": 8, "session_errors": 2},
-    "session": {"current_uptime_seconds": 3600.0, "longest_session_seconds": 21600.0},
-    "network": {"last_ping_ms": 2.5, "avg_ping_ms": 2.8, "p95_ping_ms": 5.2}
+    "connects": { "total": 5, "avg_ms": 1250.0, "p95_ms": 2100.0 },
+    "disconnects": { "total": 4 },
+    "reads": { "total": 15000, "avg_ms": 3.2, "p95_ms": 8.5 },
+    "errors": { "total": 12, "timeouts": 8, "session_errors": 2 },
+    "session": { "current_uptime_seconds": 3600.0, "longest_session_seconds": 21600.0 },
+    "network": { "last_ping_ms": 2.5, "avg_ping_ms": 2.8, "p95_ping_ms": 5.2 }
   }
 }
 ```
 
 ### Диагностика по метрикам
 
-| Симптом | Возможная причина |
-|---------|-------------------|
-| Высокий `avg_ping_ms` (>50ms) | Проблемы с сетью, WiFi вместо Ethernet |
-| Много `session_errors` | Сервер перезагружается или нестабилен |
-| Много `timeouts` | Сеть нестабильна или сервер перегружен |
-| Короткие сессии | Проблемы с энергосбережением сетевого адаптера |
-| Высокий `p95_ms` при низком `avg_ms` | Периодические задержки в сети |
+| Симптом                              | Возможная причина                              |
+| ------------------------------------ | ---------------------------------------------- |
+| Высокий `avg_ping_ms` (>50ms)        | Проблемы с сетью, WiFi вместо Ethernet         |
+| Много `session_errors`               | Сервер перезагружается или нестабилен          |
+| Много `timeouts`                     | Сеть нестабильна или сервер перегружен         |
+| Короткие сессии                      | Проблемы с энергосбережением сетевого адаптера |
+| Высокий `p95_ms` при низком `avg_ms` | Периодические задержки в сети                  |
