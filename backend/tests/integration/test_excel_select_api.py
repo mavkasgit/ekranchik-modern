@@ -6,6 +6,7 @@
 Контракт: хвост после шары ищется в каталоге книги; каталог пуст — ошибка
 говорит про несмонтированный диск, а не только «Файл не найден».
 """
+
 from pathlib import Path
 
 import pytest
@@ -56,9 +57,7 @@ def book(tmp_path: Path, monkeypatch):
 async def _select(path: str):
     from app.main import app
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         return await client.post("/api/dashboard/excel/select", json={"file_path": path})
 
 
@@ -176,9 +175,7 @@ async def test_files_list_endpoint_is_gone():
     """Пикер убран: списка файлов нет, выбор книги — только вводом пути."""
     from app.main import app
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/dashboard/excel/files")
 
     assert response.status_code == 404

@@ -9,8 +9,8 @@
 Пустая ячейка — сентинел ``EMPTY``, а не ``None``: книга учёта и правила
 матчинга (``matching._EMPTY_TIME_TOKENS``) уже говорят на языке «—».
 """
+
 from dataclasses import dataclass
-from typing import List, Union
 
 from app.schemas.dashboard import HangerData
 from app.schemas.profile import ProfileInfo
@@ -23,13 +23,13 @@ EMPTY = "—"
 class HangerRow:
     """Одна строка Подвеса в форме producer'а (``excel_service``)."""
 
-    number: Union[int, str]
+    number: int | str
     date: str
     time: str
     client: str
     profile: str
     color: str
-    lamels_qty: Union[int, str]
+    lamels_qty: int | str
     kpz_number: str
     material_type: str
     # Номер строки ЛИСТА в книге учёта (1-based, как его видит Excel).
@@ -40,7 +40,7 @@ class HangerRow:
     is_defect: bool
 
 
-def to_hanger_data(row: HangerRow, profiles_info: List[ProfileInfo]) -> HangerData:
+def to_hanger_data(row: HangerRow, profiles_info: list[ProfileInfo]) -> HangerData:
     """Строка Подвеса → строка ответа дашборда (единственный маппинг)."""
     return HangerData(
         number=str(row.number),

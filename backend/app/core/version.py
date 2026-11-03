@@ -5,14 +5,14 @@
 поэтому работает и в репозитории (backend/app/core/version.py -> корень),
 и в пакете заводской машины (dist-full/backend/VERSION, кладёт build-full-package.ps1).
 """
+
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 FALLBACK_VERSION = "dev"
 
 
-def _find_version_file() -> Optional[Path]:
+def _find_version_file() -> Path | None:
     for parent in Path(__file__).resolve().parents:
         candidate = parent / "VERSION"
         if candidate.is_file():

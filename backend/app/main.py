@@ -1,6 +1,7 @@
 """
 Ekranchik Modern - FastAPI Application Entry Point
 """
+
 import os
 import time
 
@@ -11,49 +12,54 @@ import time
 # time.tzset() есть только на Unix-питоне; там и работает IANA-имя. На Windows
 # UCRT разбирает только POSIX-форму, а «Europe/Moscow» принимает молча и уводит
 # часы в UTC: dev показывал 20:09, когда на проде было 23:09.
-if hasattr(time, 'tzset'):
-    os.environ['TZ'] = 'Europe/Moscow'
+if hasattr(time, "tzset"):
+    os.environ["TZ"] = "Europe/Moscow"
     time.tzset()
 else:
     # «MSK-3» = UTC+3 без перехода на летнее время (в России его нет).
-    os.environ['TZ'] = 'MSK-3'
+    os.environ["TZ"] = "MSK-3"
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.config import settings
-from app.core.version import get_app_version
-from app.api.routes import dashboard_router, catalog_router, signal_router, journal_router
+from app.api.routes import catalog_router, dashboard_router, journal_router, signal_router
 from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
-from app.services.excel_watcher import excel_watcher
+from app.core.config import settings
+from app.core.version import get_app_version
 from app.db.startup import ensure_data_dirs, run_startup_migrations
+from app.services.excel_watcher import excel_watcher
+from app.services.journal_writer import journal_writer
 from app.services.line_monitor import line_monitor
 from app.services.opcua_service import opcua_service
-from app.services.journal_writer import journal_writer
 from app.services.websocket_manager import websocket_manager
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Отключаем спам логов от сетевых библиотек
 for noisy_logger in [
-    "asyncio", "aiohttp", "aiohttp.access",
-    "httpcore", "httpx",
-    "websockets", "websockets.client", "websockets.server",
-    "uvicorn", "uvicorn.access", "uvicorn.error",
-    "watchfiles", "watchfiles.main",
+    "asyncio",
+    "aiohttp",
+    "aiohttp.access",
+    "httpcore",
+    "httpx",
+    "websockets",
+    "websockets.client",
+    "websockets.server",
+    "uvicorn",
+    "uvicorn.access",
+    "uvicorn.error",
+    "watchfiles",
+    "watchfiles.main",
     "app.services.websocket_manager",  # WebSocket broadcasts - too verbose
 ]:
     logging.getLogger(noisy_logger).setLevel(logging.ERROR)
@@ -92,16 +98,13 @@ async def lifespan(app: FastAPI):
                     "Проверьте infra/compose/.env (EXCEL_VOL_TYPE=cifs на Windows) "
                     "или infra/mount_and_start.sh на Linux"
                 )
-    
+
     # Нумерация проходов продолжается от журнала (issue #34). Именно ДО старта
     # монитора: он раздаёт номера уже на первом же скане линии, и подстано-
     # вить позже значило бы переписать выданные.
     last_cycle_id = journal_writer.store.max_cycle_id()
     line_monitor.resume_cycle_counter(last_cycle_id)
-    logger.info(
-        f"[STARTUP] Pass numbering continues from {last_cycle_id}: "
-        f"next pass is {last_cycle_id + 1}"
-    )
+    logger.info(f"[STARTUP] Pass numbering continues from {last_cycle_id}: next pass is {last_cycle_id + 1}")
 
     # OPC UA Service - пакетное чтение с защитой от зомби-сессий
     if settings.OPCUA_ENABLED:
@@ -123,30 +126,26 @@ async def lifespan(app: FastAPI):
     restored = journal_writer.restore_recent(line_monitor)
     logger.info(f"[STARTUP] Restored {restored} recent pass(es) from journal")
     journal_writer.prune()
-    journal_task = asyncio.create_task(
-        journal_writer.run_forever(line_monitor, settings.JOURNAL_FLUSH_INTERVAL)
-    )
+    journal_task = asyncio.create_task(journal_writer.run_forever(line_monitor, settings.JOURNAL_FLUSH_INTERVAL))
     logger.info(f"[STARTUP] Journal writer started: {settings.journal_dir_path}")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("[SHUTDOWN] Stopping services...")
-    
+
     # Stop background services
     excel_watcher.stop()
     if journal_task:
         journal_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await journal_task
-        except asyncio.CancelledError:
-            pass
     if line_monitor.is_running:
         await line_monitor.stop()
     if opcua_service.is_connected:
         await opcua_service.stop()
     await websocket_manager.close_all()
-    
+
     logger.info("[SHUTDOWN] All services stopped")
 
 
@@ -203,9 +202,10 @@ async def health_check():
         "services": {
             "excel_watcher": excel_watcher.is_running,
             "line_monitor": line_monitor.is_running,
-            "websocket_clients": websocket_manager.connection_count
-        }
+            "websocket_clients": websocket_manager.connection_count,
+        },
     }
+
 
 @app.get("/api/version")
 async def api_version():
@@ -228,7 +228,6 @@ if _dist_dir is not None and _index_html is not None and _index_html.is_file():
     # Prefixes owned by routers/mounts/docs above: never serve index.html for them.
     _SPA_EXCLUDED_PREFIXES = frozenset({"api", "ws", "static", "health", "docs", "redoc", "openapi.json"})
 
-
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         """Serve dist files directly, fall back to index.html for SPA routes."""
@@ -245,17 +244,11 @@ if _dist_dir is not None and _index_html is not None and _index_html.is_file():
             return FileResponse(str(_index_html))
         raise HTTPException(status_code=404)
 
-
     app.mount("/", StaticFiles(directory=str(_dist_dir), html=True), name="spa")
     logger.info(f"[STARTUP] SPA mounted from: {_dist_dir}")
 else:
 
-
     @app.get("/")
     async def root():
         """Root endpoint"""
-        return {
-            "message": "Ekranchik Modern API",
-            "docs": "/docs",
-            "health": "/health"
-        }
+        return {"message": "Ekranchik Modern API", "docs": "/docs", "health": "/health"}

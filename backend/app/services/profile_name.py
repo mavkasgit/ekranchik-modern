@@ -10,13 +10,14 @@
 (``catalog_service.get_profiles_photos_batch``) — чтобы чистое имя Профиля было
 одинаковым везде.
 """
+
 import re
 from dataclasses import dataclass, field
-from typing import Any, List, Tuple
+from typing import Any
 
 # Ключевые слова обработок: (как записано в книге, каноническое обозначение).
 # Порядок таблицы задаёт порядок в ``ParsedProfile.processing``.
-PROCESSING_KEYWORDS: Tuple[Tuple[str, str], ...] = (
+PROCESSING_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("окно", "окно"),
     ("греб", "греб"),
     ("гребенка", "греб"),  # запись оператора для «греб»
@@ -38,7 +39,7 @@ class ParsedProfile:
 
     raw: str
     name: str
-    processing: List[str] = field(default_factory=list)
+    processing: list[str] = field(default_factory=list)
 
 
 def _is_empty(value: Any) -> bool:
@@ -49,7 +50,7 @@ def parse_profile(text: Any) -> ParsedProfile:
     """Разобрать один сегмент ячейки: убрать обработки, вернуть чистое имя."""
     raw = "" if _is_empty(text) else str(text).strip()
     name = raw
-    processing: List[str] = []
+    processing: list[str] = []
 
     for keyword, canonical in PROCESSING_KEYWORDS:
         pattern = r"\b" + re.escape(keyword) + r"\b"
@@ -63,15 +64,15 @@ def parse_profile(text: Any) -> ParsedProfile:
     return ParsedProfile(raw=raw, name=name, processing=processing)
 
 
-def split_profiles(text: Any) -> List[ParsedProfile]:
+def split_profiles(text: Any) -> list[ParsedProfile]:
     """Ячейка → Профили. Обработки без имени присоединяются к соседу."""
     if _is_empty(text):
         return []
 
     segments = [part.strip() for part in _SEPARATORS.split(str(text)) if part.strip()]
 
-    profiles: List[ParsedProfile] = []
-    leading: List[str] = []  # обработки до первого Профиля
+    profiles: list[ParsedProfile] = []
+    leading: list[str] = []  # обработки до первого Профиля
     for segment in segments:
         parsed = parse_profile(segment)
         if parsed.name:

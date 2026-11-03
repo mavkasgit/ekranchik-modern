@@ -3,6 +3,7 @@
 /api/version отдаёт содержимое корневого VERSION, /health.version —
 то же значение живьём (не захардкоженная строка).
 """
+
 from pathlib import Path
 
 from fastapi.testclient import TestClient

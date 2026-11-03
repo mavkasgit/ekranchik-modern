@@ -1,28 +1,30 @@
 """
 Signal API routes - external event triggers.
 """
+
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.schemas.websocket import WebSocketMessage
 from app.services.excel_service import excel_service
 from app.services.websocket_manager import websocket_manager
-from app.schemas.websocket import WebSocketMessage
 
 router = APIRouter(prefix="/signal", tags=["signal"])
 
 
 class SignalRequest(BaseModel):
     """Request body for signal endpoint."""
+
     source: str
     event: str
-    data: Optional[dict] = None
+    data: dict | None = None
 
 
 class SignalResponse(BaseModel):
     """Response for signal endpoint."""
+
     success: bool
     message: str
 
@@ -31,7 +33,7 @@ class SignalResponse(BaseModel):
 async def receive_signal(request: SignalRequest):
     """
     Receive external signals/events.
-    
+
     Used for:
     - Manual refresh triggers
     - Integration with other services
@@ -39,42 +41,27 @@ async def receive_signal(request: SignalRequest):
     if request.source == "excel":
         # Invalidate Excel cache and broadcast
         excel_service.invalidate_cache()
-        
+
         message = WebSocketMessage(
             type="data_update",
-            payload={
-                "source": "excel",
-                "event": request.event,
-                "message": "Excel data refreshed"
-            },
-            timestamp=datetime.now()
+            payload={"source": "excel", "event": request.event, "message": "Excel data refreshed"},
+            timestamp=datetime.now(),
         )
         await websocket_manager.broadcast(message)
-        
-        return SignalResponse(
-            success=True,
-            message="Excel cache invalidated and broadcast sent"
-        )
-    
+
+        return SignalResponse(success=True, message="Excel cache invalidated and broadcast sent")
+
     elif request.source == "broadcast":
         # Generic broadcast
         message = WebSocketMessage(
-            type="status",
-            payload=request.data or {"event": request.event},
-            timestamp=datetime.now()
+            type="status", payload=request.data or {"event": request.event}, timestamp=datetime.now()
         )
         sent = await websocket_manager.broadcast(message)
-        
-        return SignalResponse(
-            success=True,
-            message=f"Broadcast sent to {sent} clients"
-        )
-    
+
+        return SignalResponse(success=True, message=f"Broadcast sent to {sent} clients")
+
     else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown signal source: {request.source}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unknown signal source: {request.source}")
 
 
 @router.post("/refresh")
@@ -84,20 +71,13 @@ async def refresh_all():
     """
     # Invalidate Excel cache
     excel_service.invalidate_cache()
-    
+
     # Broadcast refresh
     message = WebSocketMessage(
         type="data_update",
-        payload={
-            "source": "system",
-            "event": "full_refresh",
-            "message": "All data sources refreshed"
-        },
-        timestamp=datetime.now()
+        payload={"source": "system", "event": "full_refresh", "message": "All data sources refreshed"},
+        timestamp=datetime.now(),
     )
     sent = await websocket_manager.broadcast(message)
-    
-    return SignalResponse(
-        success=True,
-        message=f"Full refresh completed, broadcast to {sent} clients"
-    )
+
+    return SignalResponse(success=True, message=f"Full refresh completed, broadcast to {sent} clients")

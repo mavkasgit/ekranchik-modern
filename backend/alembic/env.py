@@ -1,6 +1,7 @@
 """
 Alembic environment configuration for async SQLAlchemy
 """
+
 import asyncio
 from logging.config import fileConfig
 
@@ -9,11 +10,11 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from app.core.config import settings
+from app.db import models  # noqa: F401
 
 # Import models to register them with Base.metadata
 from app.db.base import Base
-from app.db import models  # noqa: F401
-from app.core.config import settings
 
 config = context.config
 

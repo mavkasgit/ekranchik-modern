@@ -9,6 +9,7 @@
 - вместе с проходом отдаются моменты входа и выхода по линии и вход по
   книге учёта, иначе оператор не может сверить проход с записью;
 """
+
 import json
 from pathlib import Path
 
@@ -62,8 +63,8 @@ def journal(tmp_path: Path, monkeypatch):
             _record(
                 hanger=index,
                 cycle_id=100 + index,
-                profile="1010{}".format(index),
-                exit_at="2026-09-29T1{}:00:00".format(index),
+                profile=f"1010{index}",
+                exit_at=f"2026-09-29T1{index}:00:00",
             )
         )
     monkeypatch.setattr(journal_route, "journal_store", lambda: store)
@@ -73,9 +74,7 @@ def journal(tmp_path: Path, monkeypatch):
 async def _get(params: dict) -> dict:
     from app.main import app
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/journal/passes", params=params)
         assert response.status_code == 200, response.text
         return response.json()
@@ -129,9 +128,7 @@ async def test_passes_endpoint_reports_unreadable_journal_as_empty(monkeypatch):
         def files(self):
             raise OSError("диск недоступен")
 
-    monkeypatch.setattr(
-        journal_route, "journal_store", lambda: _Broken(Path("Z:/нет/такого"))
-    )
+    monkeypatch.setattr(journal_route, "journal_store", lambda: _Broken(Path("Z:/нет/такого")))
 
     body = await _get({})
 
@@ -150,9 +147,7 @@ async def test_passes_endpoint_skips_line_that_is_not_a_pass(journal, caplog):
 
     path = journal.files()[0].path
     path.write_text(
-        json.dumps({"совсем": "другая запись"}, ensure_ascii=False)
-        + "\n"
-        + path.read_text(encoding="utf-8"),
+        json.dumps({"совсем": "другая запись"}, ensure_ascii=False) + "\n" + path.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
 

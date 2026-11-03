@@ -24,9 +24,10 @@
 поэтому подмена строки следующего прогона невозможна по построению, а не
 «возможна, но с бейджем».
 """
+
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from app.services.hanger_row import HangerRow
 
@@ -61,13 +62,13 @@ _EMPTY_TIME_TOKENS = frozenset({"", "—", "nan", "NaT", "None"})
 class CycleMatch:
     """Результат подбора строки книги к одному проходу подвеса."""
 
-    cycle: Dict[str, Any]
-    row: Optional[HangerRow]
+    cycle: dict[str, Any]
+    row: HangerRow | None
     code: str = CODE_OK
     # Расхождение ``book_time - first_seen_at`` в секундах; ``None`` — первый
     # замер недостоверен или отсчёта нет, считать нечего. Поле остаётся
     # сырыми данными для калибровки допуска по живой линии.
-    entry_delta_sec: Optional[float] = None
+    entry_delta_sec: float | None = None
     # Пометка для журнала: ``entry_delta`` — расхождение больше допуска.
     # На экран не выводится, пока допуск не откалиброван.
     suspect_reason: str = ""
@@ -77,7 +78,7 @@ class CycleMatch:
     rows_after_exit: int = 0
 
 
-def parse_excel_date(date_str: str) -> Tuple[int, int, int]:
+def parse_excel_date(date_str: str) -> tuple[int, int, int]:
     """Parse DD.MM.YYYY or DD.MM.YY to (year, month, day); (0, 0, 0) if bad."""
     if not date_str or date_str == "—":
         return (0, 0, 0)
@@ -96,7 +97,7 @@ def parse_excel_date(date_str: str) -> Tuple[int, int, int]:
         return (0, 0, 0)
 
 
-def parse_excel_time(time_str: str) -> Tuple[int, int, int]:
+def parse_excel_time(time_str: str) -> tuple[int, int, int]:
     """Parse HH:MM:SS or HH:MM to (hour, minute, second); (0, 0, 0) if bad."""
     if not time_str or time_str == "—":
         return (0, 0, 0)
@@ -110,9 +111,7 @@ def parse_excel_time(time_str: str) -> Tuple[int, int, int]:
         return (0, 0, 0)
 
 
-def excel_datetime_to_seconds(
-    date_tuple: Tuple[int, int, int], time_tuple: Tuple[int, int, int]
-) -> float:
+def excel_datetime_to_seconds(date_tuple: tuple[int, int, int], time_tuple: tuple[int, int, int]) -> float:
     """Convert date+time tuples to epoch seconds; 0.0 if not a real date."""
     try:
         year, month, day = date_tuple
@@ -169,19 +168,19 @@ def parse_iso_seconds(value: Any) -> float:
         return 0.0
 
 
-def _cycle_first_seen(cycle: Dict[str, Any]) -> float:
+def _cycle_first_seen(cycle: dict[str, Any]) -> float:
     return parse_iso_seconds(cycle.get("first_seen_at"))
 
 
-def _cycle_exit(cycle: Dict[str, Any]) -> float:
+def _cycle_exit(cycle: dict[str, Any]) -> float:
     return parse_iso_seconds(cycle.get("exit_at"))
 
 
 def select_latest_candidate(
-    candidates: List[HangerRow],
-    used_keys: Optional[set] = None,
+    candidates: list[HangerRow],
+    used_keys: set | None = None,
     require_time: bool = True,
-) -> Optional[HangerRow]:
+) -> HangerRow | None:
     """Самая поздняя строка номера — для метаданных профиля и цвета.
 
     Используется эндпоинтом api/routes/opcua.py, где нужно «что сейчас
@@ -215,9 +214,9 @@ def select_latest_candidate(
 
 
 def match_cycles_to_rows(
-    cycles: List[Dict[str, Any]],
-    rows_by_hanger: Dict[str, List[HangerRow]],
-) -> List[CycleMatch]:
+    cycles: list[dict[str, Any]],
+    rows_by_hanger: dict[str, list[HangerRow]],
+) -> list[CycleMatch]:
     """Привязать строку книги к каждому проходу подвеса.
 
     Проходы ОБРАБАТЫВАЮТСЯ по времени ``first_seen_at`` — от ранних к
@@ -242,9 +241,9 @@ def match_cycles_to_rows(
     Проход, у которого ``line_monitor`` не нашёл открытого цикла, остаётся
     ``CYCLE_ERROR`` и строки не получает вовсе.
     """
-    matches: List[CycleMatch] = []
+    matches: list[CycleMatch] = []
     # Позиция каждого подбора во входном списке — её восстановим в конце.
-    positions: List[int] = []
+    positions: list[int] = []
     used: set = set()
 
     # Разбираем проходы по времени first_seen_at, от ранних к поздним, чтобы
@@ -252,9 +251,7 @@ def match_cycles_to_rows(
     # ПОДБОРА, а не выдачи: результат возвращается в порядке вызывающего
     # (см. get_unload_events — новые выходы сверху), потому что таблица
     # выхода читается сверху вниз.
-    for position, cycle in sorted(
-        enumerate(cycles), key=lambda pair: _cycle_first_seen(pair[1])
-    ):
+    for position, cycle in sorted(enumerate(cycles), key=lambda pair: _cycle_first_seen(pair[1])):
         positions.append(position)
         if cycle.get("type") == "cycle_error":
             matches.append(CycleMatch(cycle=cycle, row=None, code=CODE_CYCLE_ERROR))
@@ -338,8 +335,7 @@ def match_log_line(match: CycleMatch, hanger: str) -> str:
     delta = match.entry_delta_sec
     delta_text = "—" if delta is None else f"{delta:+.0f}s({delta / 60:+.0f}m)"
     path = " ".join(
-        f"{entry.get('bath')}@{clock(entry.get('in'))}->{clock(entry.get('out'))}"
-        for entry in cycle.get("path") or []
+        f"{entry.get('bath')}@{clock(entry.get('in'))}->{clock(entry.get('out'))}" for entry in cycle.get("path") or []
     )
     return (
         f"[Matching] cycle={cycle.get('cycle_id')} hanger={hanger} "

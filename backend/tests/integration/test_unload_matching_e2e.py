@@ -8,18 +8,18 @@ E2E тест: Матчинг OPC UA unload-событий с данными Exce
 4. Вызываем GET /api/dashboard/opcua-unload-matched
 5. Проверяем результат матчинга
 """
+
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
-import pytest
 import openpyxl
-from httpx import AsyncClient, ASGITransport
-
+from httpx import ASGITransport, AsyncClient
 
 # ---------------------------------------------------------------------------
 # Вспомогательная функция для создания тестового Excel
 # ---------------------------------------------------------------------------
+
 
 def create_test_excel(filepath: str, rows: list[dict]) -> None:
     """
@@ -42,23 +42,23 @@ def create_test_excel(filepath: str, rows: list[dict]) -> None:
     # Строки 1-2 — заголовки
     ws.cell(row=1, column=1, value="Заголовок")
     ws.cell(row=2, column=1, value="Подзаголовок")
-    
+
     # Строка 3 — заголовок таблицы
     ws.cell(row=3, column=4, value="Дата")
     ws.cell(row=3, column=5, value="Номер")
     ws.cell(row=3, column=6, value="Время")
 
     for i, row_data in enumerate(rows, start=4):
-        ws.cell(row=i, column=4, value=row_data.get("date"))               # D
-        ws.cell(row=i, column=5, value=row_data.get("number"))             # E
-        ws.cell(row=i, column=6, value=row_data.get("time"))               # F
+        ws.cell(row=i, column=4, value=row_data.get("date"))  # D
+        ws.cell(row=i, column=5, value=row_data.get("number"))  # E
+        ws.cell(row=i, column=6, value=row_data.get("time"))  # F
         ws.cell(row=i, column=8, value=row_data.get("material_type", ""))  # H
-        ws.cell(row=i, column=9, value=row_data.get("defect", ""))         # I
-        ws.cell(row=i, column=11, value=row_data.get("kpz_number", ""))    # K
-        ws.cell(row=i, column=12, value=row_data.get("client", ""))        # L
-        ws.cell(row=i, column=13, value=row_data.get("profile", ""))       # M
-        ws.cell(row=i, column=17, value=row_data.get("color", ""))         # Q
-        ws.cell(row=i, column=20, value=row_data.get("lamels_qty", 0))     # T
+        ws.cell(row=i, column=9, value=row_data.get("defect", ""))  # I
+        ws.cell(row=i, column=11, value=row_data.get("kpz_number", ""))  # K
+        ws.cell(row=i, column=12, value=row_data.get("client", ""))  # L
+        ws.cell(row=i, column=13, value=row_data.get("profile", ""))  # M
+        ws.cell(row=i, column=17, value=row_data.get("color", ""))  # Q
+        ws.cell(row=i, column=20, value=row_data.get("lamels_qty", 0))  # T
 
     wb.save(filepath)
 
@@ -66,6 +66,7 @@ def create_test_excel(filepath: str, rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 # Хелперы
 # ---------------------------------------------------------------------------
+
 
 def _setup_excel(filepath: Path):
     """Настраивает excel_service на тестовый файл."""
@@ -79,8 +80,8 @@ def _setup_excel(filepath: Path):
 
 def _setup_opcua_and_monitor():
     """Настраивает opcua_service и line_monitor для теста."""
-    from app.services.opcua_service import opcua_service
     from app.services.line_monitor import line_monitor
+    from app.services.opcua_service import opcua_service
 
     opcua_service._connected = True
     opcua_service._cache = {}
@@ -93,8 +94,8 @@ def _setup_opcua_and_monitor():
 def _save_state() -> dict:
     """Сохраняет текущее состояние сервисов для восстановления."""
     from app.services.excel_service import excel_service
-    from app.services.opcua_service import opcua_service
     from app.services.line_monitor import line_monitor
+    from app.services.opcua_service import opcua_service
 
     return {
         "active_file": excel_service._active_file_name,
@@ -112,8 +113,8 @@ def _save_state() -> dict:
 def _restore_state(state: dict):
     """Восстанавливает состояние сервисов."""
     from app.services.excel_service import excel_service
-    from app.services.opcua_service import opcua_service
     from app.services.line_monitor import line_monitor
+    from app.services.opcua_service import opcua_service
 
     excel_service._active_file_name = state["active_file"]
     excel_service._cache = state["cache"]
@@ -141,8 +142,8 @@ async def trigger_unload(hanger_id: int) -> None:
     обязателен: именно он открывает цикл, из которого потом выбирается
     строка книги.
     """
-    from app.services.opcua_service import opcua_service
     from app.services.line_monitor import line_monitor
+    from app.services.opcua_service import opcua_service
 
     def occupy(bath: int, pallete: int):
         opcua_service._cache[f"ns=4;s=Bath[{bath}].InUse"] = 1
@@ -181,9 +182,7 @@ async def call_matched_api(limit: int = 10) -> list[dict]:
     """GET /api/dashboard/opcua-unload-matched с мок-ом catalog_service."""
     from app.main import app
 
-    with patch(
-        "app.api.routes.dashboard.catalog_service"
-    ) as mock_catalog:
+    with patch("app.api.routes.dashboard.catalog_service") as mock_catalog:
         mock_catalog.get_profiles_photos_batch = AsyncMock(return_value={})
 
         async with AsyncClient(
@@ -194,9 +193,7 @@ async def call_matched_api(limit: int = 10) -> list[dict]:
                 "/api/dashboard/opcua-unload-matched",
                 params={"limit": limit},
             )
-            assert resp.status_code == 200, (
-                f"API вернул {resp.status_code}: {resp.text}"
-            )
+            assert resp.status_code == 200, f"API вернул {resp.status_code}: {resp.text}"
             return resp.json()
 
 
@@ -214,22 +211,29 @@ async def test_correct_match_same_day(tmp_path: Path):
     entry_time = now - timedelta(hours=2)
 
     filepath = tmp_path / "test_same_day.xlsx"
-    create_test_excel(str(filepath), [
-        {
-            "date": datetime(entry_time.year, entry_time.month, entry_time.day),
-            "number": 42,
-            "time": datetime(
-                entry_time.year, entry_time.month, entry_time.day,
-                entry_time.hour, entry_time.minute, 0,
-            ),
-            "material_type": "Пороги",
-            "kpz_number": "101",
-            "client": "ТестКТМ",
-            "profile": "4040",
-            "color": "серебро",
-            "lamels_qty": 29,
-        }
-    ])
+    create_test_excel(
+        str(filepath),
+        [
+            {
+                "date": datetime(entry_time.year, entry_time.month, entry_time.day),
+                "number": 42,
+                "time": datetime(
+                    entry_time.year,
+                    entry_time.month,
+                    entry_time.day,
+                    entry_time.hour,
+                    entry_time.minute,
+                    0,
+                ),
+                "material_type": "Пороги",
+                "kpz_number": "101",
+                "client": "ТестКТМ",
+                "profile": "4040",
+                "color": "серебро",
+                "lamels_qty": 29,
+            }
+        ],
+    )
 
     state = _save_state()
     try:
@@ -265,19 +269,22 @@ async def test_correct_match_cross_day(tmp_path: Path):
     yesterday = datetime.now() - timedelta(days=1)
 
     filepath = tmp_path / "test_cross_day.xlsx"
-    create_test_excel(str(filepath), [
-        {
-            "date": datetime(yesterday.year, yesterday.month, yesterday.day),
-            "number": 15,
-            "time": datetime(yesterday.year, yesterday.month, yesterday.day, 22, 0, 0),
-            "material_type": "Профиль",
-            "kpz_number": "202",
-            "client": "РП",
-            "profile": "ЮП-1401",
-            "color": "белый",
-            "lamels_qty": 15,
-        }
-    ])
+    create_test_excel(
+        str(filepath),
+        [
+            {
+                "date": datetime(yesterday.year, yesterday.month, yesterday.day),
+                "number": 15,
+                "time": datetime(yesterday.year, yesterday.month, yesterday.day, 22, 0, 0),
+                "material_type": "Профиль",
+                "kpz_number": "202",
+                "client": "РП",
+                "profile": "ЮП-1401",
+                "color": "белый",
+                "lamels_qty": 15,
+            }
+        ],
+    )
 
     state = _save_state()
     try:
@@ -308,22 +315,29 @@ async def test_no_match_different_hanger(tmp_path: Path):
     entry_time = now - timedelta(hours=1)
 
     filepath = tmp_path / "test_no_match.xlsx"
-    create_test_excel(str(filepath), [
-        {
-            "date": datetime(entry_time.year, entry_time.month, entry_time.day),
-            "number": 42,
-            "time": datetime(
-                entry_time.year, entry_time.month, entry_time.day,
-                entry_time.hour, entry_time.minute, 0,
-            ),
-            "material_type": "Пороги",
-            "kpz_number": "101",
-            "client": "ТестКТМ",
-            "profile": "4040",
-            "color": "серебро",
-            "lamels_qty": 29,
-        }
-    ])
+    create_test_excel(
+        str(filepath),
+        [
+            {
+                "date": datetime(entry_time.year, entry_time.month, entry_time.day),
+                "number": 42,
+                "time": datetime(
+                    entry_time.year,
+                    entry_time.month,
+                    entry_time.day,
+                    entry_time.hour,
+                    entry_time.minute,
+                    0,
+                ),
+                "material_type": "Пороги",
+                "kpz_number": "101",
+                "client": "ТестКТМ",
+                "profile": "4040",
+                "color": "серебро",
+                "lamels_qty": 29,
+            }
+        ],
+    )
 
     state = _save_state()
     try:
@@ -353,36 +367,47 @@ async def test_closest_match_wins(tmp_path: Path):
     new_time = now - timedelta(hours=1)
 
     filepath = tmp_path / "test_closest.xlsx"
-    create_test_excel(str(filepath), [
-        {
-            "date": datetime(old_time.year, old_time.month, old_time.day),
-            "number": 42,
-            "time": datetime(
-                old_time.year, old_time.month, old_time.day,
-                old_time.hour, old_time.minute, 0,
-            ),
-            "material_type": "Пороги",
-            "kpz_number": "100",
-            "client": "Старый",
-            "profile": "1010",
-            "color": "чёрный",
-            "lamels_qty": 10,
-        },
-        {
-            "date": datetime(new_time.year, new_time.month, new_time.day),
-            "number": 42,
-            "time": datetime(
-                new_time.year, new_time.month, new_time.day,
-                new_time.hour, new_time.minute, 0,
-            ),
-            "material_type": "Пороги",
-            "kpz_number": "200",
-            "client": "Новый",
-            "profile": "2020",
-            "color": "золото",
-            "lamels_qty": 20,
-        },
-    ])
+    create_test_excel(
+        str(filepath),
+        [
+            {
+                "date": datetime(old_time.year, old_time.month, old_time.day),
+                "number": 42,
+                "time": datetime(
+                    old_time.year,
+                    old_time.month,
+                    old_time.day,
+                    old_time.hour,
+                    old_time.minute,
+                    0,
+                ),
+                "material_type": "Пороги",
+                "kpz_number": "100",
+                "client": "Старый",
+                "profile": "1010",
+                "color": "чёрный",
+                "lamels_qty": 10,
+            },
+            {
+                "date": datetime(new_time.year, new_time.month, new_time.day),
+                "number": 42,
+                "time": datetime(
+                    new_time.year,
+                    new_time.month,
+                    new_time.day,
+                    new_time.hour,
+                    new_time.minute,
+                    0,
+                ),
+                "material_type": "Пороги",
+                "kpz_number": "200",
+                "client": "Новый",
+                "profile": "2020",
+                "color": "золото",
+                "lamels_qty": 20,
+            },
+        ],
+    )
 
     state = _save_state()
     try:
@@ -396,9 +421,7 @@ async def test_closest_match_wins(tmp_path: Path):
         event = data[0]
 
         assert event["hanger"] == 42
-        assert event["client"] == "Новый", (
-            f"Ожидали клиента 'Новый' (ближайший), получили '{event['client']}'"
-        )
+        assert event["client"] == "Новый", f"Ожидали клиента 'Новый' (ближайший), получили '{event['client']}'"
         assert event["profile"] == "2020"
     finally:
         _restore_state(state)

@@ -15,6 +15,7 @@
 - первый замер недостоверен (монитор застал подвес уже стоящим) — строка
   подбирается, но entry_delta_sec не считается.
 """
+
 from datetime import datetime, timedelta
 
 from app.services.hanger_row import HangerRow
@@ -35,9 +36,17 @@ DAY_2 = "30.09.2026"
 
 def _row(number, date, time, profile):
     return HangerRow(
-        number=str(number), date=date, time=time, profile=profile,
-        client="РП", color="серебро", lamels_qty=86, kpz_number="151",
-        material_type="Пороги", is_defect=False, sheet_row=1,
+        number=str(number),
+        date=date,
+        time=time,
+        profile=profile,
+        client="РП",
+        color="серебро",
+        lamels_qty=86,
+        kpz_number="151",
+        material_type="Пороги",
+        is_defect=False,
+        sheet_row=1,
     )
 
 
@@ -209,9 +218,7 @@ def test_untrusted_first_seen_gives_row_without_delta():
     ничего не значит (см. line_monitor.FIRST_SEEN_*).
     """
     rows = {"8": [_row(8, NIGHT, "13:14:00", "СВОЯ")]}
-    cycles = [
-        _cycle(8, _iso(NIGHT, "16:17:36"), _iso(NIGHT, "16:31:18"), cycle_id=9, source="start")
-    ]
+    cycles = [_cycle(8, _iso(NIGHT, "16:17:36"), _iso(NIGHT, "16:31:18"), cycle_id=9, source="start")]
 
     [m] = match_cycles_to_rows(cycles, rows)
 

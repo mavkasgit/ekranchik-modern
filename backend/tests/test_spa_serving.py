@@ -9,6 +9,7 @@ Nginx reference (frontend/nginx.conf): proxies /api /ws /static,
 SPA fallback via try_files — the same contract is asserted here
 against the FastAPI app itself.
 """
+
 import importlib
 
 import pytest
@@ -20,8 +21,7 @@ INDEX_HTML = "<html><body><div id='root'>SPA</div></body></html>"
 PHOTO_BYTES = b"\xff\xd8\xff\xe0jpeg-thumb"
 
 
-def _load_app(monkeypatch, tmp_path, with_dist: bool, with_index: bool = True,
-              with_static: bool = True):
+def _load_app(monkeypatch, tmp_path, with_dist: bool, with_index: bool = True, with_static: bool = True):
     """Reload app.main with settings pointed at a controlled tmp layout."""
     if with_dist:
         dist = tmp_path / "dist"
@@ -31,9 +31,7 @@ def _load_app(monkeypatch, tmp_path, with_dist: bool, with_index: bool = True,
         (dist / "assets" / "app.js").write_text("console.log('spa');", encoding="utf-8")
         monkeypatch.setattr(config_module.settings, "FRONTEND_DIST_DIR", str(dist))
     else:
-        monkeypatch.setattr(
-            config_module.settings, "FRONTEND_DIST_DIR", str(tmp_path / "no-dist")
-        )
+        monkeypatch.setattr(config_module.settings, "FRONTEND_DIST_DIR", str(tmp_path / "no-dist"))
 
     static = tmp_path / "static"
     if with_static:
@@ -131,6 +129,7 @@ def test_real_api_endpoint_returns_json(spa_client):
     assert "application/json" in resp.headers["content-type"]
     assert "simulation_enabled" in resp.json()
 
+
 def test_openapi_not_shadowed_by_spa(spa_client):
     resp = spa_client.get("/openapi.json")
     assert resp.status_code == 200
@@ -156,6 +155,7 @@ def test_health_ok_without_dist(api_only_client):
     resp = api_only_client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
+
 
 def test_redoc_not_shadowed_by_spa(spa_client):
     resp = spa_client.get("/redoc")

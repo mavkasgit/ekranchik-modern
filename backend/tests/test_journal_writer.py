@@ -8,6 +8,7 @@
 - в запись идёт весь проход и вердикт сопоставления — из них собираются
   и строка сопоставления в лог, и колонки таблицы журнала.
 """
+
 import asyncio
 import json
 from datetime import datetime
@@ -15,22 +16,30 @@ from pathlib import Path
 
 import pytest
 
-from app.services.hanger_row import HangerRow
 from app.services.hanger_journal import JournalStore
+from app.services.hanger_row import HangerRow
 from app.services.journal_writer import (
     RESTORE_EVENTS,
     JournalWriter,
     record_from_match,
 )
 from app.services.line_monitor import LineMonitorService
-from app.services.matching import CODE_NO_ROW, CycleMatch, TRUSTED_FIRST_SEEN
+from app.services.matching import CODE_NO_ROW, TRUSTED_FIRST_SEEN, CycleMatch
 
 
 def _row(number=5, date="28.09.2026", time="18:31", profile="10104", sheet_row=15830) -> HangerRow:
     return HangerRow(
-        number=str(number), date=date, time=time, profile=profile,
-        client="РП", color="серебро", lamels_qty=86, kpz_number="151",
-        material_type="Пороги", is_defect=False, sheet_row=sheet_row,
+        number=str(number),
+        date=date,
+        time=time,
+        profile=profile,
+        client="РП",
+        color="серебро",
+        lamels_qty=86,
+        kpz_number="151",
+        material_type="Пороги",
+        is_defect=False,
+        sheet_row=sheet_row,
     )
 
 
@@ -52,7 +61,10 @@ def _cycle(hanger=5, cycle_id=42, exit_at="2026-09-29T20:16:03", type_="unload")
     }
 
 
-def _match(cycle=None, row=_row(), code="", delta=-1800.0, note="", rows_after_exit=0):
+_DEFAULT_ROW = _row()
+
+
+def _match(cycle=None, row=_DEFAULT_ROW, code="", delta=-1800.0, note="", rows_after_exit=0):
     return CycleMatch(
         cycle=cycle if cycle is not None else _cycle(),
         row=row,
@@ -65,9 +77,7 @@ def _match(cycle=None, row=_row(), code="", delta=-1800.0, note="", rows_after_e
 
 @pytest.fixture
 def writer(tmp_path: Path) -> JournalWriter:
-    return JournalWriter(
-        JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]}
-    )
+    return JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]})
 
 
 def test_pass_record_carries_path_and_verdict():
@@ -84,7 +94,6 @@ def test_pass_record_carries_path_and_verdict():
     assert record["row_time"] == "18:31"
     assert record["profile"] == "10104"
     assert record["kpz_number"] == "151"
-
 
 
 def test_record_keeps_line_and_book_times_side_by_side():
@@ -190,9 +199,7 @@ def test_writer_takes_the_pass_it_has_not_seen_yet(writer):
 
     assert asyncio.run(writer.flush(line_monitor=monitor)) == 1
 
-    monitor._events.append(
-        _cycle(cycle_id=2, hanger=5, exit_at="2026-09-29T21:16:03")
-    )
+    monitor._events.append(_cycle(cycle_id=2, hanger=5, exit_at="2026-09-29T21:16:03"))
     assert asyncio.run(writer.flush(line_monitor=monitor)) == 1
 
     page = writer.store.query(limit=10)
@@ -212,9 +219,7 @@ def test_writer_survives_a_restart_and_keeps_writing(writer, tmp_path):
     first = _cycle(cycle_id=1, exit_at=f"{today}T20:16:03")
     asyncio.run(writer.flush(line_monitor=_monitor_with([first])))
 
-    restarted = JournalWriter(
-        JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]}
-    )
+    restarted = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]})
     restarted.load_written_keys()
     monitor = _monitor_with(
         [
@@ -239,9 +244,7 @@ def test_pass_is_written_even_when_the_counter_repeats_after_a_restart(writer, t
     """
     asyncio.run(writer.flush(line_monitor=_monitor_with([_cycle(cycle_id=6)])))
 
-    restarted = JournalWriter(
-        JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]}
-    )
+    restarted = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]})
     restarted.load_written_keys()
 
     # Тот же номер прохода, но это ДРУГОЙ проход: другое время выхода.
@@ -255,9 +258,7 @@ def test_pass_is_written_even_when_the_counter_repeats_after_a_restart(writer, t
 
 def test_same_pass_with_the_same_exit_time_is_still_written_once(writer, tmp_path):
     """Ключ с временем выхода не ослабляет защиту от повторной записи."""
-    restarted = JournalWriter(
-        JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]}
-    )
+    restarted = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=lambda: {"5": [_row()]})
     restarted.load_written_keys()
     monitor = _monitor_with([_cycle(cycle_id=6)])
 
@@ -295,9 +296,7 @@ def test_pass_visible_to_the_monitor_is_never_written_twice(tmp_path):
     """
     from app.services.journal_writer import RECENT_KEYS_MAX
 
-    writer = JournalWriter(
-        JournalStore(tmp_path / "journal"), rows_provider=dict
-    )
+    writer = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=dict)
     monitor = _monitor_with([])
 
     total = RECENT_KEYS_MAX + 50
@@ -348,7 +347,6 @@ def test_retention_is_applied_while_the_server_runs(tmp_path):
     assert not stale.exists()
 
 
-
 def _seed_journal(writer, count):
     """Записать в журнал ``count`` проходов с выходами по минуте."""
     for index in range(count):
@@ -395,9 +393,7 @@ def test_restore_does_not_rewrite_the_passes_it_brought_back(tmp_path):
     total = 3
     _seed_journal(writer, total)
 
-    restarted = JournalWriter(
-        store, rows_provider=lambda: {"5": [_row()]}
-    )
+    restarted = JournalWriter(store, rows_provider=lambda: {"5": [_row()]})
     restarted.load_written_keys()
     monitor = LineMonitorService()
     assert restarted.restore_recent(monitor) == total
@@ -407,9 +403,7 @@ def test_restore_does_not_rewrite_the_passes_it_brought_back(tmp_path):
 
 def test_restore_of_an_empty_journal_is_a_no_op(tmp_path):
     """Пустой журнал — не ошибка: панель просто ждёт новых выгрузок."""
-    writer = JournalWriter(
-        JournalStore(tmp_path / "journal"), rows_provider=dict
-    )
+    writer = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=dict)
     monitor = LineMonitorService()
 
     assert writer.restore_recent(monitor) == 0

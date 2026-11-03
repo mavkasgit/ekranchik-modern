@@ -10,14 +10,15 @@ Application configuration using Pydantic Settings
 EKRANCHIK_OPCUA_ENDPOINT, EKRANCHIK_SIMULATION. Голые имена в приоритете
 над алиасами.
 """
+
 import os
 from pathlib import Path
-from typing import List, Optional
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def default_data_dir() -> Optional[Path]:
+def default_data_dir() -> Path | None:
     """Каталог данных заводской машины или None (dev/Docker-фолбэк)."""
     override = os.environ.get("EKRANCHIK_DATA_DIR")
     if override:
@@ -30,35 +31,30 @@ def default_data_dir() -> Optional[Path]:
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
-    
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore"
-    )
-    
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
+
     # Application
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
-    
+
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    
+
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/ekranchik.db"
-    
+
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
-    
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+
     # --- Simulation Switch ---
-    SIMULATION_ENABLED: bool = False # Set to True to use simulated OPC UA and test Excel file
+    SIMULATION_ENABLED: bool = False  # Set to True to use simulated OPC UA and test Excel file
 
     # --- OPC UA Configuration ---
-    OPCUA_ENABLED: bool = True # Master switch to enable/disable OPC UA service
+    OPCUA_ENABLED: bool = True  # Master switch to enable/disable OPC UA service
     OPCUA_ENDPOINT: str = "opc.tcp://172.17.11.115:4840/"
-    OPCUA_SIM_ENDPOINT: str = "opc.tcp://127.0.0.1:4840/freeopcua/server/" # Simulator endpoint
+    OPCUA_SIM_ENDPOINT: str = "opc.tcp://127.0.0.1:4840/freeopcua/server/"  # Simulator endpoint
     OPCUA_POLL_INTERVAL: int = 5  # Seconds between polls for real server
     OPCUA_SIM_POLL_INTERVAL: int = 1  # Seconds between polls for simulation
 
@@ -70,7 +66,7 @@ class Settings(BaseSettings):
     # именем выбор одной среды подменяет книгу другой (путь контейнера
     # `/app/excel/…` против UNC-пути dev-хоста).
     EXCEL_ACTIVE_FILE_NAME: str = "active_excel.json"
-    
+
     # Static files
     STATIC_DIR: str = "../static"  # Relative to backend folder
     IMAGES_DIR: str = "../static/images"
@@ -81,10 +77,10 @@ class Settings(BaseSettings):
     # Overrides from the server settings UI (EKRANCHIK_* contract).
     # Applied in the validator below ONLY when the bare name was not
     # provided explicitly (env/.env/compose win over aliases).
-    EKRANCHIK_DATA_DIR: Optional[str] = None
-    EKRANCHIK_EXCEL_PATH: Optional[str] = None
-    EKRANCHIK_OPCUA_ENDPOINT: Optional[str] = None
-    EKRANCHIK_SIMULATION: Optional[bool] = None
+    EKRANCHIK_DATA_DIR: str | None = None
+    EKRANCHIK_EXCEL_PATH: str | None = None
+    EKRANCHIK_OPCUA_ENDPOINT: str | None = None
+    EKRANCHIK_SIMULATION: bool | None = None
 
     @model_validator(mode="after")
     def _apply_plant_defaults(self):
@@ -110,14 +106,14 @@ class Settings(BaseSettings):
         url = self.DATABASE_URL
         for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
             if url.startswith(prefix):
-                return Path(url[len(prefix):]).parent
+                return Path(url[len(prefix) :]).parent
         return default_data_dir() or Path("./data")
 
     # Журнал подвесов (issue #34): файл с историей проходов по линии.
     # Каталог выводится из data_dir_path, то есть в контейнере это
     # примонтированный том, а в exe — каталог данных. Отдельно
     # переопределяется только если каталог данных не подходит.
-    JOURNAL_DIR: Optional[str] = None
+    JOURNAL_DIR: str | None = None
     JOURNAL_RETENTION_DAYS: int = 30
     JOURNAL_MAX_FILE_BYTES: int = 32 * 1024 * 1024
     JOURNAL_FLUSH_INTERVAL: int = 30
@@ -128,11 +124,11 @@ class Settings(BaseSettings):
         if self.JOURNAL_DIR:
             return Path(self.JOURNAL_DIR)
         return self.data_dir_path / "journal"
-    
+
     # Photo upload
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
     THUMBNAIL_SIZE: tuple = (200, 200)
-    
+
     @property
     def excel_active_file_name(self) -> str:
         """Имя файла выбора активной книги; в симуляции — вариант с ``_sim``.
@@ -154,12 +150,12 @@ class Settings(BaseSettings):
             return Path(self.EXCEL_TEST_FILE_PATH) if self.EXCEL_TEST_FILE_PATH else None
         else:
             return Path(self.EXCEL_REAL_FILE_PATH) if self.EXCEL_REAL_FILE_PATH else None
-    
+
     @property
     def images_path(self) -> Path:
         """Get images directory path"""
         return Path(self.IMAGES_DIR)
-    
+
     @property
     def STATIC_PATH(self) -> Path | None:
         """Get static directory path"""
@@ -188,26 +184,27 @@ class Settings(BaseSettings):
                 if p.exists():
                     env_file = p
                     break
-        
+
         if env_file.exists():
             try:
-                with open(env_file, 'r', encoding='utf-8') as f:
+                with open(env_file, encoding="utf-8") as f:
                     lines = f.readlines()
-                
+
                 found = False
                 for i, line in enumerate(lines):
-                    if line.strip().startswith('SIMULATION_ENABLED='):
+                    if line.strip().startswith("SIMULATION_ENABLED="):
                         lines[i] = f"SIMULATION_ENABLED={'true' if enabled else 'false'}\n"
                         found = True
                         break
-                
+
                 if not found:
                     lines.append(f"\nSIMULATION_ENABLED={'true' if enabled else 'false'}\n")
-                
-                with open(env_file, 'w', encoding='utf-8') as f:
+
+                with open(env_file, "w", encoding="utf-8") as f:
                     f.writelines(lines)
             except Exception as e:
                 import logging
+
                 logging.getLogger(__name__).error(f"Failed to write SIMULATION_ENABLED to .env: {e}")
 
 

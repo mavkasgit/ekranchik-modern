@@ -7,6 +7,7 @@
 файла выбора у сред своё (``EXCEL_ACTIVE_FILE_NAME``) — тогда чужой путь туда
 и не попадает.
 """
+
 import json
 import logging
 from pathlib import Path
@@ -62,8 +63,9 @@ def test_selection_from_another_machine_falls_back_to_config(machine, foreign, c
     # Статус спрашивают постоянно — предупреждение должно быть одно на выбор.
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="app.services.excel_service"):
-        service.current_path
-        service.current_path
+        result1 = service.current_path
+        result2 = service.current_path
+    assert result1 == result2 == machine
     assert caplog.text == ""
 
 
@@ -123,9 +125,7 @@ def test_no_selection_uses_config(machine):
         ("active_excel.json", True, "active_excel_sim.json"),
     ],
 )
-def test_selection_file_name_comes_from_settings(
-    tmp_path, monkeypatch, file_name, simulation, expected
-):
+def test_selection_file_name_comes_from_settings(tmp_path, monkeypatch, file_name, simulation, expected):
     """Выбор пишется в файл из ``EXCEL_ACTIVE_FILE_NAME``, а общего не касается."""
     from app.core.config import settings
 
@@ -144,8 +144,6 @@ def test_selection_file_name_comes_from_settings(
     ExcelService().set_active_file("/app/excel/Учет КПЗ 2026.xlsm")
 
     written = static_dir / expected
-    assert json.loads(written.read_text(encoding="utf-8")) == {
-        "active_file": "/app/excel/Учет КПЗ 2026.xlsm"
-    }
+    assert json.loads(written.read_text(encoding="utf-8")) == {"active_file": "/app/excel/Учет КПЗ 2026.xlsm"}
     # Единственный файл в каталоге — целевой: общий выбор dev не создан.
     assert [p.name for p in static_dir.iterdir()] == [expected]

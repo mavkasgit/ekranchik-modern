@@ -5,6 +5,7 @@ processing tokens) and is shared by both dashboard paths and photo lookup, so
 these tests pin the parsing contract both consumers rely on: keyword
 normalization, no de-duplication, segment folding, and empty-cell handling.
 """
+
 import pytest
 
 from app.services.profile_name import parse_profile, split_profiles

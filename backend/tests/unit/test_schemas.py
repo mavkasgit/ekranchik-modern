@@ -1,52 +1,48 @@
 """
 Unit tests for Pydantic schemas
 """
-import pytest
+
 from datetime import datetime
+
+import pytest
 from pydantic import ValidationError
 
+from app.schemas.dashboard import FileStatus, HangerData, UnloadEvent
 from app.schemas.profile import (
     ProfileBase,
     ProfileCreate,
-    ProfileUpdate,
     ProfileResponse,
 )
-from app.schemas.dashboard import HangerData, UnloadEvent, FileStatus
 from app.schemas.websocket import WebSocketMessage
 
 
 class TestProfileSchemas:
     """Tests for Profile schemas"""
-    
+
     def test_profile_base_valid(self):
         """Valid ProfileBase creates successfully"""
         profile = ProfileBase(name="ЮП-1625")
         assert profile.name == "ЮП-1625"
         assert profile.quantity_per_hanger is None
-    
+
     def test_profile_base_with_all_fields(self):
         """ProfileBase with all optional fields"""
-        profile = ProfileBase(
-            name="ALS-345",
-            quantity_per_hanger=10,
-            length=6000.5,
-            notes="Test notes"
-        )
+        profile = ProfileBase(name="ALS-345", quantity_per_hanger=10, length=6000.5, notes="Test notes")
         assert profile.name == "ALS-345"
         assert profile.quantity_per_hanger == 10
         assert profile.length == 6000.5
         assert profile.notes == "Test notes"
-    
+
     def test_profile_base_empty_name_fails(self):
         """Empty name should fail validation"""
         with pytest.raises(ValidationError):
             ProfileBase(name="")
-    
+
     def test_profile_base_negative_quantity_fails(self):
         """Negative quantity should fail validation"""
         with pytest.raises(ValidationError):
             ProfileBase(name="Test", quantity_per_hanger=-1)
-    
+
     def test_profile_create(self):
         """ProfileCreate works like ProfileBase"""
         profile = ProfileCreate(name="Test Profile")
@@ -74,20 +70,20 @@ class TestProfileSchemas:
 
 class TestDashboardSchemas:
     """Tests for Dashboard schemas"""
-    
+
     def test_hanger_data_minimal(self):
         """HangerData with minimal required fields"""
         hanger = HangerData(number="123", date="01.01.2024", time="10:00")
         assert hanger.number == "123"
         assert hanger.client == "—"
         assert hanger.profile == "—"
-    
+
     def test_unload_event(self):
         """UnloadEvent creates correctly"""
         event = UnloadEvent(time="10:30:45", hanger=42)
         assert event.time == "10:30:45"
         assert event.hanger == 42
-    
+
     def test_unload_event_negative_hanger_fails(self):
         """Negative hanger number should fail"""
         with pytest.raises(ValidationError):
@@ -98,21 +94,21 @@ class TestDashboardSchemas:
         status = FileStatus(is_open=True, status_text="Open", seconds_since_modified=120.5)
         assert status.is_open is True
         assert status.seconds_since_modified == 120.5
-        
+
         status_none = FileStatus(is_open=False, status_text="Closed")
         assert status_none.seconds_since_modified is None
 
 
 class TestWebSocketSchemas:
     """Tests for WebSocket schemas"""
-    
+
     def test_websocket_message(self):
         """WebSocketMessage creates correctly"""
         msg = WebSocketMessage(type="data_update", payload={"test": "data"})
         assert msg.type == "data_update"
         assert msg.payload == {"test": "data"}
         assert msg.timestamp is not None
-    
+
     def test_websocket_message_invalid_type_fails(self):
         """Invalid message type should fail"""
         with pytest.raises(ValidationError):

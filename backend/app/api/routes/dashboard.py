@@ -1,26 +1,30 @@
 """
 Dashboard API routes.
 """
+
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-logger = logging.getLogger(__name__)
-
 from app.core.config import settings
+from app.schemas.dashboard import (
+    DashboardResponse,
+    ExcelFileSelectRequest,
+    FileStatus,
+    MatchedUnloadEvent,
+)
+from app.schemas.profile import ProfileInfo
+from app.services.catalog_service import catalog_service
 from app.services.excel_service import (
     excel_service,
     normalize_path_input,
     path_exists,
     share_tail,
 )
-from app.services.catalog_service import catalog_service
 from app.services.hanger_row import EMPTY, HangerRow, to_hanger_data
-from app.services.profile_name import split_profiles
 from app.services.matching import (
     CODE_CYCLE_ERROR,
     CODE_NO_ROW,
@@ -30,18 +34,12 @@ from app.services.matching import (
     parse_iso_seconds,
     product_entry_seconds,
 )
+from app.services.profile_name import split_profiles
+
+logger = logging.getLogger(__name__)
 
 # Аномально долгий проход по линии — предупреждение, подбор не меняет.
 DELAY_LIMIT_SECONDS = 6 * 3600
-
-
-from app.schemas.dashboard import (
-    DashboardResponse,
-    FileStatus,
-    MatchedUnloadEvent,
-    ExcelFileSelectRequest,
-)
-from app.schemas.profile import ProfileInfo
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -61,23 +59,25 @@ def _build_profiles_info(profile_text, photos_map: dict) -> list[ProfileInfo]:
     info: list[ProfileInfo] = []
     for parsed in split_profiles(profile_text):
         photo = photos_map.get(parsed.name, {})
-        info.append(ProfileInfo(
-            name=parsed.raw,
-            canonical_name=photo.get('name') or parsed.name,
-            has_photo=bool(photo.get('thumb')),
-            photo_thumb=photo.get('thumb'),
-            photo_full=photo.get('full'),
-            processing=parsed.processing,
-            updated_at=photo.get('updated_at'),
-        ))
+        info.append(
+            ProfileInfo(
+                name=parsed.raw,
+                canonical_name=photo.get("name") or parsed.name,
+                has_photo=bool(photo.get("thumb")),
+                photo_thumb=photo.get("thumb"),
+                photo_full=photo.get("full"),
+                processing=parsed.processing,
+                updated_at=photo.get("updated_at"),
+            )
+        )
     return info
 
 
 @router.get("", response_model=DashboardResponse)
 async def get_dashboard(
-    days: Optional[int] = Query(default=7, ge=1, le=365, description="Days to look back"),
-    limit: Optional[int] = Query(default=100, ge=1, le=1000, description="Max records"),
-    loading_only: bool = Query(default=True, description="Only show rows that are loading (time is empty)")
+    days: int | None = Query(default=7, ge=1, le=365, description="Days to look back"),
+    limit: int | None = Query(default=100, ge=1, le=1000, description="Max records"),
+    loading_only: bool = Query(default=True, description="Only show rows that are loading (time is empty)"),
 ):
     """
     Get dashboard data with production records.
@@ -88,7 +88,7 @@ async def get_dashboard(
         products = excel_service.get_products(limit=limit, days=days, loading_only=loading_only)
 
         profile_names = _collect_profile_names(products)
-        
+
         # Batch lookup photos from catalog
         photos_map = {}
         try:
@@ -96,45 +96,37 @@ async def get_dashboard(
         except Exception as e:
             logger.warning(f"[DASHBOARD API] Could not load photos from catalog: {e}")
             # Continue without photos
-        
+
         # Convert to HangerData format with photos
         hanger_data = [
-            to_hanger_data(product, _build_profiles_info(product.profile, photos_map))
-            for product in products
+            to_hanger_data(product, _build_profiles_info(product.profile, photos_map)) for product in products
         ]
 
         return DashboardResponse(
-            success=True,
-            products=hanger_data,
-            total=len(hanger_data),
-            total_all=len(products),
-            days_filter=days
+            success=True, products=hanger_data, total=len(hanger_data), total_all=len(products), days_filter=days
         )
     except Exception as e:
-        return DashboardResponse(
-            success=False,
-            error=str(e)
-        )
+        return DashboardResponse(success=False, error=str(e))
 
 
-def get_excel_internal_modified_time(file_path: Path) -> Optional[datetime]:
+def get_excel_internal_modified_time(file_path: Path) -> datetime | None:
     """
     Try to read the internal modified time from the Excel file's docProps/core.xml.
     Returns datetime in local timezone if found, otherwise None.
     """
-    import zipfile
     import xml.etree.ElementTree as ET
-    
+    import zipfile
+
     try:
-        with zipfile.ZipFile(file_path, 'r') as z:
-            core_xml = z.read('docProps/core.xml')
+        with zipfile.ZipFile(file_path, "r") as z:
+            core_xml = z.read("docProps/core.xml")
             root = ET.fromstring(core_xml)
             for elem in root.iter():
-                if elem.tag.endswith('}modified'):
+                if elem.tag.endswith("}modified"):
                     val = elem.text
                     if val:
-                        if val.endswith('Z'):
-                            val = val[:-1] + '+00:00'
+                        if val.endswith("Z"):
+                            val = val[:-1] + "+00:00"
                         dt = datetime.fromisoformat(val)
                         return dt.astimezone()
     except Exception as e:
@@ -148,20 +140,15 @@ async def get_file_status():
     Get Excel file status.
     Detects if file is open by checking for Excel temp file (~$filename).
     """
-    from app.core.config import settings
     import time
-    
+
     try:
         path = excel_service.current_path
-        
+
         # Check if path is configured
         if not path:
-            return FileStatus(
-                is_open=False,
-                status_text="Путь не настроен",
-                error="EXCEL_FILE_PATH не указан в .env"
-            )
-        
+            return FileStatus(is_open=False, status_text="Путь не настроен", error="EXCEL_FILE_PATH не указан в .env")
+
         # Check if file exists
         if not path.exists():
             return FileStatus(
@@ -169,18 +156,18 @@ async def get_file_status():
                 file_name=path.name,
                 file_path=str(path),
                 status_text="Файл не найден",
-                error=f"Файл не найден: {path}"
+                error=f"Файл не найден: {path}",
             )
-        
+
         stat = path.stat()
-        
+
         # Check if Excel has the file open by looking for temp file
         # Excel creates ~$filename.xlsm when file is open
         temp_file = path.parent / f"~${path.name}"
         is_open = temp_file.exists()
-        
+
         status_text = "Открыт в Excel" if is_open else "Закрыт"
-        
+
         # Try to get internal modified time (actual save time)
         internal_mtime = get_excel_internal_modified_time(path)
         if internal_mtime:
@@ -189,22 +176,19 @@ async def get_file_status():
         else:
             mtime_timestamp = stat.st_mtime
             mtime_dt = datetime.fromtimestamp(mtime_timestamp).astimezone()
-            
+
         seconds_since_modified = max(0.0, time.time() - mtime_timestamp)
-        
+
         return FileStatus(
             is_open=is_open,
             last_modified=mtime_dt,
             file_name=path.name,
             file_path=str(path),
             status_text=status_text,
-            seconds_since_modified=seconds_since_modified
+            seconds_since_modified=seconds_since_modified,
         )
     except Exception as e:
-        return FileStatus(
-            status_text="Ошибка",
-            error=str(e)
-        )
+        return FileStatus(status_text="Ошибка", error=str(e))
 
 
 def _not_found_detail(target: Path) -> str:
@@ -287,43 +271,41 @@ async def select_excel_file(request: ExcelFileSelectRequest):
 
         if not path_exists(target_file):
             raise HTTPException(status_code=404, detail=_not_found_detail(target_file))
-            
+
         if not target_file.is_file():
             raise HTTPException(status_code=400, detail=f"Указанный путь не является файлом: {target_file}")
-            
-        if target_file.suffix.lower() not in ('.xlsx', '.xls', '.xlsm'):
+
+        if target_file.suffix.lower() not in (".xlsx", ".xls", ".xlsm"):
             raise HTTPException(status_code=400, detail=f"Недопустимое расширение файла: {target_file.suffix}")
 
         excel_service.set_active_file(str(target_file))
         logger.info(f"[DASHBOARD API] Switched active Excel file to: {target_file}")
-        
+
         # Invalidate watcher cache if running
         try:
-            from app.services.websocket_manager import websocket_manager
             from app.schemas.websocket import WebSocketMessage
+            from app.services.websocket_manager import websocket_manager
+
             message = WebSocketMessage(
                 type="data_update",
                 payload={
                     "source": "excel",
                     "file": target_file.name,
                     "file_path": str(target_file),
-                    "message": f"Активный файл Excel изменен на {target_file.name}"
+                    "message": f"Активный файл Excel изменен на {target_file.name}",
                 },
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
             await websocket_manager.broadcast(message)
         except Exception as ws_err:
             logger.warning(f"Could not broadcast websocket update for file switch: {ws_err}")
-            
-        return {
-            "success": True,
-            "active": str(target_file)
-        }
+
+        return {"success": True, "active": str(target_file)}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[DASHBOARD API] Failed to select Excel file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/status/opcua", response_model=FileStatus)
@@ -333,37 +315,24 @@ async def get_opcua_status():
     """
     try:
         from app.services.opcua_service import opcua_service
-        
+
         # Check if OPC UA is connected
         connected = opcua_service.is_connected
-        
+
         # Try to connect if not connected
         if not connected:
             connected = await opcua_service.connect()
-        
+
         return FileStatus(
-            is_open=connected,
-            status_text="Подключено" if connected else "Отключено",
-            last_modified=datetime.now()
+            is_open=connected, status_text="Подключено" if connected else "Отключено", last_modified=datetime.now()
         )
     except Exception as e:
-        return FileStatus(
-            is_open=False,
-            status_text="Ошибка",
-            error=str(e),
-            last_modified=datetime.now()
-        )
-
-
-
-
-
-
+        return FileStatus(is_open=False, status_text="Ошибка", error=str(e), last_modified=datetime.now())
 
 
 @router.get("/opcua-unload-matched", response_model=list[MatchedUnloadEvent])
 async def get_opcua_matched_unload_events(
-    limit: int = Query(default=100, ge=1, le=500, description="Max events to return")
+    limit: int = Query(default=100, ge=1, le=500, description="Max events to return"),
 ):
     """Проходы подвесов по линии, сопоставленные со строками книги учёта.
 
@@ -395,28 +364,30 @@ async def get_opcua_matched_unload_events(
             hanger_num = str(cycle.get("hanger"))
             code, warning = _warning_for(m)
 
-            profiles_info = _build_profiles_info(row.profile if row else '', photos_map)
-            matched.append(MatchedUnloadEvent(
-                cycle_id=cycle.get("cycle_id"),
-                first_seen_at=cycle.get("first_seen_at"),
-                entry_bath=cycle.get("entry_bath"),
-                entry_date=str(row.date) if row else None,
-                entry_time=str(row.time) if row else None,
-                entry_delta_sec=m.entry_delta_sec,
-                exit_date=cycle.get("date") or datetime.now().strftime("%d.%m.%Y"),
-                exit_time=cycle.get("time") or EMPTY,
-                hanger=int(hanger_num or 0),
-                client=str(row.client) if row else EMPTY,
-                profile=str(row.profile) if row else EMPTY,
-                profiles_info=profiles_info,
-                color=str(row.color) if row else EMPTY,
-                lamels_qty=row.lamels_qty if row else 0,
-                kpz_number=str(row.kpz_number) if row else EMPTY,
-                material_type=str(row.material_type) if row else EMPTY,
-                is_defect=bool(row.is_defect) if row else False,
-                time_warning_code=code or None,
-                time_warning=warning,
-            ))
+            profiles_info = _build_profiles_info(row.profile if row else "", photos_map)
+            matched.append(
+                MatchedUnloadEvent(
+                    cycle_id=cycle.get("cycle_id"),
+                    first_seen_at=cycle.get("first_seen_at"),
+                    entry_bath=cycle.get("entry_bath"),
+                    entry_date=str(row.date) if row else None,
+                    entry_time=str(row.time) if row else None,
+                    entry_delta_sec=m.entry_delta_sec,
+                    exit_date=cycle.get("date") or datetime.now().strftime("%d.%m.%Y"),
+                    exit_time=cycle.get("time") or EMPTY,
+                    hanger=int(hanger_num or 0),
+                    client=str(row.client) if row else EMPTY,
+                    profile=str(row.profile) if row else EMPTY,
+                    profiles_info=profiles_info,
+                    color=str(row.color) if row else EMPTY,
+                    lamels_qty=row.lamels_qty if row else 0,
+                    kpz_number=str(row.kpz_number) if row else EMPTY,
+                    material_type=str(row.material_type) if row else EMPTY,
+                    is_defect=bool(row.is_defect) if row else False,
+                    time_warning_code=code or None,
+                    time_warning=warning,
+                )
+            )
 
         # === Прогноз по ваннам для подвесов, которые сейчас на линии ===
         try:
@@ -432,6 +403,7 @@ async def get_opcua_matched_unload_events(
                     event.bath_entry_time = hanger_state.entry_time.strftime("%H:%M:%S")
                 try:
                     from app.services.opcua_service import opcua_service
+
                     dtime = opcua_service.get_value(f"ns=4;s=Bath[{bath_num}].dTime")
                     if dtime and isinstance(dtime, (int, float)):
                         event.bath_processing_time = int(dtime)
@@ -443,7 +415,7 @@ async def get_opcua_matched_unload_events(
         return matched
     except Exception as e:
         logger.error(f"[OPC UA Unload] Error matching events: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 def _warning_for(m: CycleMatch):
@@ -489,10 +461,11 @@ class SettingsUpdateRequest(BaseModel):
 async def get_settings():
     """Get current simulation settings."""
     from app.services.opcua_service import opcua_service
+
     return SettingsResponse(
         simulation_enabled=settings.SIMULATION_ENABLED,
         excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
-        opcua_endpoint=opcua_service._url
+        opcua_endpoint=opcua_service._url,
     )
 
 
@@ -500,45 +473,47 @@ async def get_settings():
 async def update_settings(request: SettingsUpdateRequest):
     """Dynamically toggle simulation settings."""
     from app.services.opcua_service import opcua_service
+
     try:
         new_mode = request.simulation_enabled
         if new_mode != settings.SIMULATION_ENABLED:
             # 1. Update settings in-memory
             settings.SIMULATION_ENABLED = new_mode
-            
+
             # 2. Update settings in .env
             settings.update_simulation_mode_in_env(new_mode)
-            
+
             # 3. Update OPC UA service
             await opcua_service.update_simulation_mode(new_mode)
-            
+
             # 4. Update Excel service
             excel_service.update_simulation_mode()
-            
+
             logger.info(f"[DASHBOARD API] Dynamically toggled simulation_enabled to: {new_mode}")
-            
+
             # 5. Broadcast dynamic WS settings update
             try:
-                from app.services.websocket_manager import websocket_manager
                 from app.schemas.websocket import WebSocketMessage
+                from app.services.websocket_manager import websocket_manager
+
                 message = WebSocketMessage(
                     type="data_update",
                     payload={
                         "source": "settings",
                         "simulation_enabled": new_mode,
-                        "message": f"Режим работы переключен на {'ТЕСТОВЫЙ' if new_mode else 'РАБОЧИЙ'}"
+                        "message": f"Режим работы переключен на {'ТЕСТОВЫЙ' if new_mode else 'РАБОЧИЙ'}",
                     },
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
                 )
                 await websocket_manager.broadcast(message)
             except Exception as ws_err:
                 logger.warning(f"Could not broadcast websocket update for mode switch: {ws_err}")
-                
+
         return SettingsResponse(
             simulation_enabled=settings.SIMULATION_ENABLED,
             excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
-            opcua_endpoint=opcua_service._url
+            opcua_endpoint=opcua_service._url,
         )
     except Exception as e:
         logger.error(f"[DASHBOARD API] Failed to update settings: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

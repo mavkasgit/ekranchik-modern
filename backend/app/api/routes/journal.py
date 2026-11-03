@@ -6,8 +6,9 @@
 файлов — на заводской машине это единственное место, где видно, что
 запись вообще идёт.
 """
+
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, ValidationError
@@ -31,41 +32,41 @@ class JournalPass(BaseModel):
     без пересчётов на своей стороне.
     """
 
-    recorded_at: Optional[str] = None
-    cycle_id: Optional[int] = None
-    hanger: Optional[int] = None
+    recorded_at: str | None = None
+    cycle_id: int | None = None
+    hanger: int | None = None
     code: str = ""
-    source: Optional[str] = None
-    entry_bath: Optional[int] = None
-    first_seen_at: Optional[str] = None
-    exit_at: Optional[str] = None
+    source: str | None = None
+    entry_bath: int | None = None
+    first_seen_at: str | None = None
+    exit_at: str | None = None
     # Моменты прохода рядом: по линии и по книге учёта. Интерфейс
     # показывает их вместе, ничего не дособирая у себя. Выхода по книге
     # нет и не будет: книга ведёт только загрузку в линию.
-    line_entry_at: Optional[str] = None
-    line_exit_at: Optional[str] = None
-    book_entry_at: Optional[str] = None
-    total_time_sec: Optional[float] = None
-    type: Optional[str] = None
-    reason: Optional[str] = None
-    path: List[Dict[str, Any]] = []
-    baths_visited: List[str] = []
-    row_date: Optional[str] = None
-    row_time: Optional[str] = None
-    row_number: Optional[str] = None
+    line_entry_at: str | None = None
+    line_exit_at: str | None = None
+    book_entry_at: str | None = None
+    total_time_sec: float | None = None
+    type: str | None = None
+    reason: str | None = None
+    path: list[dict[str, Any]] = []
+    baths_visited: list[str] = []
+    row_date: str | None = None
+    row_time: str | None = None
+    row_number: str | None = None
     # Номер строки ЛИСТА в книге учёта: оператор встаёт на неё прямо в
     # книге. Не путать с row_number — это «№ по порядку» из самой строки.
-    sheet_row: Optional[int] = None
-    profile: Optional[str] = None
-    color: Optional[str] = None
-    kpz_number: Optional[str] = None
-    lamels_qty: Optional[Any] = None
-    client: Optional[str] = None
-    material_type: Optional[str] = None
-    is_defect: Optional[bool] = None
-    entry_delta_sec: Optional[float] = None
+    sheet_row: int | None = None
+    profile: str | None = None
+    color: str | None = None
+    kpz_number: str | None = None
+    lamels_qty: Any | None = None
+    client: str | None = None
+    material_type: str | None = None
+    is_defect: bool | None = None
+    entry_delta_sec: float | None = None
     rows_after_exit: int = 0
-    note: Optional[str] = None
+    note: str | None = None
 
 
 class JournalFileInfo(BaseModel):
@@ -79,12 +80,12 @@ class JournalFileInfo(BaseModel):
 class JournalResponse(BaseModel):
     """Страница проходов вместе с тем, где лежит журнал."""
 
-    items: List[JournalPass] = []
+    items: list[JournalPass] = []
     total: int = 0
     limit: int = DEFAULT_PAGE_SIZE
     offset: int = 0
     directory: str = ""
-    files: List[JournalFileInfo] = []
+    files: list[JournalFileInfo] = []
     retention_days: int = 0
 
 
@@ -145,10 +146,7 @@ def _passes(records: list[dict]) -> list[JournalPass]:
     passes: list[JournalPass] = []
     for record in records:
         if not record.get("exit_at"):
-            logger.warning(
-                "[Journal] Skipped record without exit_at — это не проход: "
-                f"{str(record)[:120]}"
-            )
+            logger.warning(f"[Journal] Skipped record without exit_at — это не проход: {str(record)[:120]}")
             continue
         try:
             passes.append(JournalPass(**record))

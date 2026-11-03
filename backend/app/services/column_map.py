@@ -9,8 +9,8 @@ on duplicate headers.
 
 Keep this module in sync with vba/ColRef.bas — the two must agree on rules.
 """
-from dataclasses import dataclass, field
-from typing import Dict, Set, Tuple
+
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -21,17 +21,17 @@ class ColumnField:
 
     field: str
     canonical: str
-    aliases: Tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
     legacy_position: int = -1
 
-    def header_names(self) -> Tuple[str, ...]:
+    def header_names(self) -> tuple[str, ...]:
         return (self.canonical, *self.aliases)
 
 
 # Single source of truth for the 10 fields the backend reads. FIELDS and
 # LEGACY_POSITIONS below are derived from this list, so a field added or
 # removed here cannot silently drift from the others.
-COLUMN_FIELDS: Tuple[ColumnField, ...] = (
+COLUMN_FIELDS: tuple[ColumnField, ...] = (
     ColumnField("date", "Дата", legacy_position=3),
     ColumnField("number", "№ по порядку", ("Номер", "№"), 4),
     ColumnField("time", "Время", legacy_position=5),
@@ -44,10 +44,8 @@ COLUMN_FIELDS: Tuple[ColumnField, ...] = (
     ColumnField("lamels_qty", "Ламели, шт", ("Ламели шт", "Кол-во ламелей", "Ламели"), 19),
 )
 
-FIELDS: Tuple[str, ...] = tuple(f.field for f in COLUMN_FIELDS)
-LEGACY_POSITIONS: Dict[str, int] = {
-    f.field: f.legacy_position for f in COLUMN_FIELDS
-}
+FIELDS: tuple[str, ...] = tuple(f.field for f in COLUMN_FIELDS)
+LEGACY_POSITIONS: dict[str, int] = {f.field: f.legacy_position for f in COLUMN_FIELDS}
 
 
 @dataclass(frozen=True)
@@ -56,11 +54,11 @@ class ColumnResolution:
     column index (name match preferred, else its legacy position), plus the
     set of fields that were actually found by header name."""
 
-    positions: Dict[str, int]
-    found_by_name: Set[str]
+    positions: dict[str, int]
+    found_by_name: set[str]
 
     @property
-    def missing(self) -> Set[str]:
+    def missing(self) -> set[str]:
         """Fields that had no matching header and fell back to legacy positions."""
         return set(FIELDS) - self.found_by_name
 
@@ -101,8 +99,8 @@ def resolve_columns(header_row) -> ColumnResolution:
     the first header that matches (by find_column) wins. A field with no
     matching header falls back to its legacy position.
     """
-    positions: Dict[str, int] = {}
-    found_by_name: Set[str] = set()
+    positions: dict[str, int] = {}
+    found_by_name: set[str] = set()
 
     for cf in COLUMN_FIELDS:
         idx = -1

@@ -1,5 +1,6 @@
 """Заводская машина (ADR 0002, issue #5): разрешение путей данных, EKRANCHIK_*,
 каталоги и миграции при старте."""
+
 import sqlite3
 
 import pytest
@@ -11,10 +12,18 @@ from app.core.config import Settings
 @pytest.fixture()
 def clean_env(monkeypatch):
     for name in (
-        "DATABASE_URL", "IMAGES_DIR", "STATIC_DIR", "FRONTEND_DIST_DIR",
-        "SIMULATION_ENABLED", "OPCUA_ENDPOINT", "EXCEL_REAL_FILE_PATH",
-        "LOCALAPPDATA", "EKRANCHIK_DATA_DIR", "EKRANCHIK_EXCEL_PATH",
-        "EKRANCHIK_OPCUA_ENDPOINT", "EKRANCHIK_SIMULATION",
+        "DATABASE_URL",
+        "IMAGES_DIR",
+        "STATIC_DIR",
+        "FRONTEND_DIST_DIR",
+        "SIMULATION_ENABLED",
+        "OPCUA_ENDPOINT",
+        "EXCEL_REAL_FILE_PATH",
+        "LOCALAPPDATA",
+        "EKRANCHIK_DATA_DIR",
+        "EKRANCHIK_EXCEL_PATH",
+        "EKRANCHIK_OPCUA_ENDPOINT",
+        "EKRANCHIK_SIMULATION",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -22,10 +31,8 @@ def clean_env(monkeypatch):
 def test_localappdata_is_default_data_home(clean_env, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\op\AppData\Local")
     s = Settings(_env_file=None)
-    assert s.DATABASE_URL == (
-        "sqlite+aiosqlite:///C:/Users/op/AppData/Local/Ekranchik/data/ekranchik.db"
-    )
-    assert s.IMAGES_DIR == r"C:\Users\op\AppData\Local\Ekranchik\data\images".replace("\\", "/")
+    assert s.DATABASE_URL == ("sqlite+aiosqlite:///C:/Users/op/AppData/Local/Ekranchik/data/ekranchik.db")
+    assert r"C:\Users\op\AppData\Local\Ekranchik\data\images".replace("\\", "/") == s.IMAGES_DIR
     assert s.data_dir_path.name == "data"
 
 
@@ -82,11 +89,13 @@ def test_ensure_data_dirs_creates_tree(clean_env, tmp_path, monkeypatch):
 
     db_file = tmp_path / "sub" / "ekranchik.db"
     monkeypatch.setattr(
-        config_module.settings, "DATABASE_URL",
+        config_module.settings,
+        "DATABASE_URL",
         "sqlite+aiosqlite:///" + db_file.as_posix(),
     )
     monkeypatch.setattr(
-        config_module.settings, "IMAGES_DIR",
+        config_module.settings,
+        "IMAGES_DIR",
         (tmp_path / "sub" / "images").as_posix(),
     )
     startup.ensure_data_dirs()
@@ -112,11 +121,13 @@ async def test_startup_migrations_apply_alembic_head(clean_env, tmp_path, monkey
 
     db_file = tmp_path / "pkg.db"
     monkeypatch.setattr(
-        config_module.settings, "DATABASE_URL",
+        config_module.settings,
+        "DATABASE_URL",
         "sqlite+aiosqlite:///" + db_file.as_posix(),
     )
     monkeypatch.setattr(
-        config_module.settings, "IMAGES_DIR",
+        config_module.settings,
+        "IMAGES_DIR",
         (tmp_path / "images").as_posix(),
     )
     startup.ensure_data_dirs()
@@ -137,11 +148,13 @@ async def test_startup_migrations_fallback_to_init_db(clean_env, tmp_path, monke
 
     db_file = tmp_path / "fallback.db"
     monkeypatch.setattr(
-        config_module.settings, "DATABASE_URL",
+        config_module.settings,
+        "DATABASE_URL",
         "sqlite+aiosqlite:///" + db_file.as_posix(),
     )
     monkeypatch.setattr(
-        config_module.settings, "IMAGES_DIR",
+        config_module.settings,
+        "IMAGES_DIR",
         (tmp_path / "images").as_posix(),
     )
     monkeypatch.setattr(startup, "_alembic_upgrade_head", lambda: (_ for _ in ()).throw(RuntimeError("no alembic")))

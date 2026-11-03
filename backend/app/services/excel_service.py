@@ -1,13 +1,14 @@
 """
 Excel Service - handles Excel file parsing, caching, and data extraction.
 """
-import time
+
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any
 
 import pandas as pd
 
@@ -57,7 +58,7 @@ def path_exists(path: Path) -> bool:
         return False
 
 
-def share_tail(path_text: str) -> Optional[List[str]]:
+def share_tail(path_text: str) -> list[str] | None:
     """Части пути после шары или диска: ``\\\\host\\share\\a\\b.xlsm`` → ``['a', 'b.xlsm']``.
 
     Оператор набирает сетевую книгу так, как её видит его машина
@@ -77,13 +78,13 @@ def share_tail(path_text: str) -> Optional[List[str]]:
 class ExcelService:
     """
     Service for reading and parsing Excel files with production data.
-    
+
     Features:
     - DataFrame caching with file modification detection
     - Profile parsing with processing extraction
     - Product filtering and pagination
     """
-    
+
     @property
     def _persistence_path(self) -> Path:
         """Путь к файлу с последним введённым путём к книге.
@@ -99,12 +100,12 @@ class ExcelService:
         # чтобы пережил обновление (раньше падал в CWD рядом с кодом).
         return settings.data_dir_path / filename
 
-    def _load_persisted_active_file(self) -> Optional[str]:
+    def _load_persisted_active_file(self) -> str | None:
         """Load the active file name from persistent JSON file"""
         try:
             path = self._persistence_path
             if path.exists():
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     data = json.load(f)
                     val = data.get("active_file")
                     if val:
@@ -124,15 +125,15 @@ class ExcelService:
             logger.error(f"Failed to save active file to persistence: {e}")
 
     def __init__(self):
-        self._cache: Optional[pd.DataFrame] = None
-        self._cache_mtime: Optional[float] = None
-        self._cache_path: Optional[Path] = None
-        self._active_file_name: Optional[str] = self._load_persisted_active_file()
+        self._cache: pd.DataFrame | None = None
+        self._cache_mtime: float | None = None
+        self._cache_path: Path | None = None
+        self._active_file_name: str | None = self._load_persisted_active_file()
         # О каком выборе уже сказали в лог: свойство спрашивают на каждый
         # запрос статуса, повторять одно предупреждение незачем.
-        self._warned_about: Optional[str] = None
+        self._warned_about: str | None = None
 
-    def _resolved_active(self) -> Optional[Path]:
+    def _resolved_active(self) -> Path | None:
         """Выбор из интерфейса → путь: имя достраивается до каталога книги.
 
         Имя без пути — старый формат записи (``Учет КПЗ 2026.xlsm``), его
@@ -152,7 +153,7 @@ class ExcelService:
         return settings.excel_path.parent / path
 
     @property
-    def current_path(self) -> Optional[Path]:
+    def current_path(self) -> Path | None:
         """Путь к активной книге учёта.
 
         Выбор из интерфейса перекрывает конфигурацию, но только если файл
@@ -173,14 +174,13 @@ class ExcelService:
             if self._warned_about != self._active_file_name:
                 self._warned_about = self._active_file_name
                 logger.warning(
-                    f"[Excel] Выбор {chosen} на этой машине не существует — "
-                    f"книга берётся из конфигурации: {configured}"
+                    f"[Excel] Выбор {chosen} на этой машине не существует — книга берётся из конфигурации: {configured}"
                 )
             return configured
         return chosen
 
     @property
-    def directory(self) -> Optional[Path]:
+    def directory(self) -> Path | None:
         """Каталог книги: у сервера — смонтированная сетевая папка.
 
         Один владелец правила для списка файлов, выбора по пути и подсказки в
@@ -196,10 +196,11 @@ class ExcelService:
         self._active_file_name = file_path
         self._save_persisted_active_file(file_path)
         self.invalidate_cache()
-        
+
         # Restart watcher for new directory if it is running
         try:
             from app.services.excel_watcher import excel_watcher
+
             if excel_watcher.is_running:
                 excel_watcher.stop()
             active_p = self.current_path
@@ -207,9 +208,9 @@ class ExcelService:
                 excel_watcher.start(watch_path=active_p)
         except Exception as e:
             logger.warning(f"Could not restart ExcelWatcher for new path: {e}")
-    
+
     @property
-    def cache_mtime(self) -> Optional[float]:
+    def cache_mtime(self) -> float | None:
         """Get current cache modification time (for cache invalidation tracking)."""
         return self._cache_mtime
 
@@ -218,7 +219,7 @@ class ExcelService:
         self._cache = None
         self._cache_mtime = None
         self._cache_path = None
-    
+
     def _is_cache_valid(self, file_path: Path) -> bool:
         """Check if cached data is still valid."""
         if self._cache is None:
@@ -230,21 +231,18 @@ class ExcelService:
             return self._cache_mtime == current_mtime
         except OSError:
             return False
-    
+
     def get_dataframe(
-        self,
-        file_path: Optional[Path] = None,
-        sheet_name: str = "Подвесы",
-        full_dataset: bool = False
+        self, file_path: Path | None = None, sheet_name: str = "Подвесы", full_dataset: bool = False
     ) -> pd.DataFrame:
         """
         Get DataFrame from Excel file with caching.
-        
+
         Args:
             file_path: Path to Excel file (uses config default if None)
             sheet_name: Name of the sheet to read (default: "Подвесы")
             full_dataset: If True, return all data; if False, filter recent
-        
+
         Returns:
             DataFrame with production data
         """
@@ -272,13 +270,13 @@ class ExcelService:
                 logger.info(f"[EXCEL READ] {len(df)} rows in {read_time:.2f}s from {path.name} (calamine)")
 
                 # Remove completely empty rows
-                df = df.dropna(how='all')
-                
+                df = df.dropna(how="all")
+
                 # Filter: keep rows where date OR number is present
-                df = df[(pd.notna(df['date'])) | (pd.notna(df['number']))]
-                
+                df = df[(pd.notna(df["date"])) | (pd.notna(df["number"]))]
+
                 logger.info(f"[EXCEL FILTERED] {len(df)} valid rows after filtering")
-                
+
                 self._cache = df
                 self._cache_mtime = path.stat().st_mtime
                 self._cache_path = path
@@ -287,19 +285,19 @@ class ExcelService:
                 if self._cache is not None:
                     return self._cache.copy()
                 return pd.DataFrame()
-        
+
         if full_dataset:
             return df
-        
+
         # Filter to recent data (last 7 days by default)
-        if 'date' in df.columns:
+        if "date" in df.columns:
             try:
-                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
                 cutoff = datetime.now() - timedelta(days=7)
-                df = df[df['date'] >= cutoff]
+                df = df[df["date"] >= cutoff]
             except Exception:
                 pass
-        
+
         return df
 
     def _read_dataframe_by_header(self, path: Path, sheet_name: str) -> pd.DataFrame:
@@ -328,7 +326,7 @@ class ExcelService:
             header=None,
             skiprows=[0, 1],
             nrows=1,
-            engine='calamine',
+            engine="calamine",
         )
         if header_df.empty:
             logger.warning(f"[EXCEL COLUMNS] Empty header row in {path.name}")
@@ -339,8 +337,7 @@ class ExcelService:
 
         if not resolution.found_by_name:
             logger.warning(
-                f"[EXCEL COLUMNS] No columns matched by header name in {path.name}; "
-                "using legacy positional mapping"
+                f"[EXCEL COLUMNS] No columns matched by header name in {path.name}; using legacy positional mapping"
             )
         elif resolution.missing:
             logger.warning(
@@ -361,7 +358,7 @@ class ExcelService:
             header=None,
             skiprows=list(range(DATA_ROWS_SKIPPED)),
             usecols=usecols,
-            engine='calamine',
+            engine="calamine",
         )
         df.columns = names
         return df
@@ -370,60 +367,68 @@ class ExcelService:
         self,
         limit: int = 100,
         days: int = 7,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         from_end: bool = True,
-        loading_only: bool = False
-    ) -> List[HangerRow]:
+        loading_only: bool = False,
+    ) -> list[HangerRow]:
         """
         Get products from Excel with optional filtering.
-        
+
         Args:
             limit: Maximum number of records to return (applied AFTER filtering)
             days: Number of days to look back (only used when from_end=False)
             filters: Optional filters (client, profile, etc.)
             from_end: If True, read from end; if False, apply date filter
             loading_only: If True, only return loading rows (date+material filled, time empty)
-        
+
         Returns:
             List of product dictionaries (limited to 'limit' records)
         """
         df = self.get_dataframe(full_dataset=True)
         if df.empty:
             return []
-        
+
         # Apply date filter only when not reading from end
-        if not from_end and 'date' in df.columns:
+        if not from_end and "date" in df.columns:
             try:
-                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
                 cutoff = datetime.now() - timedelta(days=days)
-                df = df[df['date'] >= cutoff]
+                df = df[df["date"] >= cutoff]
             except Exception:
                 pass
-        
+
         # Apply additional filters
         if filters:
             for key, value in filters.items():
                 if key in df.columns and value:
                     df = df[df[key].astype(str).str.contains(str(value), case=False, na=False)]
-        
+
         # Filter out completely empty rows for non-loading modes
         # This ensures sidebar gets a mix of loading and completed rows
         if not loading_only:
+
             def _is_empty_val(v):
-                return pd.isna(v) or str(v).strip() in ('', EMPTY, 'nan', 'NaT')
-            
-            mask = ~(df.apply(lambda row: _is_empty_val(row.get('profile')) 
-                              and _is_empty_val(row.get('material_type'))
-                              and _is_empty_val(row.get('time')), axis=1))
+                return pd.isna(v) or str(v).strip() in ("", EMPTY, "nan", "NaT")
+
+            mask = ~(
+                df.apply(
+                    lambda row: (
+                        _is_empty_val(row.get("profile"))
+                        and _is_empty_val(row.get("material_type"))
+                        and _is_empty_val(row.get("time"))
+                    ),
+                    axis=1,
+                )
+            )
             df = df[mask]
             logger.info(f"[FILTER] After removing empty rows: {len(df)} rows")
-        
+
         # Process records with filtering
         records = self._process_dataframe(df, loading_only=loading_only)
-        
+
         # Apply limit and sorting based on user preference
         if loading_only:
-            # Special logic for Loading: 
+            # Special logic for Loading:
             # 1. Take OLDEST X rows (from the top of the spreadsheet)
             # 2. Show them in REVERSE order (newest of those at top)
             # This allows rows to disappear from the TOP when the limit is reduced
@@ -436,58 +441,60 @@ class ExcelService:
             if len(records) > limit:
                 records = records[-limit:]
             return records[::-1]
-    
-    def _process_dataframe(self, df: pd.DataFrame, loading_only: bool = False) -> List[HangerRow]:
+
+    def _process_dataframe(self, df: pd.DataFrame, loading_only: bool = False) -> list[HangerRow]:
         """
         Process DataFrame and return rows in the declared HangerRow form.
         Handles date/time formatting and lamels parsing.
-        
+
         Args:
             loading_only: If True, only include loading rows (date+material filled, time empty)
         """
-        products: List[HangerRow] = []
-        
+        products: list[HangerRow] = []
+
         # Filter by date - last 2 weeks for loading_only mode
-        if loading_only and 'date' in df.columns:
+        if loading_only and "date" in df.columns:
             try:
                 logger.info(f"[FILTER] Before date filter: {len(df)} rows")
                 # Convert date column to datetime
-                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
                 # Filter last 2 weeks
                 cutoff = datetime.now() - timedelta(days=14)
-                df = df[df['date'] >= cutoff]
-                logger.info(f"[FILTER] After date filter (last 2 weeks, cutoff={cutoff.strftime('%Y-%m-%d')}): {len(df)} rows")
+                df = df[df["date"] >= cutoff]
+                logger.info(
+                    f"[FILTER] After date filter (last 2 weeks, cutoff={cutoff.strftime('%Y-%m-%d')}): {len(df)} rows"
+                )
             except Exception as e:
                 logger.warning(f"[FILTER] Could not filter by date: {e}")
-        
+
         for _, row in df.iterrows():
-            date_val = row.get('date')
-            material_type = row.get('material_type')
-            time_val = row.get('time')
-            number_val = row.get('number')
-            profile_val = row.get('profile')
-            
+            date_val = row.get("date")
+            material_type = row.get("material_type")
+            time_val = row.get("time")
+            number_val = row.get("number")
+            profile_val = row.get("profile")
+
             # Skip rows whose key fields are all empty
             def _is_empty(v):
-                return pd.isna(v) or str(v).strip() in ('', EMPTY, 'nan', 'NaT')
-            
+                return pd.isna(v) or str(v).strip() in ("", EMPTY, "nan", "NaT")
+
             if _is_empty(number_val) and _is_empty(profile_val) and _is_empty(material_type):
                 continue
-            
+
             # For loading_only mode: strict filtering
             if loading_only:
                 # Date must be filled
                 if pd.isna(date_val) or not date_val:
                     continue
                 # Material type must be filled
-                if pd.isna(material_type) or not material_type or str(material_type).strip() in ('', EMPTY):
+                if pd.isna(material_type) or not material_type or str(material_type).strip() in ("", EMPTY):
                     continue
                 # Time must be EMPTY (this indicates a loading row, not unloading)
-                if pd.notna(time_val) and str(time_val).strip() not in ('', EMPTY, 'nan', 'NaT'):
+                if pd.notna(time_val) and str(time_val).strip() not in ("", EMPTY, "nan", "NaT"):
                     continue
-            
+
             # Handle lamels (can be "30+30" or number)
-            lamels = row.get('lamels_qty')
+            lamels = row.get("lamels_qty")
             if pd.notna(lamels):
                 try:
                     lamels_display = int(float(lamels))
@@ -495,46 +502,43 @@ class ExcelService:
                     lamels_display = str(lamels)
             else:
                 lamels_display = 0
-            
+
             # Format time (remove seconds)
             time_str = EMPTY
-            time_val = row.get('time')
+            time_val = row.get("time")
             if pd.notna(time_val):
-                if hasattr(time_val, 'strftime'):
-                    time_str = time_val.strftime('%H:%M')
+                if hasattr(time_val, "strftime"):
+                    time_str = time_val.strftime("%H:%M")
                 else:
                     time_val_str = str(time_val)
-                    if ':' in time_val_str:
-                        parts = time_val_str.split(':')
+                    if ":" in time_val_str:
+                        parts = time_val_str.split(":")
                         time_str = f"{parts[0]}:{parts[1]}"
                     else:
                         time_str = time_val_str
-            
+
             # Format date
             date_str = EMPTY
-            date_val = row.get('date')
+            date_val = row.get("date")
             if pd.notna(date_val):
                 try:
-                    if hasattr(date_val, 'strftime'):
-                        date_str = date_val.strftime('%d.%m.%y')
-                    else:
-                        date_str = str(date_val)
+                    date_str = date_val.strftime("%d.%m.%y") if hasattr(date_val, "strftime") else str(date_val)
                 except Exception:
                     date_str = str(date_val)
-            
-            profile_name = row.get('profile', EMPTY)
+
+            profile_name = row.get("profile", EMPTY)
             if pd.isna(profile_name) or not profile_name:
                 profile_name = EMPTY
-            
+
             # Check for defect (брак)
-            defect_val = row.get('defect')
+            defect_val = row.get("defect")
             is_defect = False
             if pd.notna(defect_val):
                 defect_str = str(defect_val).lower().strip()
-                is_defect = 'брак' in defect_str
-            
+                is_defect = "брак" in defect_str
+
             # Format number (convert float to int to avoid 10.0 format)
-            number_val = row.get('number')
+            number_val = row.get("number")
             if pd.notna(number_val):
                 try:
                     number_display = int(float(number_val))
@@ -542,37 +546,40 @@ class ExcelService:
                     number_display = str(number_val)
             else:
                 number_display = EMPTY
-            
-            products.append(HangerRow(
-                number=number_display,
-                # Лист читается с пропуском трёх строк (две инструкции и
-                # заголовки), поэтому первая строка данных имеет индекс 0,
-                # а в листе, где нумерация с единицы, идёт под номером 4.
-                # Проверено сверкой с листом: индекс + 4 попадает в ту же
-                # строку, на единицу меньше — уже соседняя.
-                sheet_row=int(row.name) + DATA_ROWS_SKIPPED + 1,
-                date=date_str,
-                time=time_str,
-                client=row.get('client') if pd.notna(row.get('client')) else EMPTY,
-                profile=str(profile_name).strip(),
-                color=row.get('color') if pd.notna(row.get('color')) else EMPTY,
-                lamels_qty=lamels_display,
-                kpz_number=row.get('kpz_number') if pd.notna(row.get('kpz_number')) else EMPTY,
-                material_type=row.get('material_type') if pd.notna(row.get('material_type')) else EMPTY,
-                is_defect=is_defect,
-            ))
-        
+
+            products.append(
+                HangerRow(
+                    number=number_display,
+                    # Лист читается с пропуском трёх строк (две инструкции и
+                    # заголовки), поэтому первая строка данных имеет индекс 0,
+                    # а в листе, где нумерация с единицы, идёт под номером 4.
+                    # Проверено сверкой с листом: индекс + 4 попадает в ту же
+                    # строку, на единицу меньше — уже соседняя.
+                    sheet_row=int(row.name) + DATA_ROWS_SKIPPED + 1,
+                    date=date_str,
+                    time=time_str,
+                    client=row.get("client") if pd.notna(row.get("client")) else EMPTY,
+                    profile=str(profile_name).strip(),
+                    color=row.get("color") if pd.notna(row.get("color")) else EMPTY,
+                    lamels_qty=lamels_display,
+                    kpz_number=row.get("kpz_number") if pd.notna(row.get("kpz_number")) else EMPTY,
+                    material_type=row.get("material_type") if pd.notna(row.get("material_type")) else EMPTY,
+                    is_defect=is_defect,
+                )
+            )
+
         logger.info(f"[FILTER] Final products after all filters: {len(products)}")
         return products
-    
+
     def update_simulation_mode(self) -> None:
         """Обновляет активный файл и сбрасывает кэш при смене режима симуляции."""
         self._active_file_name = self._load_persisted_active_file()
         self.invalidate_cache()
-        
+
         # Restart watcher for new directory if it is running
         try:
             from app.services.excel_watcher import excel_watcher
+
             if excel_watcher.is_running:
                 excel_watcher.stop()
             active_p = self.current_path

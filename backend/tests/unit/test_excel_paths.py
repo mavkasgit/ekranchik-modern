@@ -4,6 +4,7 @@
 как каталог смонтированной шары. Функция ``share_tail`` отделяет хвост,
 который в этом каталоге сохраняется.
 """
+
 import pytest
 
 from app.services.excel_service import normalize_path_input, share_tail
@@ -17,8 +18,8 @@ from app.services.excel_service import normalize_path_input, share_tail
         ("'/app/excel/Учет КПЗ 2026.xlsm'", "/app/excel/Учет КПЗ 2026.xlsm"),
         ('"/app/excel/Учет КПЗ 2026.xlsm" ', "/app/excel/Учет КПЗ 2026.xlsm"),
         ('  " /app/excel/Учет КПЗ 2026.xlsm "  ', "/app/excel/Учет КПЗ 2026.xlsm"),
-        ('«/app/excel/Учет КПЗ 2026.xlsm»', "/app/excel/Учет КПЗ 2026.xlsm"),
-        ('“/app/excel/Учет КПЗ 2026.xlsm”', "/app/excel/Учет КПЗ 2026.xlsm"),
+        ("«/app/excel/Учет КПЗ 2026.xlsm»", "/app/excel/Учет КПЗ 2026.xlsm"),
+        ("“/app/excel/Учет КПЗ 2026.xlsm”", "/app/excel/Учет КПЗ 2026.xlsm"),
         ('""/app/excel/Учет КПЗ 2026.xlsm""', "/app/excel/Учет КПЗ 2026.xlsm"),
         ("\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm", "\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm"),
         ('"\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm"', "\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm"),

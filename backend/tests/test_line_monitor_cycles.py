@@ -10,6 +10,7 @@
 - дедупликация по cycle_id: два выхода одного номера в разных проходах —
   два события, повторная обработка одного прохода отсекается.
 """
+
 import asyncio
 from datetime import datetime, timedelta
 
@@ -28,6 +29,7 @@ def monitor(monkeypatch):
 
 def _baths(mapping):
     """Подменить значения OPC UA: {номер ванны: (InUse, Pallete)}."""
+
     def get_value(node: str):
         for bath, (in_use, pallete) in mapping.items():
             if node == f"ns=4;s=Bath[{bath}].InUse":
@@ -35,6 +37,7 @@ def _baths(mapping):
             if node == f"ns=4;s=Bath[{bath}].Pallete":
                 return pallete
         return None
+
     return get_value
 
 
@@ -253,22 +256,20 @@ def test_departure_bound_comes_from_longest_bath(monitor, monkeypatch):
     """Граница невидимости считается по самой долгой ванне, а не константой."""
     values = {
         "ns=4;s=Bath[1].dTime": 60,
-        "ns=4;s=Bath[2].dTime": 2200,   # самая долгая ванна
+        "ns=4;s=Bath[2].dTime": 2200,  # самая долгая ванна
         "ns=4;s=Bath[3].dTime": 90,
-        "ns=4;s=Bath[4].dTime": -448,   # счётчик ванны перешёл сутки
+        "ns=4;s=Bath[4].dTime": -448,  # счётчик ванны перешёл сутки
     }
     monkeypatch.setattr(lm.opcua_service, "get_value", lambda node: values.get(node))
     monitor._refresh_departure_bound()
-    assert monitor._departure_bound == timedelta(
-        seconds=2200 + lm.DEPARTURE_MARGIN_SECONDS
-    )
+    assert monitor._departure_bound == timedelta(seconds=2200 + lm.DEPARTURE_MARGIN_SECONDS)
 
     # Молчащий PLC не должен обнулять границу.
     monkeypatch.setattr(lm.opcua_service, "get_value", lambda node: 0)
     monitor._refresh_departure_bound()
-    assert monitor._departure_bound == timedelta(
-        seconds=2200 + lm.DEPARTURE_MARGIN_SECONDS
-    ), "предыдущая граница держится, пока PLC не отдаёт dTime"
+    assert monitor._departure_bound == timedelta(seconds=2200 + lm.DEPARTURE_MARGIN_SECONDS), (
+        "предыдущая граница держится, пока PLC не отдаёт dTime"
+    )
 
 
 def test_unload_events_returned_newest_first(monitor, monkeypatch):

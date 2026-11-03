@@ -9,6 +9,7 @@ Startup helpers for the plant machine (ADR 0002): data dirs + migrations.
   (Base.metadata.create_all) + stamp head для свежей БД без версии,
   чтобы бэкенд всё равно стартовал и не реплеил 001.
 """
+
 import asyncio
 import logging
 from pathlib import Path
@@ -54,6 +55,7 @@ async def run_startup_migrations() -> None:
         logger.error(f"[STARTUP] Alembic upgrade failed ({e}); using init_db() fallback")
         await _init_db_fallback()
 
+
 async def _init_db_fallback() -> None:
     # Свежий engine из ТЕКУЩЕГО settings (import-time engine в base.py
     # защёлкнул URL при импорте и может указывать на другую базу).
@@ -66,9 +68,7 @@ async def _init_db_fallback() -> None:
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-            has_version = await conn.run_sync(
-                lambda c: "alembic_version" in inspect(c).get_table_names()
-            )
+            has_version = await conn.run_sync(lambda c: "alembic_version" in inspect(c).get_table_names())
         if not has_version:
             # Свежая БД без версии вечно реплеила бы 001 и глушила будущие
             # миграции — штампуем head. Чужая версия (частичный upgrade):

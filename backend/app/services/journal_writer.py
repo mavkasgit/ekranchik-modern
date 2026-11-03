@@ -11,12 +11,14 @@
 нет, — по номеру и времени выхода), поэтому повторный опрос того же
 прохода не создаёт второй записи.
 """
+
 import asyncio
 import logging
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 from app.services.hanger_journal import (
     MAX_PAGE_SIZE,
@@ -52,9 +54,7 @@ def _book_entry_at(row) -> str | None:
     hour, minute, second = parse_excel_time(str(row.time))
     if not (year and month and day):
         return None
-    return datetime(year, month, day, hour, minute, second).isoformat(
-        timespec="seconds"
-    )
+    return datetime(year, month, day, hour, minute, second).isoformat(timespec="seconds")
 
 
 # Как часто фоновая задача смотрит, не появились ли новые проходы, задаётся
@@ -77,7 +77,7 @@ RECENT_KEYS_MAX = 2 * LOOKBACK_EVENTS
 PRUNE_INTERVAL_SECONDS = 24 * 3600
 
 
-def record_from_match(match: CycleMatch) -> Dict[str, Any]:
+def record_from_match(match: CycleMatch) -> dict[str, Any]:
     """Запись журнала по проходу и результату сопоставления.
 
     Поля — те же, что у строки сопоставления (``matching.match_log_line``),
@@ -131,7 +131,7 @@ def record_from_match(match: CycleMatch) -> Dict[str, Any]:
     }
 
 
-def event_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
+def event_from_record(record: dict[str, Any]) -> dict[str, Any]:
     """Событие монитора из записи журнала — для восстановления после старта.
 
     Поля события и записи называются по-разному (``source`` против
@@ -170,7 +170,7 @@ def _iso_datetime(value: Any) -> datetime | None:
         return None
 
 
-def _event_key(cycle: Dict[str, Any]) -> tuple:
+def _event_key(cycle: dict[str, Any]) -> tuple:
     """Ключ прохода для дедупликации.
 
     Ключ — пара «номер прохода + момент выхода», а не один номер. Счётчик
@@ -204,14 +204,14 @@ class JournalWriter:
     def __init__(
         self,
         store: JournalStore,
-        rows_provider: Callable[[], Dict[str, List[Any]]],
+        rows_provider: Callable[[], dict[str, list[Any]]],
     ):
         self.store = store
         self.rows_provider = rows_provider
         # Ключи уже записанных проходов, в порядке записи. Наполняется
         # чтением журнала при старте — иначе после перезапуска последние
         # проходы записались бы в файл повторно.
-        self._written: "OrderedDict[tuple, None]" = OrderedDict()
+        self._written: OrderedDict[tuple, None] = OrderedDict()
 
     def load_written_keys(self) -> None:
         """Пометить уже записанные проходы как записанные.
@@ -243,16 +243,12 @@ class JournalWriter:
         В монитор события возвращаются от старых к новым — в порядке, в
         котором их туда кладёт ``_publish``.
         """
-        page = self.store.query(
-            sort="exit_at", direction="desc", limit=RESTORE_EVENTS
-        )
+        page = self.store.query(sort="exit_at", direction="desc", limit=RESTORE_EVENTS)
         if not page.items:
             return 0
 
         records = list(reversed(page.items))
-        line_monitor.restore_unload_events(
-            [event_from_record(record) for record in records]
-        )
+        line_monitor.restore_unload_events([event_from_record(record) for record in records])
         for record in records:
             self._remember(_record_key(record))
         return len(records)
@@ -300,7 +296,7 @@ class JournalWriter:
         while len(self._written) > RECENT_KEYS_MAX:
             self._written.popitem(last=False)
 
-    def prune(self) -> List[Path]:
+    def prune(self) -> list[Path]:
         """Удалить файлы старше срока хранения (с записью в лог)."""
         return self.store.prune()
 
@@ -326,7 +322,7 @@ class JournalWriter:
             await asyncio.sleep(interval)
 
 
-def _record_key(record: Dict[str, Any]) -> tuple:
+def _record_key(record: dict[str, Any]) -> tuple:
     """Ключ прохода из уже записанной записи журнала.
 
     Строится по тем же полям, что и ключ события (см. ``_event_key``), иначе
@@ -339,15 +335,13 @@ def _record_key(record: Dict[str, Any]) -> tuple:
 
 
 # --- Экземпляр приложения ---
-def _book_rows() -> Dict[str, List[Any]]:
+def _book_rows() -> dict[str, list[Any]]:
     """Строки книги учёта, сгруппированные по номеру подвеса."""
     from app.services.excel_service import excel_service
     from app.services.matching import normalize_hanger_key
 
-    products = excel_service.get_products(
-        limit=1000, days=30, from_end=True, loading_only=False
-    )
-    rows: Dict[str, List[Any]] = {}
+    products = excel_service.get_products(limit=1000, days=30, from_end=True, loading_only=False)
+    rows: dict[str, list[Any]] = {}
     for product in products:
         key = normalize_hanger_key(product.number)
         if key:

@@ -8,6 +8,7 @@
   повторяются от смены к смене, и без ``cycle_id`` два прогона одного
   подвеса неразличимы.
 """
+
 from datetime import datetime, timedelta
 
 import pytest
@@ -39,9 +40,7 @@ def monitor_with_active(monkeypatch):
 async def _active() -> dict:
     from app.main import app
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/opcua/hangers/active")
         assert response.status_code == 200, response.text
         return response.json()
@@ -54,9 +53,7 @@ async def test_active_hanger_carries_its_entry_time(monitor_with_active):
     assert body["total"] == 1
     hanger = body["hangers"][0]
     assert hanger["cycle_id"] == 91, "без номера прохода прогоны неразличимы"
-    assert hanger["line_entry_at"].startswith(
-        monitor_with_active.first_seen_at.strftime("%Y-%m-%dT%H:%M")
-    )
+    assert hanger["line_entry_at"].startswith(monitor_with_active.first_seen_at.strftime("%Y-%m-%dT%H:%M"))
     assert hanger["entry_bath"] == 4, "ванна, в которой подвес замечен"
 
 
