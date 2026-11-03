@@ -2,6 +2,71 @@
 
 Инструкции для ИИ-агентов. Детали проекта — в [`CONTEXT.md`](CONTEXT.md) и `docs/`.
 
+## Команды
+
+```bash
+npm run install-all     # node-зависимости + фронтенд
+npm run setup:python    # backend/.venv на Python 3.12: системный python и pip не использовать
+npm run dev             # бэкенд :8013 + фронтенд :5173, рабочий режим (реальный PLC и книга)
+npm run dev:sim         # то же + OPC UA симулятор и SIMULATION_ENABLED=true
+npm run dev:kill        # освободить порты
+```
+
+Проверка изменения — бэкенд:
+
+```bash
+cd backend && .venv/Scripts/python -m pytest                             # все 218
+cd backend && .venv/Scripts/python -m pytest tests/test_hanger_journal.py -k day_change
+```
+
+`uvicorn` поднят без `--reload`: после правки в `backend/app/` стенд надо
+перезапустить, иначе тесты зелёные, а стенд отдаёт старый код.
+
+E2E (`npm run test:e2e`) требует запуска фронтенда и Chrome с CDP на 9222 —
+сначала `npm run chrome:debug`; `live_demo.spec.mts` рассчитывает на
+симулятор, то есть на `npm run dev:sim`.
+
+## Проверки перед сдачей
+
+```bash
+mise run check     # полный гейт; то же запускает CI (.github/workflows/check.yml)
+mise run fix       # безопасные автофиксы, затем перечитать дифф
+mise run hooks     # один раз на клон: git-хуки pre-commit/pre-push/commit-msg
+```
+
+`mise run check` должен быть зелёным до конца работы — это условие «изменение
+готово», а не пожелание. Детали, бейзлайны и исключения — в
+[`docs/quality-gates.md`](docs/quality-gates.md).
+
+- Правила линтеров **не отключаются**, чтобы изменение прошло. Исключение —
+  один файл и одно правило, с причиной; для рисков ещё и с датой ревизии, и
+  это решение человека, а не агента.
+- Сгенерированные файлы не правятся руками: `.mise/locks/` (обновляется
+  `mise lock`), `dist-exe/`, `dist-full/`, `frontend/dist/`, `journal*/`,
+  `static/` (данные стенда).
+- Сообщения коммитов — Conventional Commits: `commitlint` проверяет их в
+  `commit-msg` и в CI.
+
+## Dev-стенд в соседнем терминале (Orca)
+
+Перед финальным ответом (пользователь проверяет сразу после него) агент
+убеждается, что dev-стенд жив. Работать **только с уже открытым соседним
+терминалом через Orca**: новых терминалов не создавать и стек из своей оболочки
+не запускать.
+
+1. `orca terminal list` — найти обычный shell-терминал этого worktree (не
+   Qoder-терминал агента); состояние — `orca terminal read --terminal <handle> --screen`.
+2. Проверить стенд: backend `http://127.0.0.1:8013/health` и frontend
+   `http://127.0.0.1:5173/`.
+3. Если в ответе менялись файлы backend/frontend или стенд не отвечает —
+   отправить в тот же терминал `npm run dev:kill; npm run dev`
+   (`orca terminal send --terminal <handle> --text "npm run dev:kill; npm run dev" --enter`)
+   и дождаться health. Для режима с симулятором — `npm run dev:sim`.
+4. Если открытого терминала нет — не поднимать стек самому: попросить
+   пользователя открыть терминал в Orca одной строкой.
+5. Отвечать только после зелёных чеков. Если код не менялся и стенд жив — не
+   трогать.
+
 ## Логи контейнеров
 
 Каждый сервис в `infra/compose/docker-compose.prod.yml` объявляет потолок лога:
