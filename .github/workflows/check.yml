@@ -72,6 +72,9 @@ jobs:
         run: |
           npm ci
           npx vitest run
+      - name: frontend build
+        working-directory: frontend
+        run: npm run build
 
   osv-scan:
     name: scheduled dependency scan (non-blocking, baseline 2026-11-03)

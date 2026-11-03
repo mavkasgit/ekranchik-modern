@@ -47,6 +47,21 @@ mise run hooks     # один раз на клон: git-хуки pre-commit/pre-
 - Сообщения коммитов — Conventional Commits: `commitlint` проверяет их в
   `commit-msg` и в CI.
 
+## Зависимости и зелёность CI
+
+`main` всегда зелёный; красный PR не мержится, включая Dependabot. Полный
+playbook — [`docs/dependabot.md`](docs/dependabot.md), коротко:
+
+- зелёные PR мержатся `gh pr merge <N> --squash --delete-branch`, после
+  каждого — дождаться зелёного прогона в `main`;
+- устаревшие ветки Dependabot — `@dependabot rebase`;
+- связанные пакеты (react + типы, vite + plugin-react, pandas + dateutil,
+  pytest + pytest-asyncio, pydantic + pydantic-settings, typescript + tsconfig,
+  tailwind + postcss) обновляются одной веткой, а не по одному PR;
+- после обновлений локально: `mise run check`, backend pytest, frontend
+  `npx vitest run` и `npm run build`;
+- CI смотреть через `gh run watch <id> --exit-status`, а не «на глаз».
+
 ## Dev-стенд в соседнем терминале (Orca)
 
 Перед финальным ответом (пользователь проверяет сразу после него) агент
