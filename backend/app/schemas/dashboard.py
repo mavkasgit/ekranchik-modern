@@ -42,8 +42,8 @@ class MatchedUnloadEvent(BaseModel):
     # Из книги учёта (если строка подобрана)
     entry_date: str | None = None
     entry_time: str | None = None
-    # Расхождение book_time − first_seen_at в секундах: сырые данные для
-    # калибровки MAX_ENTRY_DELTA_SECONDS на живой линии
+    # Расхождение book_time − first_seen_at в секундах: сырые данные, по
+    # которым откалиброван MAX_ENTRY_DELTA_SECONDS (ADR 0005)
     entry_delta_sec: float | None = None
     exit_date: str
     exit_time: str
