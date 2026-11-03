@@ -132,6 +132,22 @@ describe("describeHangerRow: пометки оператору", () => {
   it("строка без книги не помечается: пустая строка читается сама", () => {
     expect(describeHangerRow(row({ time_warning_code: "NO_ROW" })).badges).toEqual([]);
   });
+
+  it("неизвестный код не становится бейджем", () => {
+    // «constructor» and «toString» are inherited object keys: a lookup through
+    // `in` would turn them into a badge with an empty label.
+    for (const code of ["", "constructor", "toString", "SOMETHING_NEW"]) {
+      expect(describeHangerRow(row({ time_warning_code: code })).badges).toEqual([]);
+    }
+  });
+});
+
+describe("describeHangerRow: клюшки", () => {
+  it("клюшки видны флагом, а не сравнением подписи", () => {
+    expect(describeHangerRow(row({ material_type: "Клюшки", profile: "" })).sticks).toBe(true);
+    expect(describeHangerRow(row({ profile: "Клюшки 600" })).sticks).toBe(true);
+    expect(describeHangerRow(row()).sticks).toBe(false);
+  });
 });
 
 describe("isBlankRow: строка книги без данных", () => {

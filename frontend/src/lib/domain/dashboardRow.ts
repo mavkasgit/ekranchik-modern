@@ -24,7 +24,7 @@ const ZEBRA_CLASSNAME = "bg-slate-200 dark:bg-slate-800/50";
 const NO_VALUE = "—";
 
 /** Пустой профиль у клюшек читается не прочерком, а именем детали. */
-export const STICKS_LABEL = "Клюшки";
+const STICKS_LABEL = "Клюшки";
 
 /**
  * Печать, которую оператор видит бейджем строки. Причина приходит кодом из
@@ -58,9 +58,6 @@ const BADGES: Record<RowBadgeCode, RowBadge> = {
   },
 };
 
-/** Коды, которые на экран не идут: пустая строка читается сама. */
-const SILENT_CODES = new Set(["NO_ROW"]);
-
 export interface RowMeaning {
   tone: RowTone;
   className: string;
@@ -68,6 +65,8 @@ export interface RowMeaning {
   badges: RowBadge[];
   /** Профиль в ячейке: пустой профиль у клюшек читается словом. */
   profileLabel: string;
+  /** Подвес — клюшки: подпись профиля и тон строки строятся по этому флагу. */
+  sticks: boolean;
   /** Профилей больше двух — фото не помещаются в первую строку. */
   photosBelow: boolean;
   /** Есть вторая строка: фото на втором ряду или пометка. */
@@ -97,13 +96,17 @@ export function rowClassName(hanger: HangerData, index: number): string {
   return TONE_CLASSNAMES[tone];
 }
 
+/** Бейдж по коду бэкенда; неизвестный код на экран не идёт. */
+function badgeFor(code: string | null | undefined): RowBadge | null {
+  if (!code) return null;
+  return Object.values(BADGES).find((badge) => badge.code === code) ?? null;
+}
+
 /** Пометки строки в порядке чтения: сначала причина бэкенда, потом брак. */
 function rowBadges(hanger: HangerData): RowBadge[] {
   const badges: RowBadge[] = [];
-  const code = hanger.time_warning_code;
-  if (code && !SILENT_CODES.has(code) && code in BADGES) {
-    badges.push(BADGES[code as RowBadgeCode]);
-  }
+  const badge = badgeFor(hanger.time_warning_code);
+  if (badge) badges.push(badge);
   if (hanger.is_defect) badges.push(BADGES.DEFECT);
   return badges;
 }
@@ -130,6 +133,7 @@ export function describeHangerRow(hanger: HangerData, index = 0): RowMeaning {
     className: rowClassName(hanger, index),
     badges,
     profileLabel: profileLabel(hanger),
+    sticks: isSticksHanger(hanger),
     photosBelow,
     detailRow,
     rowSpan: detailRow ? 2 : 1,
