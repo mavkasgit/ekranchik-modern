@@ -132,6 +132,13 @@ test.describe("OPC UA Hanger Realtime Live Demo", () => {
 
     console.log(`🎉 Подвес ${hangerNumber} выгружен и показан на дашборде`);
 
+    // Плашка «Обновление» на полторы секунды закрывает таблицу: для скриншота
+    // даём ей уйти, иначе демо-кадр показывает зелёный прямоугольник.
+    await page
+      .getByText("Обновление", { exact: true })
+      .waitFor({ state: "hidden", timeout: 5000 })
+      .catch(() => {});
+
     await page.screenshot({ path: ".scratch/live_demo/hanger_unloaded_dashboard.png" });
   });
 });
