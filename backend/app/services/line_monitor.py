@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import logging
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -742,13 +743,67 @@ class LineMonitorService:
         recent = events[-limit:] if limit < len(events) else events
         return recent[::-1]
 
-    def get_hanger_state(self, hanger_num: int) -> HangerState | None:
-        """Get current state of a hanger."""
-        return self._hangers.get(hanger_num)
+    def restore_hangers(self, hangers: Iterable[HangerState]) -> None:
+        """Вернуть состояния подвесов в память монитора.
+
+        Один вызов вместо записи в приватный словарь: так состояние
+        подставляют после перезапуска и в тестах. Состояние с тем же
+        номером заменяется — номер подвеса и есть ключ.
+        """
+        for hanger in hangers:
+            self._hangers[hanger.id] = hanger
+
+    def get_all_hangers(self) -> list[HangerState]:
+        """Все подвесы, о которых монитор помнит хоть что-нибудь.
+
+        Активные — только те, что сейчас стоят в ванне (см.
+        ``get_active_hangers``); здесь и уже сошедшие с линии, пока их не
+        вычистил TTL.
+        """
+        return list(self._hangers.values())
 
     def get_active_hangers(self) -> list[HangerState]:
-        """Get all hangers currently considered active in the line."""
-        return [h for h in self._hangers.values() if h.current_bath is not None]
+        """Подвесы, которые сейчас стоят в ванне (активные на экране)."""
+        return [hanger for hanger in self._hangers.values() if hanger.current_bath is not None]
+
+    def get_hanger_state(self, hanger_num: int) -> HangerState | None:
+        """Состояние подвеса по номеру; ``None`` — монитор такого не знает."""
+        return self._hangers.get(hanger_num)
+
+    def get_hanger_in_bath(self, bath_number: int) -> HangerState | None:
+        """Подвес, который сейчас стоит в ванне, либо ``None``.
+
+        Ванна в состоянии хранится строкой (``"12"``), а номер приходит из
+        пути запроса числом; сравнение живёт здесь, чтобы вызывающий не
+        помнил про это представление.
+        """
+        bath_name = str(bath_number)
+        return next((hanger for hanger in self._hangers.values() if hanger.current_bath == bath_name), None)
+
+    def get_completed_cycles(self, limit: int = 20) -> list[HangerState]:
+        """Завершённые проходы, новые сверху.
+
+        Завершён — тот, кто уже не в ванне и успел пройти хотя бы одну:
+        подвес, которого монитор не видел ни в одной ванне, прохода не
+        имеет. Порядок по ``last_seen``: последний выход оказывается
+        первым, как и таблица выхода.
+        """
+        completed = [hanger for hanger in self._hangers.values() if hanger.current_bath is None and hanger.path]
+        completed.sort(key=lambda hanger: hanger.last_seen, reverse=True)
+        return completed[:limit]
+
+    def get_hanger_stats(self) -> dict[str, int]:
+        """Сколько подвесов и истории держит монитор.
+
+        Считается здесь, а не в route: потолок памяти — свойство монитора,
+        и диагностика не должна знать, как разложены состояния.
+        """
+        lengths = [len(hanger.path) for hanger in self._hangers.values()]
+        return {
+            "tracked": len(self._hangers),
+            "path_entries": sum(lengths),
+            "max_path_length": max(lengths, default=0),
+        }
 
 
 # Singleton instance

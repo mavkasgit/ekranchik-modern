@@ -231,6 +231,30 @@ class ExcelService:
         self._cache_mtime = None
         self._cache_path = None
 
+    @property
+    def active_file_name(self) -> str | None:
+        """Книга, выбранная в этой сессии, либо ``None`` — берём из настроек.
+
+        Это выбор, а не итоговый путь: несуществующий на этой машине файл
+        ``current_path`` подменяет конфигурацией.
+        """
+        return self._active_file_name
+
+    def use_file(self, file_path: str | None) -> None:
+        """Читать книгу из указанного файла, не запоминая выбор.
+
+        ``set_active_file`` пишет выбор в ``static/active_excel.json`` — он
+        переживает перезапуск. Стенду и тестам нужна книга на один прогон:
+        иначе подставленный файл переключил бы рабочий стенд.
+        """
+        self._active_file_name = file_path
+        self.invalidate_cache()
+
+    @property
+    def has_cached_data(self) -> bool:
+        """В памяти лежит разобранный лист книги."""
+        return self._cache is not None
+
     def _is_cache_valid(self, file_path: Path) -> bool:
         """Check if cached data is still valid."""
         if self._cache is None:
