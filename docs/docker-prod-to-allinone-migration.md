@@ -7,7 +7,6 @@
 он встроенным в сервер или отдельным приложением, к данным не обращается
 вообще.
 
-
 Разовая процедура переноса накопленных данных с текущего Docker-прода
 на заводскую машину с поставленным сервером `EkranchikServer.exe` без
 Docker (ADR 0004: `docs/adr/0004-kiosk-and-server-as-two-apps.md`, issue #7).
@@ -44,13 +43,13 @@ Docker-прода (или с любой другой машины).
 
 ## 1. Что переносим, а что — нет
 
-| Артефакт | Переносим | Почему |
-|---|---|---|
-| `ekranchik.db` (SQLite) | Да | Все учётные данные |
-| `images/` (фото профилей + `*-thumb.jpg`) | Да | Без них дашборд без картинок |
-| `active_excel*.json`, `app_settings.json` | Нет | Содержат пути исходной машины (контейнерные `/app/excel/...`, dev-пути); на заводской машине Excel и настройки задаются в окне настроек сервера |
-| `profiles.db` | Нет | Legacy-файл, бэкендом не используется |
-| `backend/.env` | Нет | Dev-конфиг, в пакет не входит (см. `scripts/build-full-package.ps1`) |
+| Артефакт                                  | Переносим | Почему                                                                                                                                          |
+| ----------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ekranchik.db` (SQLite)                   | Да        | Все учётные данные                                                                                                                              |
+| `images/` (фото профилей + `*-thumb.jpg`) | Да        | Без них дашборд без картинок                                                                                                                    |
+| `active_excel*.json`, `app_settings.json` | Нет       | Содержат пути исходной машины (контейнерные `/app/excel/...`, dev-пути); на заводской машине Excel и настройки задаются в окне настроек сервера |
+| `profiles.db`                             | Нет       | Legacy-файл, бэкендом не используется                                                                                                           |
+| `backend/.env`                            | Нет       | Dev-конфиг, в пакет не входит (см. `scripts/build-full-package.ps1`)                                                                            |
 
 ## 2. Где взять файлы на сервере (сверено с compose/env)
 
@@ -59,12 +58,15 @@ Docker-прода (или с любой другой машины).
 
 ```yaml
 environment:
-  - DATABASE_URL=sqlite+aiosqlite:////app/static/ekranchik.db  # стр. 18
-  - STATIC_DIR=/app/static                                      # стр. 19
-  - IMAGES_DIR=/app/static/images                               # стр. 20
+  - DATABASE_URL=sqlite+aiosqlite:////app/static/ekranchik.db
+  - STATIC_DIR=/app/static
+  - IMAGES_DIR=/app/static/images
 volumes:
-  - ../../static:/app/static                                    # стр. 28
+  - ../../static:/app/static
 ```
+
+(номера строк не приводим: они уезжают при первой же правке compose — значения
+выше совпадают с файлом дословно и находятся `grep`-ом)
 
 Значения `backend/.env` (`DATABASE_URL=sqlite+aiosqlite:///../static/ekranchik.db`,
 `IMAGES_DIR=../static/images`) в проде **не действуют** — их перекрывает
