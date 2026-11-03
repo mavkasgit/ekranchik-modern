@@ -144,8 +144,13 @@ class Settings(BaseSettings):
         return f"{name.stem}_sim{name.suffix}"
 
     @property
-    def excel_path(self) -> Path | None:
-        """Get Excel file path as Path object"""
+    def configured_excel_path(self) -> Path | None:
+        """Стартовый путь книги из конфигурации (seed владельца активной книги).
+
+        «Какой файл активен» решает ``excel_service.current_path``: выбор из
+        интерфейса перекрывает это значение. Напрямую этот путь не читают —
+        иначе у одного решения появился бы второй источник.
+        """
         if self.SIMULATION_ENABLED:
             return Path(self.EXCEL_TEST_FILE_PATH) if self.EXCEL_TEST_FILE_PATH else None
         else:

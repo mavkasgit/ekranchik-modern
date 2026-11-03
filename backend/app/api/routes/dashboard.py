@@ -150,6 +150,11 @@ async def get_file_status():
         if not path:
             return FileStatus(is_open=False, status_text="Путь не настроен", error="EXCEL_FILE_PATH не указан в .env")
 
+        # Тот же текст, что в /settings и в ответе выбора: иначе относительный
+        # путь из конфигурации (``../testdata/…``) уходил бы в статус как есть,
+        # а остальные поверхности показывали разрешённый.
+        path = path.resolve()
+
         # Check if file exists
         if not path.exists():
             return FileStatus(

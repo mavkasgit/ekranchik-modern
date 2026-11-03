@@ -70,7 +70,7 @@ def test_ekranchik_aliases_apply_with_factory_defaults(clean_env, monkeypatch):
     assert s.EXCEL_REAL_FILE_PATH == r"D:\share\Учет КПЗ 2026.xlsm"
     assert s.OPCUA_ENDPOINT == "opc.tcp://10.0.0.5:4840/"
     assert s.SIMULATION_ENABLED is True
-    assert s.excel_path is not None
+    assert s.configured_excel_path is not None
 
 
 def test_bare_names_win_over_ekranchik_aliases(clean_env, monkeypatch):
