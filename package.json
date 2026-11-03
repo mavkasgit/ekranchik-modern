@@ -17,7 +17,7 @@
     "dev:kill": "node scripts/ensure-dev-ports.js --kill",
     "test:e2e": "playwright test --config=playwright.config.mts",
     "test:e2e:ui": "playwright test --config=playwright.config.mts --ui",
-    "chrome:debug": "start chrome --remote-debugging-port=9222 --no-first-run --no-default-browser-check --user-data-dir=\"c:\\Users\\user\\VibeCoding\\ekranchik-modern\\.chrome-dev-profile\" http://127.0.0.1:5173/opcua"
+    "chrome:debug": "start chrome --remote-debugging-port=9222 --no-first-run --no-default-browser-check --user-data-dir=\"%CD%\\.chrome-dev-profile\" http://127.0.0.1:5173/opcua"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",

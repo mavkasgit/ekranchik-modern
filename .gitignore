@@ -119,6 +119,9 @@ backend/custom_simulator.log
 chrome_output.log
 chrome_stderr.log
 chrome_stdout.log
+.chrome-dev-profile/
+playwright-report/
+test-results/
 
 # Executables
 *.exe

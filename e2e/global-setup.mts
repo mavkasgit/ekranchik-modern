@@ -69,7 +69,7 @@ async function globalSetup() {
                 `--remote-debugging-port=${BROWSER_PORT}`,
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--user-data-dir=c:\\Users\\user\\VibeCoding\\ekranchik-modern\\.chrome-dev-profile",
+                `--user-data-dir=${path.resolve(__dirname, "..", ".chrome-dev-profile")}`,
                 "about:blank",
               ],
               {

@@ -43,9 +43,7 @@ test.describe("OPC UA Hanger Realtime Live Demo", () => {
     console.log("🎯 Подвес 777 появился на линии!");
 
     // Делаем первый скриншот (подвес на линии)
-    await page.screenshot({
-      path: "C:\\Users\\user\\.gemini\\antigravity\\browser_recordings\\hanger_on_line.png",
-    });
+    await page.screenshot({ path: ".scratch/live_demo/hanger_on_line.png" });
     console.log("📸 Скриншот подвеса на линии сохранен: hanger_on_line.png");
 
     // Даем подвесу пройти линию (последовательность занимает около 30 секунд в ускоренном режиме)
@@ -78,9 +76,7 @@ test.describe("OPC UA Hanger Realtime Live Demo", () => {
     await expect(page.getByRole("cell", { name: "золото", exact: true }).first()).toBeVisible();
 
     // Делаем второй скриншот (подвес на дашборде)
-    await page.screenshot({
-      path: "C:\\Users\\user\\.gemini\\antigravity\\browser_recordings\\hanger_unloaded_dashboard.png",
-    });
+    await page.screenshot({ path: ".scratch/live_demo/hanger_unloaded_dashboard.png" });
     console.log("📸 Скриншот дашборда сохранен: hanger_unloaded_dashboard.png");
   });
 });
