@@ -13,7 +13,7 @@ pydantic>=2.7.0,<2.10
 pydantic-settings>=2.6.0
 
 # Excel parsing
-pandas==2.2.3
+pandas==3.1.0
 openpyxl==3.1.5
 python-calamine==0.6.1  # Fast Rust-based Excel reader (4x faster)
 
