@@ -9,7 +9,7 @@ aiosqlite==0.20.0
 alembic==1.14.0
 
 # Validation
-pydantic>=2.7.0,<2.10
+pydantic>=2.14.1,<2.15
 pydantic-settings>=2.6.0
 
 # Excel parsing
