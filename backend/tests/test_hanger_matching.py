@@ -16,7 +16,7 @@
   подбирается, но entry_delta_sec не считается.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from app.services.hanger_row import HangerRow
 from app.services.matching import (
@@ -193,21 +193,47 @@ def test_earlier_row_wins_when_later_row_is_after_exit():
 def test_row_far_beyond_tolerance_is_flagged_in_journal():
     """Строка соседней смены: расхождение больше допуска — пометка в журнале.
 
-    На экран она не идёт: допуск не откалиброван, а ложная метка хуже
-    пропущенной. Строка при этом показывается.
+    На экран она не идёт: метка остаётся диагностикой для журнала, а не
+    приговором оператору. Строка при этом показывается.
     """
-    first_seen = datetime(2026, 9, 29, 22, 0, 0)
-    # Заведомо за пределами допуска: на линии подвес проводит около трёх
-    # часов, а такая строка принадлежит другой смене.
-    book_time = first_seen + timedelta(seconds=MAX_ENTRY_DELTA_SECONDS + 3600)
-    rows = {"7": [_row(7, DAY_2, book_time.strftime("%H:%M:%S"), "ДАЛЕКО")]}
+    first_seen = datetime(2026, 9, 29, 20, 0, 0)
+    # Пять часов — заведомо за пределами допуска (30 мин по калибровке),
+    # но всё ещё раньше выхода: строка описывает этот же проход, просто
+    # записана с чужим временем.
+    rows = {"7": [_row(7, DAY_2, "01:00:00", "ДАЛЕКО")]}
     cycles = [_cycle(7, first_seen.isoformat(), _iso(DAY_2, "05:00:00"), cycle_id=8)]
 
     [m] = match_cycles_to_rows(cycles, rows)
 
     assert m.row is not None
     assert m.code == CODE_OK
+    assert m.entry_delta_sec == 5 * 3600
     assert m.suspect_reason == "entry_delta"
+
+
+def test_entry_delta_tolerance_boundary_is_thirty_minutes():
+    """Граница допуска — 30 минут: 10 мин норма, 45 мин — пометка.
+
+    Нормальные проходы по журналу расходятся с книгой на секунды и минуты
+    (медиана 92 с, максимум 324 с на 69 проходах за 22.10, 02.11 и 03.11.2026),
+    поэтому 45 минут — уже не бытовое расхождение, а чужая строка или сбой.
+    """
+    first_seen = datetime(2026, 11, 3, 20, 0, 0)
+    rows = {
+        "10": [_row(10, "03.11.2026", "20:10:00", "НОРМА")],
+        "11": [_row(11, "03.11.2026", "20:45:00", "ДАЛЕКО")],
+    }
+    cycles = [
+        _cycle(10, first_seen.isoformat(), _iso("03.11.2026", "23:00:00"), cycle_id=10),
+        _cycle(11, first_seen.isoformat(), _iso("03.11.2026", "23:10:00"), cycle_id=11),
+    ]
+
+    matches = {m.cycle["cycle_id"]: m for m in match_cycles_to_rows(cycles, rows)}
+
+    assert matches[10].entry_delta_sec == 600
+    assert matches[10].suspect_reason == "", "10 минут — норма, пометки быть не должно"
+    assert matches[11].entry_delta_sec == 2700
+    assert matches[11].suspect_reason == "entry_delta"
 
 
 def test_untrusted_first_seen_gives_row_without_delta():
@@ -247,16 +273,23 @@ def test_log_line_carries_cycle_history_and_verdict():
     assert "path=30@13:11:00->14:02:00 31@14:05:00->—" in line
 
 
-def test_line_length_delta_is_not_suspect():
-    """Расхождение размером с проход по линии — это норма, а не подозрение."""
-    first_seen = datetime(2026, 9, 29, 10, 51, 0)
-    rows = {"2": [_row(2, NIGHT, "08:33:00", "ПОСЛЕДНИЕ-2-ЧАСА")]}
+def test_worst_normal_delta_from_journal_is_not_suspect():
+    """Худшее нормальное расхождение из журнала (324 с) — норма, не пометка.
+
+    Это максимум из 67 нормальных проходов за 22.10, 02.11 и 03.11.2026;
+    всё, что крупнее, в выборке было сбоем подбора, а не бытовым
+    расхождением книги с линией.
+    """
+    first_seen = datetime(2026, 9, 29, 8, 38, 0)
+    rows = {"2": [_row(2, NIGHT, "08:33:00", "СВОЯ")]}
     cycles = [_cycle(2, first_seen.isoformat(), _iso(NIGHT, "11:14:02"), cycle_id=8)]
 
     [m] = match_cycles_to_rows(cycles, rows)
 
     assert m.row is not None
-    assert m.code == CODE_OK, "подвес на линии около трёх часов — бейдж не нужен"
+    assert m.code == CODE_OK
+    assert m.entry_delta_sec == -300
+    assert m.suspect_reason == "", "5 минут — в пределах измеренной нормы"
 
 
 def test_row_without_time_is_not_a_candidate():
