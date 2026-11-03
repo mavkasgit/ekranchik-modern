@@ -176,7 +176,7 @@ def test_transit_gap_does_not_break_cycle(monitor, monkeypatch):
     чего таблица выхода оставалась пустой.
     """
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 1)}))
-    asyncio.run(monitor._scan_baths())
+    asyncio.run(monitor.scan_baths())
     state = monitor.get_hanger_state(1)
     opened_at = state.first_seen_at
     cycle_id = state.cycle_id
@@ -187,7 +187,7 @@ def test_transit_gap_does_not_break_cycle(monitor, monkeypatch):
     seen = monitor.get_hanger_state(1)
     seen.unseen_since = datetime.now() - timedelta(minutes=10)
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({31: (True, 1)}))
-    asyncio.run(monitor._scan_baths())
+    asyncio.run(monitor.scan_baths())
 
     assert state.cycle_id == cycle_id, "переход не открывает новый проход"
     assert state.first_seen_at == opened_at, "first_seen_at не обнуляется переходом"
@@ -200,7 +200,7 @@ def test_transit_gap_does_not_break_cycle(monitor, monkeypatch):
 def test_unload_during_transit_keeps_cycle(monitor, monkeypatch):
     """Выгрузка в разрыве видимости — нормальный выход, а не CYCLE_ERROR."""
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 46)}))
-    asyncio.run(monitor._scan_baths())
+    asyncio.run(monitor.scan_baths())
     state = monitor.get_hanger_state(46)
     cycle_id = state.cycle_id
 
@@ -229,7 +229,7 @@ def test_unloaded_hanger_parked_at_control_bath_starts_no_cycle(monitor, monkeyp
 
     # Скан видит подвеса в 34-й: это то же самое присутствие после выгрузки.
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({34: (True, 7)}))
-    asyncio.run(monitor._scan_baths())
+    asyncio.run(monitor.scan_baths())
 
     assert state.cycle_id == cycle_after_unload, "фантомный проход не заводится"
     assert monitor.get_unload_events()[-1]["type"] == "unload"
@@ -238,14 +238,14 @@ def test_unloaded_hanger_parked_at_control_bath_starts_no_cycle(monitor, monkeyp
 def test_hanger_leaving_line_closes_cycle(monitor, monkeypatch):
     """Подвес, пропавший заведомо дольше границы, проход закрывает."""
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({30: (True, 3)}))
-    asyncio.run(monitor._scan_baths())
+    asyncio.run(monitor.scan_baths())
     state = monitor.get_hanger_state(3)
 
     monitor._departure_bound = timedelta(minutes=42)
     state.unseen_since = datetime.now() - timedelta(minutes=43)
     state.last_seen = datetime.now() - timedelta(minutes=43)
     monkeypatch.setattr(lm.opcua_service, "get_value", _baths({}))
-    asyncio.run(monitor._scan_baths())
+    asyncio.run(monitor.scan_baths())
 
     assert state.cycle_id is None, "проход закрыт"
     assert state.current_bath is None, "подвес больше не на линии"
