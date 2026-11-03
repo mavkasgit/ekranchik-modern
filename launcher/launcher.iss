@@ -94,6 +94,10 @@ UsePreviousTasks=yes
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Types]
+; Тип установки — свойство установщика: [Types]/[Components] решают состав
+; файлов и ярлыков. Ни один exe типа не читает и не получает его аргументом:
+; Ekranchik.exe и EkranchikServer.exe сами определяют, кто они (ADR 0002,
+; «Инварианты, которые пережили замену»).
 Name: "kiosk"; Description: "Только киоск (экран на отдельном компьютере)"
 Name: "server"; Description: "Сервер: фоновое приложение"
 Name: "custom"; Description: "Оба на одной машине (выборочная установка)"; Flags: iscustom
