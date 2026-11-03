@@ -328,7 +328,7 @@ async def scan_hangers():
     if not opcua_service.is_connected and not await opcua_service.connect():
         raise HTTPException(status_code=500, detail="Cannot connect to OPC UA server")
 
-    await line_monitor._scan_baths()
+    await line_monitor.scan_baths()
     return {
         "status": "scanned",
         "total_hangers": len(line_monitor.get_all_hangers()),

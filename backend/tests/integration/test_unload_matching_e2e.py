@@ -134,10 +134,10 @@ async def trigger_unload(hanger_id: int) -> None:
         # Проход: подвес идёт 3 → 4 и доходит до контрольной ванны
         for bath in (3, 4):
             occupy(bath, hanger_id)
-            await line_monitor._scan_baths()
+            await line_monitor.scan_baths()
             clear(bath)
         occupy(34, hanger_id)
-        await line_monitor._scan_baths()
+        await line_monitor.scan_baths()
 
         # Сход с линии: датчик 0 → N
         clear(34)

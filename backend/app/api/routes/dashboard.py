@@ -468,7 +468,7 @@ async def get_settings():
     return SettingsResponse(
         simulation_enabled=settings.SIMULATION_ENABLED,
         excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
-        opcua_endpoint=opcua_service._url,
+        opcua_endpoint=opcua_service.endpoint,
     )
 
 
@@ -515,7 +515,7 @@ async def update_settings(request: SettingsUpdateRequest):
         return SettingsResponse(
             simulation_enabled=settings.SIMULATION_ENABLED,
             excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
-            opcua_endpoint=opcua_service._url,
+            opcua_endpoint=opcua_service.endpoint,
         )
     except Exception as e:
         logger.error(f"[DASHBOARD API] Failed to update settings: {e}", exc_info=True)

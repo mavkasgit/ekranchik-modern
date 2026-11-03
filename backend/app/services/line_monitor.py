@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import TypedDict
 
 from app.schemas.websocket import WebSocketMessage
 from app.services.opcua_service import opcua_service
@@ -88,6 +89,14 @@ class HangerState:
     first_seen_source: str = ""
     entry_bath: int | None = None
     unseen_since: datetime | None = None
+
+
+class HangerStats(TypedDict):
+    """Счётчики диагностики монитора: ключи ответа и поля типа — одно и то же."""
+
+    tracked: int
+    path_entries: int
+    max_path_length: int
 
 
 class LineMonitorService:
@@ -305,11 +314,11 @@ class LineMonitorService:
 
         # ВАЖНО: Сначала проверяем выгрузку (ванна 34), потом сканируем остальные
         # Это гарантирует что выгрузка будет зафиксирована до того как
-        # _scan_baths() создаст "новый цикл" для подвеса
+        # scan_baths() создаст "новый цикл" для подвеса
         await self._check_unload()
 
         # Scan all baths to update hanger states
-        await self._scan_baths()
+        await self.scan_baths()
 
         # Отметка «линию наблюдали». Проход, открытый после паузы больше
         # SCAN_GAP_SECONDS, получает недостоверный первый замер (FIRST_SEEN_GAP):
@@ -470,8 +479,12 @@ class LineMonitorService:
             ],
         }
 
-    async def _scan_baths(self) -> None:
-        """Scan all baths and update hanger positions, handling new cycles."""
+    async def scan_baths(self) -> None:
+        """Scan all baths and update hanger positions, handling new cycles.
+
+        Публичный вход для разового скана по запросу (``POST /opcua/hangers/scan``):
+        маршрут не должен звать приватный шаг цикла опроса.
+        """
         now = datetime.now()
 
         # Keep track of all hangers seen in this scan cycle
@@ -744,11 +757,13 @@ class LineMonitorService:
         return recent[::-1]
 
     def restore_hangers(self, hangers: Iterable[HangerState]) -> None:
-        """Вернуть состояния подвесов в память монитора.
+        """Подставить состояния подвесов в память монитора (тестовый/ручной вход).
 
-        Один вызов вместо записи в приватный словарь: так состояние
-        подставляют после перезапуска и в тестах. Состояние с тем же
-        номером заменяется — номер подвеса и есть ключ.
+        После перезапуска сервера проходы возвращает ``journal_writer.restore_recent``
+        через ``restore_unload_events``: оттуда приходит проход, а не живое
+        состояние подвеса. Метод нужен стенду и тестам, чтобы выставить
+        состояние одним вызовом, не залезая в приватный словарь. Состояние с
+        тем же номером заменяется — номер подвеса и есть ключ.
         """
         for hanger in hangers:
             self._hangers[hanger.id] = hanger
@@ -792,7 +807,7 @@ class LineMonitorService:
         completed.sort(key=lambda hanger: hanger.last_seen, reverse=True)
         return completed[:limit]
 
-    def get_hanger_stats(self) -> dict[str, int]:
+    def get_hanger_stats(self) -> HangerStats:
         """Сколько подвесов и истории держит монитор.
 
         Считается здесь, а не в route: потолок памяти — свойство монитора,

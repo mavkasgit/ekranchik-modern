@@ -82,7 +82,9 @@ async def lifespan(app: FastAPI):
     # Start ExcelWatcher. Какой файл активен, решает excel_service (выбор из
     # интерфейса перекрывает конфигурацию), поэтому watcher стартует от него,
     # а не от settings: иначе выбор оператора не наблюдался бы до перезапуска.
-    if excel_watcher.start():
+    if excel_watcher.is_running:
+        logger.info("[STARTUP] ExcelWatcher already running")
+    elif excel_watcher.start():
         logger.info("[STARTUP] ExcelWatcher started")
     else:
         logger.warning("[STARTUP] ExcelWatcher not started: активная книга недоступна")
