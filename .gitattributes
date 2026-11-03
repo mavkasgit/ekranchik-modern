@@ -1,4 +1,6 @@
-# Скрипты запускаются на Linux-сервере: CRLF ломает и shebang, и `set -e`
-# (в `\r`-окончании строка `set -e\r` не выполняется). Windows-checkout с
-# core.autocrlf=true иначе выкатит их с CRLF.
+# Текстовые файлы — LF на всех машинах. Этого требует oxfmt (endOfLine=lf по
+# умолчанию) и Linux-CI: Windows-checkout с core.autocrlf=true иначе вернёт
+# CRLF после каждого checkout, и mise run check падает на ровном месте.
+# Скрипты запускаются на Linux-сервере, где CRLF ломает и shebang, и `set -e`.
+* text=auto eol=lf
 *.sh text eol=lf
