@@ -11,10 +11,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.services.excel_service import excel_service
-from app.services.hanger_row import HangerRow
 from app.services.line_monitor import line_monitor
-from app.services.matching import normalize_hanger_key, select_latest_candidate
+from app.services.matching import normalize_hanger_key
 from app.services.opcua_service import opcua_service
 
 logger = logging.getLogger(__name__)
@@ -47,87 +45,16 @@ def _hanger_payload(hanger) -> dict[str, Any]:
 router = APIRouter(prefix="/opcua", tags=["opcua"])
 
 
-def _normalize_meta_value(value: Any) -> str:
-    text = str(value).strip() if value is not None else ""
-    return text if text else "—"
-
-
-def _build_latest_hanger_meta() -> dict[str, dict[str, str]]:
-    """Build latest profile/color by hanger number using Excel date+time comparison.
-
-    NOTE: This is a synchronous, CPU/IO-heavy operation.
-    Always call via _get_hanger_meta_async() to avoid blocking the event loop.
-
-    Selection rule lives in app.services.matching.select_latest_candidate:
-    the newest row with filled time wins; draft rows (no time) are used
-    only when a hanger has no real loaded entry.
-    """
-    products = excel_service.get_products(
-        limit=3000,
-        days=30,
-        from_end=True,
-        loading_only=False,
-    )
-
-    grouped: dict[str, list[HangerRow]] = {}
-    for product in products:
-        hanger_key = normalize_hanger_key(product.number)
-        if not hanger_key:
-            continue
-        grouped.setdefault(hanger_key, []).append(product)
-
-    latest: dict[str, dict[str, str]] = {}
-    for hanger_key, candidates in grouped.items():
-        best = select_latest_candidate(candidates)
-        if best is None:
-            best = select_latest_candidate(candidates, require_time=False)
-        if best is None:
-            continue
-        latest[hanger_key] = {
-            "article": _normalize_meta_value(best.profile),
-            "color": _normalize_meta_value(best.color),
-        }
-
-    return latest
-
-
-# Module-level cache for hanger meta to avoid re-reading Excel on every request
-_hanger_meta_cache: dict[str, dict[str, str]] | None = None
-_hanger_meta_cache_mtime: float | None = None
-_hanger_meta_lock = asyncio.Lock()
-
-
 async def _get_hanger_meta_async() -> dict[str, dict[str, str]]:
-    """Get hanger meta with caching and thread-pool execution.
+    """Профиль и цвет последней строки на подвес — из общего кэша книги.
 
-    Uses excel_service cache mtime to invalidate only when Excel data changes.
-    Runs the heavy sync work in a thread pool to avoid blocking the event loop.
-    Uses asyncio.Lock to prevent multiple concurrent cache builds.
+    Разбор и кэш живут в ``app.services.book_rows``: тот же разбор нужен
+    панели «Выход» и журналу, и второй кэш с другим лимитом означал бы, что
+    для одного экрана строка есть, а для другого её уже нет.
     """
-    global _hanger_meta_cache, _hanger_meta_cache_mtime
+    from app.services.book_rows import get_book_rows
 
-    current_mtime = excel_service.cache_mtime
-
-    # Fast path: cache hit without locking
-    if _hanger_meta_cache is not None and _hanger_meta_cache_mtime == current_mtime:
-        return _hanger_meta_cache
-
-    # Slow path: acquire lock and build cache
-    async with _hanger_meta_lock:
-        # Double-check after acquiring lock
-        if _hanger_meta_cache is not None and _hanger_meta_cache_mtime == current_mtime:
-            return _hanger_meta_cache
-
-        # Cache miss: build in thread pool to avoid blocking event loop
-        logger.info(f"[OPC UA] Building hanger meta cache (Excel mtime: {current_mtime})...")
-        start = datetime.now()
-        result = await asyncio.to_thread(_build_latest_hanger_meta)
-        elapsed = (datetime.now() - start).total_seconds()
-        logger.info(f"[OPC UA] Hanger meta cache built: {len(result)} entries in {elapsed:.2f}s")
-
-        _hanger_meta_cache = result
-        _hanger_meta_cache_mtime = current_mtime
-        return result
+    return (await asyncio.to_thread(get_book_rows)).latest_by_hanger
 
 
 class OPCUAStatus(BaseModel):

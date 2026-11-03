@@ -336,17 +336,15 @@ def _record_key(record: dict[str, Any]) -> tuple:
 
 # --- Экземпляр приложения ---
 def _book_rows() -> dict[str, list[Any]]:
-    """Строки книги учёта, сгруппированные по номеру подвеса."""
-    from app.services.excel_service import excel_service
-    from app.services.matching import normalize_hanger_key
+    """Строки книги учёта, сгруппированные по номеру подвеса.
 
-    products = excel_service.get_products(limit=1000, days=30, from_end=True, loading_only=False)
-    rows: dict[str, list[Any]] = {}
-    for product in products:
-        key = normalize_hanger_key(product.number)
-        if key:
-            rows.setdefault(key, []).append(product)
-    return rows
+    Разбор и кэш — общие с панелью «Выход» и карточками OPC UA
+    (``app.services.book_rows``): второй кэш с другим лимитом означал бы,
+    что проход сопоставляется с одной книгой, а показывается по другой.
+    """
+    from app.services.book_rows import get_book_rows
+
+    return get_book_rows().by_hanger
 
 
 journal_writer = JournalWriter(journal_store(), _book_rows)

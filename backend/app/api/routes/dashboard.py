@@ -2,6 +2,7 @@
 Dashboard API routes.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.schemas.dashboard import (
     MatchedUnloadEvent,
 )
 from app.schemas.profile import ProfileInfo
+from app.services.book_rows import get_book_rows
 from app.services.catalog_service import catalog_service
 from app.services.excel_service import (
     excel_service,
@@ -30,7 +32,6 @@ from app.services.matching import (
     CODE_NO_ROW,
     CycleMatch,
     match_cycles_to_rows,
-    normalize_hanger_key,
     parse_iso_seconds,
     product_entry_seconds,
 )
@@ -347,13 +348,9 @@ async def get_opcua_matched_unload_events(
         if not cycles:
             return []
 
-        products = excel_service.get_products(limit=1000, days=30, from_end=True, loading_only=False)
-
-        rows_by_hanger: dict[str, list[HangerRow]] = {}
-        for p in products:
-            key = normalize_hanger_key(p.number)
-            if key:
-                rows_by_hanger.setdefault(key, []).append(p)
+        book = await asyncio.to_thread(get_book_rows)
+        products = book.products
+        rows_by_hanger = book.by_hanger
 
         photos_map = await catalog_service.get_profiles_photos_batch(_collect_profile_names(products))
 

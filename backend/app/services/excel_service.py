@@ -214,6 +214,17 @@ class ExcelService:
         """Get current cache modification time (for cache invalidation tracking)."""
         return self._cache_mtime
 
+    @property
+    def data_version(self) -> tuple:
+        """Версия разобранной книги для внешних кэшей.
+
+        Путь и mtime меняются при смене файла и записи в него, а ``id``
+        разобранного листа — когда книга перечитана или подменена в тестах.
+        Одного mtime мало: тест, подставивший другой лист с тем же именем,
+        получил бы ответ из прежнего кэша.
+        """
+        return (str(self.current_path), self._cache_mtime, id(self._cache))
+
     def invalidate_cache(self) -> None:
         """Force cache invalidation."""
         self._cache = None
