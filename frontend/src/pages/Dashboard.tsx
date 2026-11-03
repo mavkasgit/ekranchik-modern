@@ -48,9 +48,15 @@ import { useTestRun } from "@/hooks/useTestRun";
 import { DASHBOARD_KEY } from "@/lib/queryKeys";
 import { SIDEBAR_ROW_LIMIT } from "@/config/limits";
 import { colorHex, colorName } from "@/lib/domain/color";
+import {
+  describeHangerRow,
+  isBlankRow,
+  mergeHangerMeta,
+  rowClassName,
+  STICKS_LABEL,
+} from "@/lib/domain/dashboardRow";
 import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
 import { emptyRun, waitingRows } from "@/lib/domain/testRun";
-import { hangerKey } from "@/lib/domain/hanger";
 import { photoUrl } from "@/lib/domain/photo";
 import { profileText } from "@/lib/domain/profile";
 import type { Profile } from "@/types/profile";
@@ -604,43 +610,6 @@ function StatusBar({
   );
 }
 
-const isSticks = (hanger: HangerData) => {
-  return (
-    hanger.material_type?.toLowerCase().includes("клюш") ||
-    hanger.profile?.toLowerCase().includes("клюш")
-  );
-};
-
-const getRowClassName = (hanger: HangerData, idx: number) => {
-  if (hanger.is_defect) {
-    return "bg-red-300 hover:bg-red-400 dark:bg-red-900 dark:hover:bg-red-800 text-red-950 dark:text-red-50 font-semibold";
-  }
-  if (isSticks(hanger)) {
-    return "bg-sky-300 hover:bg-sky-400 dark:bg-sky-900 dark:hover:bg-sky-800 text-sky-950 dark:text-sky-50 font-semibold";
-  }
-  if (hanger.time_warning) {
-    return "bg-orange-200 hover:bg-orange-300/80 dark:bg-orange-950/40";
-  }
-  return idx % 2 === 0 ? "bg-slate-200 dark:bg-slate-800/50" : "";
-};
-
-// Причины пометки строки — оператору показываем только то, что он может
-// понять и на что может отреагировать: долгий проход и выгрузку без прохода.
-// Текст причины приходит в тултипе из бэкенда
-// (app.api.routes.dashboard._warning_for).
-// NO_ROW бейджа не имеет: пустая строка читается сама.
-const WARNING_BADGES: Record<string, { label: string; className: string }> = {
-  DELAY: {
-    label: "⚠ ЗАДЕРЖКА",
-    className:
-      "text-orange-700 bg-orange-200 dark:text-orange-400 dark:bg-orange-950/60 border-orange-300/50",
-  },
-  CYCLE_ERROR: {
-    label: "⚠ ОШИБКА",
-    className: "text-red-700 bg-red-200 dark:text-red-400 dark:bg-red-950/60 border-red-300/50",
-  },
-};
-
 function ClockInline() {
   const [time, setTime] = useState(new Date());
 
@@ -658,11 +627,14 @@ function DataTable({
   onPhotoClick,
   isFullscreen = false,
   showEntryExit = false,
+  ariaLabel,
 }: {
   data: HangerData[];
   onPhotoClick: (url: string, name: string) => void;
   isFullscreen?: boolean;
   showEntryExit?: boolean;
+  /** Имя таблицы: две таблицы дашборда различаются только содержимым. */
+  ariaLabel?: string;
 }) {
   const gridTemplateColumns = showEntryExit
     ? "[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px"
@@ -672,13 +644,22 @@ function DataTable({
     <div
       className={`overflow-auto text-sm border border-slate-200 dark:border-slate-800 ${isFullscreen ? "max-h-screen rounded-none border-none" : "rounded-md max-h-[500px]"}`}
     >
-      <div className="grid w-full text-sm" style={{ gridTemplateColumns }}>
+      {/* Роли ARIA поверх grid-рисования: экранный диктор и e2e читают строку
+          дашборда как таблицу, хотя раскладку задаёт grid. */}
+      <div
+        className="grid w-full text-sm"
+        role="table"
+        aria-label={ariaLabel}
+        style={{ gridTemplateColumns }}
+      >
         {/* Шапка таблицы */}
         <div
+          role="row"
           className="sticky top-0 bg-muted z-20 text-[14px] font-semibold text-foreground/85 tracking-tight border-b border-slate-300 dark:border-slate-700 grid col-span-full"
           style={{ gridTemplateColumns, display: "grid" }}
         >
           <div
+            role="columnheader"
             className="text-center py-1.5 flex items-center justify-center"
             style={{ gridColumn: "date" }}
           >
@@ -686,6 +667,7 @@ function DataTable({
           </div>
           {showEntryExit && (
             <div
+              role="columnheader"
               className="text-center py-1.5 flex items-center justify-center"
               style={{ gridColumn: "time" }}
             >
@@ -693,48 +675,56 @@ function DataTable({
             </div>
           )}
           <div
+            role="columnheader"
             className="text-center py-1.5 flex items-center justify-center"
             style={{ gridColumn: "num" }}
           >
             №
           </div>
           <div
+            role="columnheader"
             className="text-center py-1.5 flex items-center justify-center"
             style={{ gridColumn: "type" }}
           >
             Тип
           </div>
           <div
+            role="columnheader"
             className="text-center py-1.5 flex items-center justify-center"
             style={{ gridColumn: "kpz" }}
           >
             № КПЗ
           </div>
           <div
+            role="columnheader"
             className="text-left py-1.5 px-2 flex items-center justify-start"
             style={{ gridColumn: "client" }}
           >
             Клиент
           </div>
           <div
+            role="columnheader"
             className="text-left py-1.5 px-2 flex items-center justify-start"
             style={{ gridColumn: "profile" }}
           >
             Профиль
           </div>
           <div
+            role="columnheader"
             className="text-center py-1.5 flex items-center justify-center"
             style={{ gridColumn: "photo" }}
           >
             Фото
           </div>
           <div
+            role="columnheader"
             className="text-center py-1.5 flex items-center justify-center"
             style={{ gridColumn: "lamels" }}
           >
             Ламели
           </div>
           <div
+            role="columnheader"
             className="text-center py-1.5 flex items-center justify-center"
             style={{ gridColumn: "color" }}
           >
@@ -744,28 +734,25 @@ function DataTable({
 
         {/* Тело таблицы */}
         {data.map((hanger, idx) => {
+          const meaning = describeHangerRow(hanger, idx);
           const profilesInfo = hanger.profiles_info || [];
-          const showPhotosBelow = profilesInfo.length > 2;
-          const badge = hanger.time_warning_code
-            ? WARNING_BADGES[hanger.time_warning_code]
-            : undefined;
-          const numAdditionalRows = showPhotosBelow || badge || hanger.is_defect ? 1 : 0;
-          const totalRowsForHanger = 1 + numAdditionalRows;
 
           return (
             <div
               key={`${hanger.number}-${idx}`}
-              className={`grid col-span-full border-b border-slate-200 dark:border-slate-800 group ${getRowClassName(hanger, idx)}`}
+              role="row"
+              className={`grid col-span-full border-b border-slate-200 dark:border-slate-800 group ${meaning.className}`}
               style={{ gridTemplateColumns, display: "grid" }}
             >
               {/* Дата и Время (с вертикальным объединением) */}
               {showEntryExit ? (
                 <>
                   <div
+                    role="cell"
                     className="text-center py-1 text-sm flex items-center justify-center"
                     style={{
                       gridColumn: "date",
-                      gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
+                      gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
                     }}
                   >
                     {formatDate(hanger.entry_date) === formatDate(hanger.exit_date) ? (
@@ -778,10 +765,11 @@ function DataTable({
                     )}
                   </div>
                   <div
+                    role="cell"
                     className="text-center py-1 text-sm flex items-center justify-center"
                     style={{
                       gridColumn: "time",
-                      gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
+                      gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
                     }}
                   >
                     <div className="flex flex-col">
@@ -792,10 +780,11 @@ function DataTable({
                 </>
               ) : (
                 <div
+                  role="cell"
                   className="text-center py-1 flex items-center justify-center"
                   style={{
                     gridColumn: "date",
-                    gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
+                    gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
                   }}
                 >
                   {hanger.date}
@@ -804,10 +793,11 @@ function DataTable({
 
               {/* Номер вешалки */}
               <div
+                role="cell"
                 className="text-center font-bold py-1 flex items-center justify-center"
                 style={{
                   gridColumn: "num",
-                  gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
+                  gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
                 }}
               >
                 {hanger.number}
@@ -815,18 +805,21 @@ function DataTable({
 
               {/* Основные параметры детали (Тип, КПЗ, Клиент) */}
               <div
+                role="cell"
                 className="text-center py-1 flex items-center justify-center"
                 style={{ gridColumn: "type", gridRow: "1" }}
               >
                 {hanger.material_type}
               </div>
               <div
+                role="cell"
                 className="text-center py-1 flex items-center justify-center"
                 style={{ gridColumn: "kpz", gridRow: "1" }}
               >
                 {hanger.kpz_number}
               </div>
               <div
+                role="cell"
                 className="text-left py-1 flex items-center justify-start truncate min-w-0 px-2"
                 style={{ gridColumn: "client", gridRow: "1" }}
                 title={hanger.client}
@@ -834,39 +827,32 @@ function DataTable({
                 {hanger.client}
               </div>
 
-              {/* Профиль и Фото в зависимости от showPhotosBelow */}
-              {showPhotosBelow ? (
+              {/* Профиль и Фото: много профилей — фото уходят на второй ряд */}
+              {meaning.photosBelow ? (
                 <div
+                  role="cell"
                   className="text-left py-1 flex items-center justify-start min-w-0 px-2"
                   style={{ gridColumn: "profile / lamels", gridRow: "1" }}
                   title={hanger.profile}
                 >
-                  <span className="truncate font-bold text-foreground">
-                    {isSticks(hanger) &&
-                    (hanger.profile === "—" || !hanger.profile || hanger.profile.trim() === "")
-                      ? "Клюшки"
-                      : hanger.profile?.replace(/\+/g, "+ ") || "—"}
-                  </span>
+                  <span className="truncate font-bold text-foreground">{meaning.profileLabel}</span>
                 </div>
               ) : (
                 <>
                   <div
+                    role="cell"
                     className="text-left py-1 flex items-center justify-start min-w-0 px-2"
                     style={{ gridColumn: "profile", gridRow: "1" }}
                     title={hanger.profile}
                   >
-                    <span className="truncate">
-                      {isSticks(hanger) &&
-                      (hanger.profile === "—" || !hanger.profile || hanger.profile.trim() === "")
-                        ? "Клюшки"
-                        : hanger.profile?.replace(/\+/g, "+ ") || "—"}
-                    </span>
+                    <span className="truncate">{meaning.profileLabel}</span>
                   </div>
                   <div
+                    role="cell"
                     className="py-1 flex items-center justify-center"
                     style={{
                       gridColumn: "photo",
-                      gridRow: `span ${totalRowsForHanger}`,
+                      gridRow: `span ${meaning.rowSpan}`,
                     }}
                   >
                     <PhotoCell hanger={hanger} onPhotoClick={onPhotoClick} />
@@ -876,10 +862,11 @@ function DataTable({
 
               {/* Ламели */}
               <div
+                role="cell"
                 className="text-center font-bold py-1 flex items-center justify-center"
                 style={{
                   gridColumn: "lamels",
-                  gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
+                  gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
                 }}
               >
                 {hanger.lamels_qty}
@@ -887,10 +874,11 @@ function DataTable({
 
               {/* Цвет */}
               <div
+                role="cell"
                 className="text-center py-1 flex items-center justify-center"
                 style={{
                   gridColumn: "color",
-                  gridRow: showPhotosBelow ? "1" : `span ${totalRowsForHanger}`,
+                  gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
                 }}
               >
                 <div className="inline-flex flex-col items-center max-w-[80px]">
@@ -904,35 +892,32 @@ function DataTable({
                 </div>
               </div>
 
-              {/* Дополнительная строка */}
-              {numAdditionalRows > 0 && (
+              {/* Вторая строка подвеса: пометки и фото профилей */}
+              {meaning.detailRow && (
                 <div
+                  role="cell"
                   className="py-1.5 px-3 flex flex-wrap items-center justify-start gap-x-4 gap-y-1.5"
                   style={{
                     gridRow: "2",
-                    gridColumn: showPhotosBelow ? "1 / -1" : "type / photo",
+                    gridColumn: meaning.photosBelow ? "1 / -1" : "type / photo",
                   }}
                 >
-                  {/* Пометки строки: причина из бэкенда + брак */}
-                  {(badge || hanger.is_defect) && (
+                  {meaning.badges.length > 0 && (
                     <div className="flex items-center gap-1.5">
-                      {badge && (
+                      {meaning.badges.map((badge) => (
                         <span
+                          key={badge.code}
                           className={`${badge.className} font-bold text-[10px] px-2 py-0.5 rounded whitespace-nowrap inline-block border`}
-                          title={hanger.time_warning ?? undefined}
+                          title={
+                            badge.code === "DEFECT" ? undefined : (hanger.time_warning ?? undefined)
+                          }
                         >
                           {badge.label}
                         </span>
-                      )}
-                      {hanger.is_defect && (
-                        <span className="text-red-700 font-bold text-[10px] px-2 py-0.5 bg-red-200 dark:bg-red-950/60 dark:text-red-400 rounded whitespace-nowrap inline-block border border-red-300/50">
-                          ⚠ БРАК
-                        </span>
-                      )}
+                      ))}
                     </div>
                   )}
-                  {/* Список профилей (только если showPhotosBelow === true) */}
-                  {showPhotosBelow && (
+                  {meaning.photosBelow && (
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                       {profilesInfo.map((prof, pIdx) => (
                         <ProfilePhoto
@@ -964,17 +949,7 @@ function SidebarQueueTable({
   isFullscreen?: boolean;
 }) {
   const filteredData = useMemo(() => {
-    const nonEmpty =
-      data?.filter((hanger) => {
-        const hasTime = hanger.time && hanger.time.trim() !== "—" && hanger.time.trim() !== "";
-        const hasProfile =
-          hanger.profile && hanger.profile.trim() !== "—" && hanger.profile.trim() !== "";
-        const hasMaterial =
-          hanger.material_type &&
-          hanger.material_type.trim() !== "—" &&
-          hanger.material_type.trim() !== "";
-        return hasTime || hasProfile || hasMaterial;
-      }) || [];
+    const nonEmpty = data?.filter((hanger) => !isBlankRow(hanger)) || [];
 
     const withoutTime = nonEmpty.filter(
       (h) => !h.time || h.time.trim() === "—" || h.time.trim() === "",
@@ -1013,17 +988,19 @@ function SidebarQueueTable({
               </TableHeader>
               <TableBody>
                 {filteredData.map((hanger, idx) => {
-                  const isSticksHanger = isSticks(hanger);
-                  let cleanedProfile = profileText(hanger.profile);
-                  if (isSticksHanger && (cleanedProfile === "—" || !cleanedProfile)) {
-                    cleanedProfile = "Клюшки";
-                  }
+                  const meaning = describeHangerRow(hanger, idx);
+                  // Боковая очередь узкая: «Клюшки» уже короткие, остальное
+                  // сжимаем до цифр книги, как и раньше.
+                  const cleanedProfile =
+                    meaning.profileLabel === STICKS_LABEL
+                      ? meaning.profileLabel
+                      : profileText(hanger.profile);
                   const displayProfile =
                     cleanedProfile.length > 8 ? cleanedProfile.slice(0, 8) + ".." : cleanedProfile;
                   return (
                     <TableRow
                       key={`sidebar-${hanger.number}-${idx}`}
-                      className={getRowClassName(hanger, idx)}
+                      className={rowClassName(hanger, idx)}
                     >
                       <TableCell className="text-center py-1.5 px-2 font-mono whitespace-nowrap">
                         {hanger.time || "—"}
@@ -1388,46 +1365,10 @@ export default function Dashboard() {
     );
   };
 
-  const hangerMetaByNumber = useMemo(() => {
-    const rows = data?.products ?? [];
-    const events = matchedEvents ?? [];
-
-    const normalizeValue = (value?: string | null): string | undefined => {
-      const trimmed = value?.trim();
-      return trimmed ? trimmed : undefined;
-    };
-    const mergeMeta = (
-      acc: Record<string, { profile?: string; color?: string }>,
-      key: string,
-      profile?: string | null,
-      color?: string | null,
-    ) => {
-      const current = acc[key] ?? {};
-      acc[key] = {
-        profile: normalizeValue(profile) ?? current.profile,
-        color: normalizeValue(color) ?? current.color,
-      };
-    };
-
-    const metaFromRows = rows.reduce<Record<string, { profile?: string; color?: string }>>(
-      (acc, row) => {
-        const key = hangerKey(row.number);
-        if (!key) return acc;
-
-        mergeMeta(acc, key, row.profile, row.color);
-        return acc;
-      },
-      {},
-    );
-
-    return events.reduce<Record<string, { profile?: string; color?: string }>>((acc, event) => {
-      const key = hangerKey(event.hanger);
-      if (!key) return acc;
-
-      mergeMeta(acc, key, event.profile, event.color);
-      return acc;
-    }, metaFromRows);
-  }, [data?.products, matchedEvents]);
+  const hangerMetaByNumber = useMemo(
+    () => mergeHangerMeta(data?.products ?? [], matchedEvents ?? []),
+    [data?.products, matchedEvents],
+  );
 
   // Выгрузка: события линии, а в режиме симуляции — подвесы, сошедшие с линии по прогону.
   const unloadRows = useMemo<HangerData[]>(() => {
@@ -1878,6 +1819,7 @@ export default function Dashboard() {
                       data={loadingRows}
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
+                      ariaLabel="Очередь загрузки"
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -1930,6 +1872,7 @@ export default function Dashboard() {
                         onPhotoClick={handlePhotoClick}
                         isFullscreen={isFullscreen}
                         showEntryExit
+                        ariaLabel="Выгрузка"
                       />
                     ) : (
                       <div className="flex flex-col items-center justify-center py-8 text-center">

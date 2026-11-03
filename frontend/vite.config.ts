@@ -20,6 +20,10 @@ function readAppVersion(): string {
   }
   return "dev";
 }
+// Куда уходят /api, /ws и /static. По умолчанию — рабочий dev-бэкенд на 8013;
+// e2e на временных портах задаёт VITE_API_TARGET и не задевает живой стенд.
+const apiTarget = process.env.VITE_API_TARGET || "http://127.0.0.1:8013";
+const wsTarget = apiTarget.replace(/^http/, "ws");
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(readAppVersion()),
@@ -37,16 +41,16 @@ export default defineConfig({
     allowedHosts: true, // Разрешить все хосты
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8013",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/ws": {
-        target: "ws://127.0.0.1:8013",
+        target: wsTarget,
         ws: true,
         rewriteWsOrigin: true,
       },
       "/static": {
-        target: "http://127.0.0.1:8013",
+        target: apiTarget,
         changeOrigin: true,
       },
     },
