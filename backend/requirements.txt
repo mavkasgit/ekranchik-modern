@@ -39,4 +39,4 @@ hypothesis==6.122.1
 python-dateutil==2.9.0.post0
 
 # OPC UA
-asyncua==0.9.9
+asyncua==2.1.0
