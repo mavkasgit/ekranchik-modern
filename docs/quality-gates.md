@@ -33,7 +33,7 @@ mise run fix       # безопасные автофиксы (ruff, oxfmt, jacti
 
 | Инструмент  | Область                                     | Конфиг                     | Что ловит                                      |
 | ----------- | ------------------------------------------- | -------------------------- | ---------------------------------------------- |
-| Ruff        | `backend/**/*.py`                           | `backend/ruff.toml`        | E4/E7/E9/F/I/UP/B/C4/SIM + формат              |
+| Ruff        | `backend/**/*.py`, `scripts/**/*.py`        | `backend/ruff.toml`        | E4/E7/E9/F/I/UP/B/C4/SIM + формат              |
 | Oxlint      | JS/TS/MTS                                   | `.oxlintrc.json`           | категория correctness, `no-unused-vars`        |
 | oxfmt       | js/ts/md/yaml/toml/json/html/css            | `.oxfmtrc.json`            | формат (Prettier-совместимый)                  |
 | Knip        | JS/TS                                       | `knip.json`                | неиспользуемые файлы, экспорты, зависимости    |
