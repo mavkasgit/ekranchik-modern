@@ -1,17 +1,51 @@
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "$schema": "https://unpkg.com/oxlint@1.90.0/configuration_schema.json",
   "plugins": ["typescript", "react", "react-hooks", "unicorn", "oxc"],
   "categories": {
     "correctness": "error"
   },
   "rules": {
-    "react-hooks/exhaustive-deps": "off",
-    "react/set-state-in-effect": "off",
-    "react/static-components": "off",
-    "react/refs": "off",
-    "react/purity": "off",
+    // Не off, а error: новые файлы проверяются. Старые экраны с известными
+    // срабатываниями перечислены в overrides ниже — бейзлайн по файлу и
+    // правилу, review 2027-05-01 (docs/quality-gates.md).
+    "react-hooks/exhaustive-deps": "error",
+    "react/set-state-in-effect": "error",
+    "react/static-components": "error",
+    "react/refs": "error",
+    "react/purity": "error",
     "eslint/no-unused-vars": ["error", { "args": "after-used", "argsIgnorePattern": "^_" }]
   },
+  "overrides": [
+    {
+      "files": ["frontend/src/hooks/useTestRun.ts"],
+      "rules": { "react/refs": "off", "react/set-state-in-effect": "off" }
+    },
+    {
+      "files": ["frontend/src/components/BathForecastTable.tsx"],
+      "rules": { "react/refs": "off" }
+    },
+    {
+      "files": [
+        "frontend/src/components/LineVisualization.tsx",
+        "frontend/src/components/HangerTracking.tsx",
+        "frontend/src/pages/OPCUAPage.tsx"
+      ],
+      "rules": { "react/set-state-in-effect": "off" }
+    },
+    {
+      "files": ["frontend/src/pages/Catalog.tsx"],
+      "rules": { "react/static-components": "off" }
+    },
+    {
+      "files": ["frontend/src/pages/Dashboard.tsx"],
+      "rules": {
+        "react/purity": "off",
+        "react/set-state-in-effect": "off",
+        "react/static-components": "off",
+        "react-hooks/exhaustive-deps": "off"
+      }
+    }
+  ],
   "env": { "builtin": true },
   "ignorePatterns": [
     "dist-exe",
