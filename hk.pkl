@@ -31,10 +31,20 @@ local commitlint = (Step) {
   check = "npx --no-install commitlint --edit {{ commit_msg_file }}"
 }
 
+local jactionlint = (Step) {
+  glob = List(".github/workflows/**/*.yml", ".github/workflows/**/*.yaml")
+  check = "jactionlint {{ files }}"
+  fix = "jactionlint --fix {{ files }}"
+}
+
 steps {
   ["ruff"] = ruff
   ["oxfmt"] = Builtins.oxfmt
   ["oxlint"] = oxlint
+  ["betterleaks"] = Builtins.betterleaks
+  ["shellcheck"] = Builtins.shellcheck
+  ["hadolint"] = Builtins.hadolint
+  ["jactionlint"] = jactionlint
 }
 
 hooks {
@@ -49,6 +59,10 @@ hooks {
       ["ruff"] = ruff
       ["oxfmt"] = Builtins.oxfmt
       ["oxlint"] = oxlint
+      ["betterleaks"] = Builtins.betterleaks
+      ["shellcheck"] = Builtins.shellcheck
+      ["hadolint"] = Builtins.hadolint
+      ["jactionlint"] = jactionlint
       ["knip"] = knip
       ["tsc"] = tsc
     }

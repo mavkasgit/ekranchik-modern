@@ -58,7 +58,7 @@ if [ "$(uname -s)" = "Linux" ]; then
         "$MOUNT_POINT не является точкой монтирования — контейнер получит пустой /app/excel. Запустите infra/mount_and_start.sh"
     [ -n "$(ls -A "$MOUNT_POINT" 2>/dev/null)" ] || fail \
         "$MOUNT_POINT смонтирован, но пуст — серверу нечего читать. Проверьте доступ к шаре //172.17.11.7/Оператор"
-    echo "[deploy] Диск на месте: $MOUNT_POINT ($(ls -A "$MOUNT_POINT" | wc -l) записей)"
+    echo "[deploy] Диск на месте: $MOUNT_POINT ($(find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 | wc -l) записей)"
 fi
 
 # 2. Сборка и пересоздание.

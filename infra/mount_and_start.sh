@@ -101,7 +101,7 @@ mountpoint -q "$MOUNT_POINT" || {
     echo "ОШИБКА: $MOUNT_POINT смонтирован, но пуст — серверу нечего читать" >&2
     exit 1
 }
-echo "Сетевой диск на месте: $MOUNT_POINT ($(ls -A "$MOUNT_POINT" | wc -l) записей)"
+echo "Сетевой диск на месте: $MOUNT_POINT ($(find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 | wc -l) записей)"
 
 # 7. Запуск Docker Compose — через общий скрипт: он же проверяет, что книга
 # видна изнутри контейнера, и падает с кодом 1, если нет.
