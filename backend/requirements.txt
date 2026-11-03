@@ -36,7 +36,7 @@ pytest-asyncio==0.24.0
 hypothesis==6.122.1
 
 # Utilities
-python-dateutil==2.9.0.post0
+python-dateutil==3.0.0
 
 # OPC UA
 asyncua==2.1.0
