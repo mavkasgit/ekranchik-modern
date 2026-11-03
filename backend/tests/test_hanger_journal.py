@@ -13,6 +13,7 @@
 (``matching.match_log_line``), но разобранный: JSONL и грепается, и читается
 без регулярных выражений.
 """
+
 import json
 import logging
 from datetime import datetime, timedelta
@@ -161,7 +162,8 @@ def test_old_files_removed_with_a_log_record(store, caplog):
 
 def test_prune_keeps_files_inside_retention(store):
     """Журнал текущих суток и вчерашний не трогаются."""
-    store.append(_record())
+    today = datetime.now().strftime("%Y-%m-%dT")
+    store.append(_record(exit_at=today + "20:16:03"))
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     recent = store.directory / f"hanger-passes-{yesterday}.jsonl"
     recent.write_text(json.dumps(_record(cycle_id=7)) + "\n", encoding="utf-8")
@@ -215,9 +217,7 @@ def test_query_sorts_by_exit_and_delta(store):
     assert [r["hanger"] for r in by_delta] == [1, 3, 2]
 
     # Проход без строки книги расхождения не имеет и в конец не встаёт.
-    store.append(
-        _record(hanger=4, cycle_id=4, exit_at="2026-09-29T20:00:00", code="NO_ROW", delta=None)
-    )
+    store.append(_record(hanger=4, cycle_id=4, exit_at="2026-09-29T20:00:00", code="NO_ROW", delta=None))
     tail = store.query(sort="entry_delta_sec", direction="asc").items
     assert tail[-1]["hanger"] == 4
 
@@ -229,7 +229,7 @@ def test_query_paginates(store):
             _record(
                 hanger=index,
                 cycle_id=100 + index,
-                exit_at="2026-09-29T{:02d}:00:00".format(index),
+                exit_at=f"2026-09-29T{index:02d}:00:00",
             )
         )
 
