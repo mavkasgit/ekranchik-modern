@@ -31,19 +31,19 @@ mise run fix       # безопасные автофиксы (ruff, oxfmt, jacti
 
 ## Что проверяется
 
-| Инструмент  | Область                                     | Конфиг                     | Что ловит                                      |
-| ----------- | ------------------------------------------- | -------------------------- | ---------------------------------------------- |
-| Ruff        | `backend/**/*.py`                           | `backend/ruff.toml`        | E4/E7/E9/F/I/UP/B/C4/SIM + формат              |
-| Oxlint      | JS/TS/MTS                                   | `.oxlintrc.json`           | категория correctness, `no-unused-vars`        |
-| oxfmt       | js/ts/md/yaml/toml/json/html/css            | `.oxfmtrc.json`            | формат (Prettier-совместимый)                  |
-| Knip        | JS/TS                                       | `knip.json`                | неиспользуемые файлы, экспорты, зависимости    |
-| TypeScript  | `frontend/**/*.{ts,tsx}`                    | `frontend/tsconfig.json`   | `tsc --noEmit`, `strict`                       |
-| betterleaks | весь репозиторий                            | —                          | закоммиченные секреты                          |
-| ShellCheck  | `**/*.sh`                                   | —                          | ошибки и переносимость shell                   |
-| Hadolint    | `**/Dockerfile*`                            | `.hadolint.yaml`           | практики Dockerfile                            |
-| jactionlint | `.github/workflows/*.yml`, `dependabot.yml` | `.github/jactionlint.yaml` | корректность, security и policy GitHub Actions |
-| commitlint  | сообщения коммитов                          | `commitlint.config.js`     | Conventional Commits                           |
-| OSV-Scanner | lock-файлы                                  | —                          | известные уязвимости (только по расписанию)    |
+| Инструмент  | Область                                     | Конфиг                                                                | Что ловит                                      |
+| ----------- | ------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------- |
+| Ruff        | `backend/**/*.py`, `scripts/**/*.py`        | `backend/ruff.toml` (backend), `ruff.toml` (scripts, extends backend) | E4/E7/E9/F/I/UP/B/C4/SIM + формат              |
+| Oxlint      | JS/TS/MTS                                   | `.oxlintrc.json`                                                      | категория correctness, `no-unused-vars`        |
+| oxfmt       | js/ts/md/yaml/toml/json/html/css            | `.oxfmtrc.json`                                                       | формат (Prettier-совместимый)                  |
+| Knip        | JS/TS                                       | `knip.json`                                                           | неиспользуемые файлы, экспорты, зависимости    |
+| TypeScript  | `frontend/**/*.{ts,tsx}`                    | `frontend/tsconfig.json`                                              | `tsc --noEmit`, `strict`                       |
+| betterleaks | весь репозиторий                            | —                                                                     | закоммиченные секреты                          |
+| ShellCheck  | `**/*.sh`                                   | —                                                                     | ошибки и переносимость shell                   |
+| Hadolint    | `**/Dockerfile*`                            | `.hadolint.yaml`                                                      | практики Dockerfile                            |
+| jactionlint | `.github/workflows/*.yml`, `dependabot.yml` | `.github/jactionlint.yaml`                                            | корректность, security и policy GitHub Actions |
+| commitlint  | сообщения коммитов                          | `commitlint.config.js`                                                | Conventional Commits                           |
+| OSV-Scanner | lock-файлы                                  | —                                                                     | известные уязвимости (только по расписанию)    |
 
 ## Бейзлайны и исключения
 

@@ -150,6 +150,11 @@ async def get_file_status():
         if not path:
             return FileStatus(is_open=False, status_text="Путь не настроен", error="EXCEL_FILE_PATH не указан в .env")
 
+        # Тот же текст, что в /settings и в ответе выбора: иначе относительный
+        # путь из конфигурации (``../testdata/…``) уходил бы в статус как есть,
+        # а остальные поверхности показывали разрешённый.
+        path = path.resolve()
+
         # Check if file exists
         if not path.exists():
             return FileStatus(
@@ -420,8 +425,9 @@ def _warning_for(m: CycleMatch):
 
     На экране живут только метки, которые оператор может понять и на которые
     может отреагировать: долгий проход и выгрузка без прохода. Расхождение
-    входа на экран не идёт — допуск не откалиброван, а ложная метка хуже
-    пропущенной; расхождение видно в журнале (``match_log_line``).
+    входа на экран не идёт и после калибровки: это вердикт подбора, а не
+    состояние прохода, а ложная метка хуже пропущенной; расхождение видно
+    в журнале (``match_log_line``).
     """
     if m.code == CODE_CYCLE_ERROR:
         return CODE_CYCLE_ERROR, "line_monitor не нашёл открытого цикла для этого выхода"
@@ -462,7 +468,7 @@ async def get_settings():
     return SettingsResponse(
         simulation_enabled=settings.SIMULATION_ENABLED,
         excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
-        opcua_endpoint=opcua_service._url,
+        opcua_endpoint=opcua_service.endpoint,
     )
 
 
@@ -509,7 +515,7 @@ async def update_settings(request: SettingsUpdateRequest):
         return SettingsResponse(
             simulation_enabled=settings.SIMULATION_ENABLED,
             excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
-            opcua_endpoint=opcua_service._url,
+            opcua_endpoint=opcua_service.endpoint,
         )
     except Exception as e:
         logger.error(f"[DASHBOARD API] Failed to update settings: {e}", exc_info=True)

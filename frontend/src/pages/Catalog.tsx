@@ -74,6 +74,9 @@ type ViewMode = "grid" | "table";
 type SortField = "name" | "updated_at" | "has_photo";
 type SortDirection = "asc" | "desc";
 
+/** Область обрезки в процентах от исходного изображения. */
+type CropArea = { x: number; y: number; width: number; height: number };
+
 const STORAGE_KEYS = {
   viewMode: "catalog_view_mode",
   sortField: "catalog_sort_field",
@@ -362,51 +365,54 @@ function ProfileDialog({
     setCropArea({ x: 0, y: 0, width: 0, height: 0 });
   }, []);
 
-  // Crop thumbnail image
+  // Обрезка по области в процентах: одна функция на оба сценария — эскиз из
+  // отдельного файла и эскиз из основного фото. Размеры берутся у исходника, а
+  // не у элемента на экране: резать можно и фото, которое ещё не отрисовано.
+  const cropPercentArea = useCallback(
+    async (sourceUrl: string | null, area: CropArea): Promise<File | null> => {
+      if (!sourceUrl) return null;
+      if (area.width === 0 || area.height === 0) return null;
+
+      return new Promise((resolve) => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+
+        const image = new window.Image();
+        image.crossOrigin = "anonymous";
+        image.onload = () => {
+          const cropX = (area.x / 100) * image.naturalWidth;
+          const cropY = (area.y / 100) * image.naturalHeight;
+          const cropW = (area.width / 100) * image.naturalWidth;
+          const cropH = (area.height / 100) * image.naturalHeight;
+
+          canvas.width = cropW;
+          canvas.height = cropH;
+          ctx.drawImage(image, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+          canvas.toBlob(
+            (blob) => {
+              resolve(blob ? new File([blob], "thumbnail.jpg", { type: "image/jpeg" }) : null);
+            },
+            "image/jpeg",
+            0.9,
+          );
+        };
+        image.onerror = () => resolve(null);
+        image.src = sourceUrl;
+      });
+    },
+    [],
+  );
+
+  // Отдельный эскиз: если область не нарисована, остаётся исходный файл.
   const cropThumbnailImage = useCallback(async (): Promise<File | null> => {
-    if (!separateThumbnailUrl) return null;
-
-    // If no crop area, return original file
-    if (thumbnailCropArea.width === 0 || thumbnailCropArea.height === 0) {
-      return separateThumbnailFile;
-    }
-
-    return new Promise((resolve) => {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        resolve(separateThumbnailFile);
-        return;
-      }
-
-      const image = new window.Image();
-      image.crossOrigin = "anonymous";
-      image.onload = () => {
-        const cropX = (thumbnailCropArea.x / 100) * image.naturalWidth;
-        const cropY = (thumbnailCropArea.y / 100) * image.naturalHeight;
-        const cropW = (thumbnailCropArea.width / 100) * image.naturalWidth;
-        const cropH = (thumbnailCropArea.height / 100) * image.naturalHeight;
-
-        canvas.width = cropW;
-        canvas.height = cropH;
-        ctx.drawImage(image, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              resolve(new File([blob], "thumbnail.jpg", { type: "image/jpeg" }));
-            } else {
-              resolve(separateThumbnailFile);
-            }
-          },
-          "image/jpeg",
-          0.9,
-        );
-      };
-      image.onerror = () => resolve(separateThumbnailFile);
-      image.src = separateThumbnailUrl;
-    });
-  }, [separateThumbnailUrl, thumbnailCropArea, separateThumbnailFile]);
+    const cropped = await cropPercentArea(separateThumbnailUrl, thumbnailCropArea);
+    return cropped ?? separateThumbnailFile;
+  }, [cropPercentArea, separateThumbnailUrl, thumbnailCropArea, separateThumbnailFile]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -459,47 +465,10 @@ function ProfileDialog({
 
   // Crop the image using canvas
   // cropArea stores percentages (0-100), convert to actual pixels
-  const cropImage = useCallback(async (): Promise<File | null> => {
-    const img = imgRef.current;
-    if (!img || !previewUrl) return null;
-
-    return new Promise((resolve) => {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        resolve(null);
-        return;
-      }
-
-      const image = new window.Image();
-      image.crossOrigin = "anonymous";
-      image.onload = () => {
-        // Convert percentage to actual pixels on the original image
-        const cropX = (cropArea.x / 100) * image.naturalWidth;
-        const cropY = (cropArea.y / 100) * image.naturalHeight;
-        const cropW = (cropArea.width / 100) * image.naturalWidth;
-        const cropH = (cropArea.height / 100) * image.naturalHeight;
-
-        canvas.width = cropW;
-        canvas.height = cropH;
-        ctx.drawImage(image, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              resolve(new File([blob], "thumbnail.jpg", { type: "image/jpeg" }));
-            } else {
-              resolve(null);
-            }
-          },
-          "image/jpeg",
-          0.9,
-        );
-      };
-      image.onerror = () => resolve(null);
-      image.src = previewUrl;
-    });
-  }, [previewUrl, cropArea]);
+  const cropImage = useCallback(
+    async (): Promise<File | null> => cropPercentArea(previewUrl, cropArea),
+    [cropPercentArea, previewUrl, cropArea],
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

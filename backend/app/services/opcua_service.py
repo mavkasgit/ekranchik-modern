@@ -97,6 +97,16 @@ class OPCUAService:
         return self._connected
 
     @property
+    def endpoint(self) -> str:
+        """Эндпоинт, на который сервис подключается сейчас."""
+        return self._url
+
+    @property
+    def poll_interval(self) -> float:
+        """Период опроса PLC, секунд."""
+        return self._poll_interval
+
+    @property
     def state(self) -> OPCUAState:
         return self._state
 
@@ -199,6 +209,11 @@ class OPCUAService:
         self._state = OPCUAState.DISCONNECTED
         logger.info("[OPC UA] Остановка сервиса...")
 
+    @property
+    def cache_size(self) -> int:
+        """Сколько узлов лежит в кэше прямо сейчас."""
+        return len(self._cache)
+
     def get_value(self, node_id: str) -> Any:
         """
         Мгновенно вернуть значение из памяти (RAM).
@@ -218,6 +233,19 @@ class OPCUAService:
         НЕ делает сетевых запросов — только чтение из RAM.
         """
         return self.get_value(node_id)
+
+    def set_value(self, node_id: str, value: Any) -> None:
+        """Положить значение узла в кэш, не дожидаясь опроса.
+
+        Опрос PLC ведёт воркер. Этот метод — для источников значений внутри
+        процесса (симулятор, стенд, тесты): сетевого цикла у них нет, а
+        остальной код должен видеть обычный кэш.
+        """
+        self._cache[node_id] = value
+
+    def clear_cache(self) -> None:
+        """Забыть все прочитанные значения узлов."""
+        self._cache.clear()
 
     def register_nodes(self, node_ids: list[str]) -> None:
         """

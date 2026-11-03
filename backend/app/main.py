@@ -35,6 +35,7 @@ from app.api.websockets import router as websocket_router
 from app.core.config import settings
 from app.core.version import get_app_version
 from app.db.startup import ensure_data_dirs, run_startup_migrations
+from app.services.excel_service import excel_service
 from app.services.excel_watcher import excel_watcher
 from app.services.journal_writer import journal_writer
 from app.services.line_monitor import line_monitor
@@ -78,15 +79,18 @@ async def lifespan(app: FastAPI):
     # Заводская машина (ADR 0002): каталог данных + миграции до старта сервисов.
     ensure_data_dirs()
     await run_startup_migrations()
-    # Start ExcelWatcher
-    if settings.excel_path and settings.excel_path.exists():
-        excel_watcher.start()
+    # Start ExcelWatcher. Какой файл активен, решает excel_service (выбор из
+    # интерфейса перекрывает конфигурацию), поэтому watcher стартует от него,
+    # а не от settings: иначе выбор оператора не наблюдался бы до перезапуска.
+    if excel_watcher.is_running:
+        logger.info("[STARTUP] ExcelWatcher already running")
+    elif excel_watcher.start():
         logger.info("[STARTUP] ExcelWatcher started")
     else:
-        logger.warning("[STARTUP] Excel path not configured, ExcelWatcher not started")
+        logger.warning("[STARTUP] ExcelWatcher not started: активная книга недоступна")
         # Пустой каталог книги — не «файл не найден», а не смонтированный
         # сетевой диск: без явного текста причина ищется наугад.
-        book_dir = settings.excel_path.parent if settings.excel_path else None
+        book_dir = excel_service.directory
         if book_dir is not None and book_dir.exists():
             try:
                 empty = next(book_dir.iterdir(), None) is None

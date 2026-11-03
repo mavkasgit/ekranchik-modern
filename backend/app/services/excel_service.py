@@ -148,9 +148,9 @@ class ExcelService:
         path = Path(self._active_file_name)
         if path.is_absolute() or path.root or share_tail(self._active_file_name):
             return path
-        if not settings.excel_path:
+        if not settings.configured_excel_path:
             return None
-        return settings.excel_path.parent / path
+        return settings.configured_excel_path.parent / path
 
     @property
     def current_path(self) -> Path | None:
@@ -165,11 +165,11 @@ class ExcelService:
         """
         chosen = self._resolved_active()
         if chosen is None:
-            return settings.excel_path
+            return settings.configured_excel_path
         if path_exists(chosen):
             return chosen
 
-        configured = settings.excel_path
+        configured = settings.configured_excel_path
         if configured is not None and path_exists(configured):
             if self._warned_about != self._active_file_name:
                 self._warned_about = self._active_file_name
@@ -186,7 +186,7 @@ class ExcelService:
         Один владелец правила для списка файлов, выбора по пути и подсказки в
         ошибке: сначала каталог активной книги, затем каталог из конфигурации.
         """
-        for candidate in (self.current_path, settings.excel_path):
+        for candidate in (self.current_path, settings.configured_excel_path):
             if candidate and path_exists(candidate.parent):
                 return candidate.parent
         return None
@@ -230,6 +230,33 @@ class ExcelService:
         self._cache = None
         self._cache_mtime = None
         self._cache_path = None
+
+    @property
+    def active_file_name(self) -> str | None:
+        """Книга, выбранная в этой сессии, либо ``None`` — берём из настроек.
+
+        Это выбор, а не итоговый путь: несуществующий на этой машине файл
+        ``current_path`` подменяет конфигурацией.
+        """
+        return self._active_file_name
+
+    def use_file(self, file_path: str | None) -> None:
+        """Читать книгу из указанного файла, не запоминая выбор.
+
+        ``set_active_file`` пишет выбор в ``static/active_excel.json`` — он
+        переживает перезапуск. Стенду и тестам нужна книга на один прогон:
+        иначе подставленный файл переключил бы рабочий стенд.
+        """
+        self._active_file_name = file_path
+        # Новая подстановка — новый выбор: память о предупреждении про прежний
+        # выбор к нему не относится.
+        self._warned_about = None
+        self.invalidate_cache()
+
+    @property
+    def has_cached_data(self) -> bool:
+        """В памяти лежит разобранный лист книги."""
+        return self._cache is not None
 
     def _is_cache_valid(self, file_path: Path) -> bool:
         """Check if cached data is still valid."""
