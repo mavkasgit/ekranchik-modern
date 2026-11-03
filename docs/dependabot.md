@@ -63,7 +63,7 @@ Dependabot двигает по одному пакету, а версии в с�
 - OSV — по понедельникам, не блокирует PR.
 
 E2E в CI пока нет: `live_demo.spec.mts` требует симулятор и отдельный job.
-Локально: `npm run dev:sim`, затем `npm run chrome:debug` и `npm run test:e2e`;
+Локально: `npm run dev:sim:fast`, затем `npm run chrome:debug` и `npm run test:e2e`;
 без CDP — `E2E_BROWSER_MODE=headless` и `CHROME_PATH`.
 
 ## Если PR всё равно красный

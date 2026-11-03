@@ -9,6 +9,7 @@ npm run install-all     # node-зависимости + фронтенд
 npm run setup:python    # backend/.venv на Python 3.12: системный python и pip не использовать
 npm run dev             # бэкенд :8013 + фронтенд :5173, рабочий режим (реальный PLC и книга)
 npm run dev:sim         # то же + OPC UA симулятор и SIMULATION_ENABLED=true
+npm run dev:sim:fast    # то же, но симулятор в профиле fast: ~70 с на проход вместо ~25 мин
 npm run dev:kill        # освободить порты
 ```
 
@@ -23,8 +24,13 @@ cd backend && .venv/Scripts/python -m pytest tests/test_hanger_journal.py -k day
 перезапустить, иначе тесты зелёные, а стенд отдаёт старый код.
 
 E2E (`npm run test:e2e`) требует запуска фронтенда и Chrome с CDP на 9222 —
-сначала `npm run chrome:debug`; `live_demo.spec.mts` рассчитывает на
-симулятор, то есть на `npm run dev:sim`.
+сначала `npm run chrome:debug`; `live_demo.spec.mts` рассчитывает на быстрый
+симулятор, то есть на `npm run dev:sim:fast`. На штатном `npm run dev:sim`
+проход занимает ~25 минут (10 ванн × 120 с + 9 переходов × 30 с) и в таймаут
+теста не укладывается: это ограничение симулятора, а не теста. Таймаут теста
+задаётся `E2E_LIVE_TIMEOUT` (мс), по умолчанию 180000. Быстрый профиль пишет
+журнал в `journal-e2e/`, чтобы короткие проходы не попадали в калибровку
+`journal-dev/`.
 
 ## Проверки перед сдачей
 

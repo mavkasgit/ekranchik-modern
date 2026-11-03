@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import sys
 import tkinter as tk
 from datetime import datetime, timedelta
@@ -28,6 +29,7 @@ class SimulatorConfig:
         self.manual_recipe = []  # Сохраненный рецепт для ручного режима
         self.manual_transition_time = 30  # Время перехода для ручного режима
         self.recipes = {}  # База рецептов для вкладок: {"1": {"steps": [...], "transition_time": 30}, ...}
+        self.auto_spawn = False  # Автозапуск подвесов без участия GUI (профиль из env)
         self._next_id = 1
 
     def get_next_id(self):
@@ -39,6 +41,41 @@ class SimulatorConfig:
     def set_next_id(self, val):
         """Установить начальный ID (например, из GUI)"""
         self._next_id = max(self._next_id, val)
+
+    def apply_env_profile(self) -> None:
+        """Наложить профиль запуска из env поверх simulator_config.json.
+
+        ``SIM_PROFILE=fast`` — режим для e2e и быстрых демонстраций: проход по
+        всей линии занимает около 70 секунд вместо ~25 минут. Явные ``SIM_*``
+        важнее профиля, а профиль важнее сохранённого файла: локальный
+        ``simulator_config.json`` не должен незаметно менять скорость прогона.
+        """
+        if os.getenv("SIM_PROFILE", "").strip().lower() == "fast":
+            self.time_in_bath = 5  # проход: 10 ванн × 5 с + 9 переходов × 2 с
+            self.bath_transition_time = 2
+            self.hanger_spawn_interval = 90  # один подвес в проходе, без гонки в таблице
+            self.max_hangers = 1
+            self.manual_recipe = []  # иначе локальный рецепт переопределит тайминги
+            self.auto_spawn = True
+
+        int_overrides = {
+            "SIM_TIME_IN_BATH": "time_in_bath",
+            "SIM_TRANSITION_SECONDS": "bath_transition_time",
+            "SIM_SPAWN_INTERVAL": "hanger_spawn_interval",
+            "SIM_MAX_HANGERS": "max_hangers",
+        }
+        for env_name, attr in int_overrides.items():
+            raw = os.getenv(env_name)
+            if raw is None or raw.strip() == "":
+                continue
+            try:
+                setattr(self, attr, int(raw))
+            except ValueError:
+                logger.warning("[CONFIG] %s=%s is not an integer, ignored", env_name, raw)
+
+        auto_spawn = os.getenv("SIM_AUTO_SPAWN")
+        if auto_spawn is not None and auto_spawn.strip() != "":
+            self.auto_spawn = auto_spawn.strip().lower() in ("1", "true", "yes", "on")
 
     def save(self, filepath: str = "simulator_config.json"):
         """Сохранить конфигурацию в файл"""
@@ -231,7 +268,7 @@ class ManualHangerWindow:
     def show(self):
         """Показать окно ручного режима с мониторингом"""
         self.root = tk.Tk()
-        self.auto_spawn_var = tk.BooleanVar(value=False)
+        self.auto_spawn_var = tk.BooleanVar(value=self.config.auto_spawn)
         self.spawn_interval_var = tk.IntVar(value=self.config.hanger_spawn_interval)
 
         # Слушатель для обновления интервала в конфиге в реальном времени
@@ -969,10 +1006,11 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
 
             current_time = datetime.now()
 
-            # 1. Смена режима: проверяем галочку в GUI
-            auto_mode_active = False
+            # 1. Смена режима: проверяем галочку в GUI, а флаг из env
+            # (SIM_AUTO_SPAWN / SIM_PROFILE=fast) работает без GUI.
+            auto_mode_active = bool(config.auto_spawn)
             if manual_window.auto_spawn_var:
-                auto_mode_active = manual_window.auto_spawn_var.get()
+                auto_mode_active = auto_mode_active or bool(manual_window.auto_spawn_var.get())
 
             # Если только что включили автозапуск - сбрасываем таймер для мгновенного первого спавна
             if auto_mode_active and not last_auto_mode:
@@ -987,8 +1025,9 @@ async def run_opcua_server_simulation(config: SimulatorConfig):
             ):
                 # Используем централизованный ID из конфига
                 h_id = config.get_next_id()
-                # Синхронизируем GUI
-                manual_window.hanger_id_var.set(h_id + 1)
+                # Синхронизируем GUI (при автозапуске из env он может быть ещё не готов)
+                if manual_window.hanger_id_var:
+                    manual_window.hanger_id_var.set(h_id + 1)
 
                 # Получаем рецепт из текущих настроек (поля GUI, сохраненные в конфиг)
                 baths = []
@@ -1100,6 +1139,7 @@ if __name__ == "__main__":
     # Load configuration
     config = SimulatorConfig()
     config.load()
+    config.apply_env_profile()
 
     # Run simulator with configuration
     try:

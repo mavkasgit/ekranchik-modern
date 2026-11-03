@@ -22,4 +22,3 @@ extend-immutable-calls = ["fastapi.File", "fastapi.Query", "fastapi.Form", "fast
 "alembic/**/*.py" = ["E402"]
 # Конфесты pytest: sys.path/runtime-подгонки до импорта app — намеренно.
 "tests/conftest.py" = ["E402"]
-"tests/custom_simulator.py" = ["E402"]

@@ -5,6 +5,11 @@ import { colorName } from "../../frontend/src/lib/domain/color";
 const BASE_URL = process.env.E2E_BASE_URL || "http://127.0.0.1:5173";
 const API_URL = process.env.E2E_API_URL || `${BASE_URL}/api`;
 
+// Полный проход на `npm run dev:sim` идёт ~25 минут (120 с на ванну), поэтому
+// live_demo запускается на `npm run dev:sim:fast` (~70 с на проход). Таймаут
+// вынесен в env: на медленном стенде его поднимают, не трогая код теста.
+const LIVE_TIMEOUT_MS = Number(process.env.E2E_LIVE_TIMEOUT ?? 180_000);
+
 interface MatchedUnloadEvent {
   hanger: number;
   client: string;
@@ -62,7 +67,7 @@ function profileCellText(profile: string): RegExp | string {
 
 test.describe("OPC UA Hanger Realtime Live Demo", () => {
   test("подвес проходит линию и появляется в таблице выгрузки", async ({ connectedPage: page }) => {
-    test.setTimeout(180000);
+    test.setTimeout(LIVE_TIMEOUT_MS);
 
     // 1. Страница мониторинга OPC UA: подключаемся и смотрим линию.
     await page.goto(`${BASE_URL}/opcua`);

@@ -47,6 +47,7 @@ static/ekranchik_backup_*.db
 static/journal/
 journal/
 journal-dev/
+journal-e2e/
 
 # Data folders
 # static/images/*
@@ -115,7 +116,6 @@ static/active_excel_prod_sim.json
 
 # Local Cache & Logs
 backend/hangers_cache.json
-backend/custom_simulator.log
 chrome_output.log
 chrome_stderr.log
 chrome_stdout.log
