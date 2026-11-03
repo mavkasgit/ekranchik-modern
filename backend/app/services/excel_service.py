@@ -248,6 +248,9 @@ class ExcelService:
         иначе подставленный файл переключил бы рабочий стенд.
         """
         self._active_file_name = file_path
+        # Новая подстановка — новый выбор: память о предупреждении про прежний
+        # выбор к нему не относится.
+        self._warned_about = None
         self.invalidate_cache()
 
     @property

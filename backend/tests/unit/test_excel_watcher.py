@@ -58,7 +58,7 @@ def active_book(tmp_path, monkeypatch):
 
     monkeypatch.setattr(settings, "SIMULATION_ENABLED", False)
     monkeypatch.setattr(settings, "EXCEL_REAL_FILE_PATH", str(configured))
-    monkeypatch.setattr(excel_service, "_active_file_name", str(book))
+    excel_service.use_file(str(book))
 
     real_exists = Path.exists
     monkeypatch.setattr(
