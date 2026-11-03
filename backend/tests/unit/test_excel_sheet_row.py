@@ -16,14 +16,19 @@ def _frame(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _service(monkeypatch, df: pd.DataFrame) -> ExcelService:
+def _service(monkeypatch, df: pd.DataFrame, tmp_path) -> ExcelService:
     service = ExcelService()
     service._cache = df
+    # get_dataframe сначала проверяет current_path: на машине без книги он
+    # вернул бы пустой кадр, и тест зависел бы от backend/.env разработчика.
+    book = tmp_path / "book.xlsm"
+    book.touch()
+    monkeypatch.setattr(ExcelService, "current_path", property(lambda self: book))
     monkeypatch.setattr(service, "_is_cache_valid", lambda path: True)
     return service
 
 
-def test_sheet_row_points_at_the_same_line_in_the_book(monkeypatch):
+def test_sheet_row_points_at_the_same_line_in_the_book(monkeypatch, tmp_path):
     """Номер строки листа совпадает с той же строкой при перечитывании листа.
 
     Читаем книгу, берём строку, затем читаем ЛИСТ ЦЕЛИКОМ и ищем то же
@@ -36,7 +41,7 @@ def test_sheet_row_points_at_the_same_line_in_the_book(monkeypatch):
             {"date": "2026-09-29", "number": 7, "time": "11:15", "profile": "Урны"},
         ]
     )
-    rows = _service(monkeypatch, df).get_products(limit=10)
+    rows = _service(monkeypatch, df, tmp_path).get_products(limit=10)
 
     # Лист целиком: те же строки, но индексы с нуля и без пропуска шапки.
     whole_sheet = pd.DataFrame(
@@ -56,7 +61,7 @@ def test_sheet_row_points_at_the_same_line_in_the_book(monkeypatch):
     assert last.sheet_row == expected == 6, "третья строка данных идёт шестой"
 
 
-def test_sheet_row_is_not_off_by_one_on_the_neighbour(monkeypatch):
+def test_sheet_row_is_not_off_by_one_on_the_neighbour(monkeypatch, tmp_path):
     """Соседняя строка — уже чужой подвес, поэтому смещение на единицу нельзя.
 
     Ошибка на единицу не бросается в глаза: книга большая, и рядом всегда
@@ -68,7 +73,7 @@ def test_sheet_row_is_not_off_by_one_on_the_neighbour(monkeypatch):
             {"date": "2026-09-29", "number": 6, "time": "09:30", "profile": "рейка"},
         ]
     )
-    rows = _service(monkeypatch, df).get_products(limit=10)
+    rows = _service(monkeypatch, df, tmp_path).get_products(limit=10)
     by_time = {r.time: r for r in rows}
 
     assert by_time["08:00"].sheet_row == 4, "первая строка данных идёт под номером 4"
@@ -76,14 +81,14 @@ def test_sheet_row_is_not_off_by_one_on_the_neighbour(monkeypatch):
     assert by_time["09:30"].sheet_row != by_time["08:00"].sheet_row
 
 
-def test_row_number_is_the_number_written_in_the_row_not_the_sheet_row(monkeypatch):
+def test_row_number_is_the_number_written_in_the_row_not_the_sheet_row(monkeypatch, tmp_path):
     """«№ по порядку» из строки и номер строки ЛИСТА — разные числа."""
     df = _frame(
         [
             {"date": "2026-09-29", "number": 57, "time": "19:33", "profile": "361"},
         ]
     )
-    row = _service(monkeypatch, df).get_products(limit=10)[0]
+    row = _service(monkeypatch, df, tmp_path).get_products(limit=10)[0]
 
     assert row.number == 57, "это написано в самой строке"
     assert row.sheet_row == 4, "это адрес строки в листе"

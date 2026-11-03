@@ -2,6 +2,7 @@
 каталоги и миграции при старте."""
 
 import sqlite3
+import sys
 
 import pytest
 
@@ -28,6 +29,7 @@ def clean_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="LOCALAPPDATA и пути Windows: заводская машина")
 def test_localappdata_is_default_data_home(clean_env, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\op\AppData\Local")
     s = Settings(_env_file=None)
