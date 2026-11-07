@@ -154,6 +154,22 @@ def test_copy_error_leaves_no_tmp_and_no_backup(book, monkeypatch):
     assert list(folder.iterdir()) == []
 
 
+def test_mkdir_is_retried_three_times(book, monkeypatch):
+    """На read-only шаре падает именно mkdir — он входит в те же 3 попытки."""
+    calls: list[Path] = []
+
+    def failing_mkdir(self, *args, **kwargs):
+        calls.append(self)
+        raise PermissionError("read-only share")
+
+    monkeypatch.setattr(Path, "mkdir", failing_mkdir)
+
+    result = backup_once(now=NOW)
+
+    assert result == BackupStatus.FAILED
+    assert len(calls) == excel_backup.COPY_ATTEMPTS
+
+
 def test_same_minute_gets_suffix_and_keeps_existing(book):
     folder = book.parent / "Учет КПЗ 2026_backup"
     existing = make_backup(folder, NOW, content=b"old")
@@ -204,6 +220,20 @@ def test_rotation_runs_even_when_copy_fails(book, monkeypatch):
     result = backup_once(now=NOW)
 
     assert result == BackupStatus.FAILED
+    assert not stale.exists()
+    assert keeper.exists()
+
+
+def test_rotation_runs_when_book_is_missing(book):
+    """Книга пропала, но папка копий известна — ротация всё равно идёт."""
+    folder = book.parent / "Учет КПЗ 2026_backup"
+    stale = make_backup(folder, NOW - timedelta(days=400))
+    keeper = make_backup(folder, NOW - timedelta(days=399))
+    book.unlink()
+
+    result = backup_once(now=NOW)
+
+    assert result == BackupStatus.SKIPPED_MISSING
     assert not stale.exists()
     assert keeper.exists()
 
@@ -259,7 +289,9 @@ def test_weekly_level_keeps_newest_of_each_of_last_7_iso_weeks(tmp_path):
     for weeks_ago in range(10):
         week_monday = monday - timedelta(weeks=weeks_ago)
         for offset in (0, 4):
-            moment = datetime.combine((week_monday + timedelta(days=offset)).date(), datetime.min.time()).replace(hour=12)
+            moment = datetime.combine((week_monday + timedelta(days=offset)).date(), datetime.min.time()).replace(
+                hour=12
+            )
             moments.append(moment)
             make_backup(folder, moment)
 

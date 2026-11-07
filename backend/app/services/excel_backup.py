@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import NamedTuple
 
 from app.core.config import settings
 from app.services.excel_service import excel_service, path_exists
@@ -36,7 +37,7 @@ KEEP_2H = 24  # двухчасовых копий
 KEEP_2H_HOURS = 48  # столько часов они покрывают
 KEEP_DAILY = 7  # по одной копии за каждый из последних 7 дней
 KEEP_WEEKLY = 7  # по одной за каждую из последних 7 ISO-недель
-KEEP_MONTHLY = 0  # 0 = месячные не удаляются никогда
+# Месячные копии не удаляются никогда — отдельной константы-лимита нет.
 
 # Расписание: цикл просыпается часто, а попытка идёт не чаще интервала.
 # Так рестарт и перевод часов не сбивают расписание — с «ровно в 00:00, 02:00»
@@ -67,10 +68,18 @@ class BackupStatus(StrEnum):
     FAILED = "failed"
 
 
-# Последняя ошибка, о которой уже сказали в лог. Ошибка повторяется каждые
+class BackupEntry(NamedTuple):
+    """Своя копия в папке: время из имени, суффикс минуты и путь."""
+
+    moment: datetime
+    sequence: int
+    path: Path
+
+
+# Последнее состояние, о котором уже сказали в лог. Ошибка повторяется каждые
 # 5 минут, а сообщение о ней — один раз на состояние: иначе лог превращается
 # в поток одинаковых строк и настоящая причина в нём теряется.
-_last_error: str | None = None
+_last_warn_key: str | None = None
 
 
 def sanitize_name(name: str) -> str:
@@ -84,19 +93,14 @@ def sanitize_name(name: str) -> str:
     return cleaned or "_"
 
 
-def backup_dir_for(book_path: Path, root: Path | str | None = None) -> Path:
+def backup_dir_for(book_path: Path) -> Path:
     """Папка копий для книги: ``<корень>/<имя книги без расширения>_backup``.
 
     Корень — ``EXCEL_BACKUP_ROOT``; пусто — каталог самой книги. Dev-хост и
     прод смотрят на одну шару, поэтому у dev корень свой (backend/.env), и
     копии двух сред не смешиваются.
     """
-    if root is not None:
-        base = Path(root)
-    elif settings.EXCEL_BACKUP_ROOT:
-        base = Path(settings.EXCEL_BACKUP_ROOT)
-    else:
-        base = book_path.parent
+    base = Path(settings.EXCEL_BACKUP_ROOT) if settings.EXCEL_BACKUP_ROOT else book_path.parent
     return base / f"{sanitize_name(book_path.stem)}_backup"
 
 
@@ -128,12 +132,12 @@ def _own_pattern(book_stem: str, suffix: str | None) -> re.Pattern[str]:
     return re.compile(rf"^(\d{{4}}-\d{{2}}-\d{{2}}_\d{{2}}-\d{{2}})_{re.escape(book_stem)}(?:-(\d{{2}}))?{extension}$")
 
 
-def _own_entries(backup_dir: Path, book_stem: str, suffix: str | None) -> list[tuple[datetime, int, Path]]:
+def _own_entries(backup_dir: Path, book_stem: str, suffix: str | None) -> list[BackupEntry]:
     """Свои копии папки, новые сверху."""
     if not backup_dir.is_dir():
         return []
     pattern = _own_pattern(book_stem, suffix)
-    entries: list[tuple[datetime, int, Path]] = []
+    entries: list[BackupEntry] = []
     try:
         children = list(backup_dir.iterdir())
     except OSError:
@@ -149,8 +153,8 @@ def _own_entries(backup_dir: Path, book_stem: str, suffix: str | None) -> list[t
         except ValueError:
             continue
         sequence = int(match.group(2)) if match.group(2) else 0
-        entries.append((moment, sequence, child))
-    entries.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+        entries.append(BackupEntry(moment, sequence, child))
+    entries.sort(key=lambda entry: (entry.moment, entry.sequence), reverse=True)
     return entries
 
 
@@ -160,7 +164,7 @@ def _dir_book_stem(backup_dir: Path) -> str:
     return name[: -len("_backup")] if name.endswith("_backup") else name
 
 
-def _keep_paths(entries: list[tuple[datetime, int, Path]], now: datetime) -> set[Path]:
+def _keep_paths(entries: list[BackupEntry], now: datetime) -> set[Path]:
     """Какие копии оставить по ступенчатой политике.
 
     Уровни пересекаются: копия за последние двое суток одновременно дневная,
@@ -214,21 +218,16 @@ def _keep_paths(entries: list[tuple[datetime, int, Path]], now: datetime) -> set
     return keep
 
 
-def prune(backup_dir: Path, now: datetime | None = None, book_name: str | None = None) -> list[Path]:
+def prune(backup_dir: Path, now: datetime | None = None) -> list[Path]:
     """Ротация: удалить копии, не попавшие в политику хранения.
 
     Возвращает удалённые файлы. Каждое удаление — строкой в лог: файл,
     исчезнувший без следа, неотличим от файла, которого не было.
     """
     now = now or datetime.now()
-    if book_name:
-        stem = sanitize_name(Path(book_name).stem)
-        suffix = Path(book_name).suffix or None
-    else:
-        stem = _dir_book_stem(backup_dir)
-        suffix = None
-
-    entries = _own_entries(backup_dir, stem, suffix)
+    # Имя книги — из имени папки (<имя>_backup). Расширение не уточняем:
+    # приложение поддерживает .xlsm/.xlsx/.xls, и шаблон допускает все три.
+    entries = _own_entries(backup_dir, _dir_book_stem(backup_dir), suffix=None)
     if not entries:
         return []
 
@@ -249,27 +248,31 @@ def prune(backup_dir: Path, now: datetime | None = None, book_name: str | None =
 
 def _warn_once(key: str, message: str) -> None:
     """Записать ошибку в лог один раз на состояние."""
-    global _last_error
-    if _last_error == key:
+    global _last_warn_key
+    if _last_warn_key == key:
         return
-    _last_error = key
+    _last_warn_key = key
     logger.warning(message)
 
 
-def _reset_error_state() -> None:
-    global _last_error
-    _last_error = None
+def _reset_warn_state() -> None:
+    global _last_warn_key
+    _last_warn_key = None
 
 
-def _is_settled(book_path: Path) -> bool:
-    """Книга не дописывается прямо сейчас: два ``stat`` с паузой совпали."""
+def _is_settled(book_path: Path) -> bool | None:
+    """Книга не дописывается прямо сейчас: два ``stat`` с паузой совпали.
+
+    ``None`` — ``stat`` не удался (книга недоступна, нет прав): это не то же
+    самое, что «файл меняется», и в лог должно попасть своей причиной.
+    """
     try:
         first = book_path.stat()
         if SETTLE_SECONDS:
             time.sleep(SETTLE_SECONDS)
         second = book_path.stat()
     except OSError:
-        return False
+        return None
     return first.st_size == second.st_size and first.st_mtime_ns == second.st_mtime_ns
 
 
@@ -284,26 +287,38 @@ def _unique_target(backup_dir: Path, stem: str, suffix: str, moment: datetime) -
     return candidate
 
 
-def _copy_with_retries(book_path: Path, target: Path) -> None:
-    """Копия через скрытый ``.tmp`` и ``os.replace``: недописанный файл не
-    выглядит как настоящая резервная копия. Временный файл удаляется при любой
-    ошибке."""
-    tmp = target.parent / f"{_TMP_PREFIX}{target.name}"
-    try:
-        last_error: OSError | None = None
-        for attempt in range(1, COPY_ATTEMPTS + 1):
+def _copy_with_retries(
+    book_path: Path,
+    backup_dir: Path,
+    stem: str,
+    suffix: str,
+    moment: datetime,
+) -> Path:
+    """Создать папку и снять копию: до трёх попыток с паузой.
+
+    ``mkdir`` — в той же попытке, что и копирование: на read-only шаре падает
+    именно она, и повторять её отдельно от копии нечего. Копия идёт через
+    скрытый ``.tmp`` и ``os.replace``, поэтому недописанный файл не выглядит
+    как настоящая резервная копия; временный файл удаляется при любой ошибке.
+    """
+    last_error: OSError | None = None
+    for attempt in range(1, COPY_ATTEMPTS + 1):
+        try:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            target = _unique_target(backup_dir, stem, suffix, moment)
+            tmp = backup_dir / f"{_TMP_PREFIX}{target.name}"
             try:
                 shutil.copy2(book_path, tmp)
                 os.replace(tmp, target)
-                return
-            except OSError as error:
-                last_error = error
-                if attempt < COPY_ATTEMPTS and COPY_RETRY_DELAY_SECONDS:
-                    time.sleep(COPY_RETRY_DELAY_SECONDS)
-        assert last_error is not None
-        raise last_error
-    finally:
-        tmp.unlink(missing_ok=True)
+            finally:
+                tmp.unlink(missing_ok=True)
+            return target
+        except OSError as error:
+            last_error = error
+            if attempt < COPY_ATTEMPTS and COPY_RETRY_DELAY_SECONDS:
+                time.sleep(COPY_RETRY_DELAY_SECONDS)
+    assert last_error is not None
+    raise last_error
 
 
 def backup_once(now: datetime | None = None) -> BackupStatus:
@@ -314,45 +329,58 @@ def backup_once(now: datetime | None = None) -> BackupStatus:
     """
     now = now or datetime.now()
     book_path = excel_service.current_path
-    if book_path is None or not path_exists(book_path):
-        _warn_once("missing", f"[ExcelBackup] Книга недоступна: {book_path} — копия отложена")
+    if book_path is None:
+        _warn_once("missing:none", "[ExcelBackup] Активная книга не задана — копия отложена")
         return BackupStatus.SKIPPED_MISSING
 
     backup_dir = backup_dir_for(book_path)
     suffix = book_path.suffix
     stem = sanitize_name(book_path.stem)
-    entries = _own_entries(backup_dir, stem, suffix)
-    latest = entries[0][2] if entries else None
 
-    # Ротация — после КАЖДОЙ попытки, в том числе неудачной: лимиты должны
-    # соблюдаться и тогда, когда копия не создалась (шара занята, нет прав).
-    # Папки нет — prune ничего не делает.
+    # Ротация — после КАЖДОЙ попытки, в том числе неудачной и при пропавшей
+    # книге: лимиты должны соблюдаться и тогда, когда копия не создалась.
+    # Папки нет — prune ничего не делает и ничего не создаёт.
     try:
+        if not path_exists(book_path):
+            _warn_once(f"missing:{book_path}", f"[ExcelBackup] Книга недоступна: {book_path} — копия отложена")
+            return BackupStatus.SKIPPED_MISSING
+
+        entries = _own_entries(backup_dir, stem, suffix)
+        latest = entries[0].path if entries else None
+
         if is_unchanged(book_path, latest):
-            _reset_error_state()
+            _reset_warn_state()
             logger.info(f"[ExcelBackup] Книга не менялась с копии {latest.name} — новая не нужна")
             return BackupStatus.SKIPPED_UNCHANGED
 
-        if not _is_settled(book_path):
-            _warn_once("unstable", f"[ExcelBackup] Книга ещё записывается: {book_path} — попытка отложена")
+        settled = _is_settled(book_path)
+        if settled is None:
+            _warn_once(
+                f"unavailable:{book_path}",
+                f"[ExcelBackup] Книга недоступна или нет прав на чтение: {book_path} — повтор через 5 минут",
+            )
+            return BackupStatus.FAILED
+        if not settled:
+            _warn_once(
+                f"unstable:{book_path}",
+                f"[ExcelBackup] Книга ещё записывается: {book_path} — попытка отложена",
+            )
             return BackupStatus.FAILED
 
         try:
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            target = _unique_target(backup_dir, stem, suffix, now)
-            _copy_with_retries(book_path, target)
+            target = _copy_with_retries(book_path, backup_dir, stem, suffix, now)
         except OSError as error:
             _warn_once(
-                f"copy:{error}",
+                f"copy:{book_path}:{error}",
                 f"[ExcelBackup] Не удалось скопировать книгу {book_path}: {error} — повтор через 5 минут",
             )
             return BackupStatus.FAILED
 
-        _reset_error_state()
+        _reset_warn_state()
         logger.info(f"[ExcelBackup] Создана копия книги: {target}")
         return BackupStatus.CREATED
     finally:
-        prune(backup_dir, now=now, book_name=book_path.name)
+        prune(backup_dir, now=now)
 
 
 class ExcelBackup:
@@ -378,9 +406,7 @@ class ExcelBackup:
                 if loop.time() >= next_run:
                     status = await asyncio.to_thread(backup_once)
                     delay = (
-                        interval
-                        if status in (BackupStatus.CREATED, BackupStatus.SKIPPED_UNCHANGED)
-                        else RETRY_SECONDS
+                        interval if status in (BackupStatus.CREATED, BackupStatus.SKIPPED_UNCHANGED) else RETRY_SECONDS
                     )
                     next_run = loop.time() + delay
             except asyncio.CancelledError:

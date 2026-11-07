@@ -168,7 +168,7 @@ Dev-корень задаётся явно, потому что dev и прод 
    комментарий, почему dev-корень отличается от прода.
 2. `backend/app/services/excel_backup.py` — новый модуль:
    - константы `KEEP_2H = 24`, `KEEP_2H_HOURS = 48`, `KEEP_DAILY = 7`,
-     `KEEP_WEEKLY = 7`, `KEEP_MONTHLY = 0` (0 = бессрочно);
+     `KEEP_WEEKLY = 7`; месячные копии бессрочны и отдельного лимита не имеют;
    - `backup_dir_for(book_path)` — папка по имени книги;
    - `is_unchanged(book_path, latest_backup)` — проверка размера и `mtime`;
    - `backup_once(now=None)` — одна попытка, возвращает результат
