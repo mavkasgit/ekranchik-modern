@@ -118,13 +118,14 @@ def is_unchanged(book_path: Path, latest_backup: Path | None) -> bool:
 
 
 def _own_pattern(book_stem: str, suffix: str | None) -> re.Pattern[str]:
-    """Свои файлы папки: время в имени, затем имя книги и расширение.
+    """Свои файлы папки: время, имя книги и расширение.
 
-    ``-01``, ``-02`` перед расширением — копии, попавшие в ту же минуту.
-    Чужие файлы, ``.tmp`` и копии других книг под шаблон не попадают.
+    ``-01``, ``-02`` стоят после имени книги перед расширением — так их
+    строит ``_unique_target`` для копий, попавших в ту же минуту. Чужие файлы,
+    ``.tmp`` и копии других книг под шаблон не попадают.
     """
     extension = re.escape(suffix) if suffix else rf"\.(?:{'|'.join(_SUFFIXES)})"
-    return re.compile(rf"^(\d{{4}}-\d{{2}}-\d{{2}}_\d{{2}}-\d{{2}})(?:-(\d{{2}}))?_{re.escape(book_stem)}{extension}$")
+    return re.compile(rf"^(\d{{4}}-\d{{2}}-\d{{2}}_\d{{2}}-\d{{2}})_{re.escape(book_stem)}(?:-(\d{{2}}))?{extension}$")
 
 
 def _own_entries(backup_dir: Path, book_stem: str, suffix: str | None) -> list[tuple[datetime, int, Path]]:
@@ -323,31 +324,35 @@ def backup_once(now: datetime | None = None) -> BackupStatus:
     entries = _own_entries(backup_dir, stem, suffix)
     latest = entries[0][2] if entries else None
 
-    if is_unchanged(book_path, latest):
-        _reset_error_state()
-        prune(backup_dir, now=now, book_name=book_path.name)
-        logger.info(f"[ExcelBackup] Книга не менялась с копии {latest.name} — новая не нужна")
-        return BackupStatus.SKIPPED_UNCHANGED
-
-    if not _is_settled(book_path):
-        _warn_once("unstable", f"[ExcelBackup] Книга ещё записывается: {book_path} — попытка отложена")
-        return BackupStatus.FAILED
-
+    # Ротация — после КАЖДОЙ попытки, в том числе неудачной: лимиты должны
+    # соблюдаться и тогда, когда копия не создалась (шара занята, нет прав).
+    # Папки нет — prune ничего не делает.
     try:
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        target = _unique_target(backup_dir, stem, suffix, now)
-        _copy_with_retries(book_path, target)
-    except OSError as error:
-        _warn_once(
-            f"copy:{error}",
-            f"[ExcelBackup] Не удалось скопировать книгу {book_path}: {error} — повтор через 5 минут",
-        )
-        return BackupStatus.FAILED
+        if is_unchanged(book_path, latest):
+            _reset_error_state()
+            logger.info(f"[ExcelBackup] Книга не менялась с копии {latest.name} — новая не нужна")
+            return BackupStatus.SKIPPED_UNCHANGED
 
-    _reset_error_state()
-    logger.info(f"[ExcelBackup] Создана копия книги: {target}")
-    prune(backup_dir, now=now, book_name=book_path.name)
-    return BackupStatus.CREATED
+        if not _is_settled(book_path):
+            _warn_once("unstable", f"[ExcelBackup] Книга ещё записывается: {book_path} — попытка отложена")
+            return BackupStatus.FAILED
+
+        try:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            target = _unique_target(backup_dir, stem, suffix, now)
+            _copy_with_retries(book_path, target)
+        except OSError as error:
+            _warn_once(
+                f"copy:{error}",
+                f"[ExcelBackup] Не удалось скопировать книгу {book_path}: {error} — повтор через 5 минут",
+            )
+            return BackupStatus.FAILED
+
+        _reset_error_state()
+        logger.info(f"[ExcelBackup] Создана копия книги: {target}")
+        return BackupStatus.CREATED
+    finally:
+        prune(backup_dir, now=now, book_name=book_path.name)
 
 
 class ExcelBackup:

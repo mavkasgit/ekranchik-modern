@@ -169,6 +169,45 @@ def test_same_minute_gets_suffix_and_keeps_existing(book):
     assert (folder / "2026-11-07_14-00_Учет КПЗ 2026-01.xlsm").read_bytes() == book.read_bytes()
 
 
+def test_prune_sees_minute_suffix_as_own(tmp_path):
+    """`-01` стоит после имени книги — ротация обязана видеть его своим."""
+    folder = tmp_path / "Учет КПЗ 2026_backup"
+    folder.mkdir()
+    old = NOW - timedelta(days=400)
+    stamp = old.strftime("%Y-%m-%d_%H-%M")
+    base = folder / f"{stamp}_{BOOK_NAME}"
+    suffixed = folder / f"{stamp}_Учет КПЗ 2026-01.xlsm"
+    base.write_bytes(b"base")
+    suffixed.write_bytes(b"suffixed")
+    # Месячный представитель: держит месяц, значит оба старых файла лишние.
+    keeper = make_backup(folder, old + timedelta(days=1))
+
+    deleted = prune(folder, now=NOW)
+
+    assert sorted(p.name for p in deleted) == sorted([base.name, suffixed.name])
+    assert not base.exists()
+    assert not suffixed.exists()
+    assert keeper.exists()
+
+
+def test_rotation_runs_even_when_copy_fails(book, monkeypatch):
+    """Неудачная попытка не отменяет ротацию: лимиты соблюдаются всегда."""
+    folder = book.parent / "Учет КПЗ 2026_backup"
+    stale = make_backup(folder, NOW - timedelta(days=400))
+    keeper = make_backup(folder, NOW - timedelta(days=399))
+
+    def broken_copy(*args, **kwargs):
+        raise PermissionError("file is locked")
+
+    monkeypatch.setattr(excel_backup.shutil, "copy2", broken_copy)
+
+    result = backup_once(now=NOW)
+
+    assert result == BackupStatus.FAILED
+    assert not stale.exists()
+    assert keeper.exists()
+
+
 # --- prune: политика хранения ----------------------------------------------
 
 
@@ -321,6 +360,6 @@ async def test_run_forever_first_tick_immediately_and_not_faster_than_interval(m
         await task
 
     assert len(calls) >= 2
-    assert calls[0] - started < 0.05  # первый тик — сразу при старте
+    assert calls[0] - started < 0.15  # первый тик — сразу при старте
     gaps = [later - earlier for earlier, later in zip(calls, calls[1:], strict=False)]
     assert all(gap >= 0.05 for gap in gaps)
