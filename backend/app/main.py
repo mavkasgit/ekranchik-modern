@@ -35,6 +35,7 @@ from app.api.websockets import router as websocket_router
 from app.core.config import settings
 from app.core.version import get_app_version
 from app.db.startup import ensure_data_dirs, run_startup_migrations
+from app.services.excel_backup import excel_backup
 from app.services.excel_service import excel_service
 from app.services.excel_watcher import excel_watcher
 from app.services.journal_writer import journal_writer
@@ -133,6 +134,16 @@ async def lifespan(app: FastAPI):
     journal_task = asyncio.create_task(journal_writer.run_forever(line_monitor, settings.JOURNAL_FLUSH_INTERVAL))
     logger.info(f"[STARTUP] Journal writer started: {settings.journal_dir_path}")
 
+    # Автобэкап книги учёта (тикет 0007): снимок самого Excel-файла раз в
+    # 2 часа. Отдельная задача, поэтому копия снимается и при закрытом
+    # дашборде; само копирование идёт в потоке и не подвешивает API.
+    excel_backup_task = None
+    if settings.EXCEL_BACKUP_ENABLED:
+        excel_backup_task = asyncio.create_task(excel_backup.run_forever())
+        logger.info(f"[STARTUP] Excel backup started: every {settings.EXCEL_BACKUP_INTERVAL_MINUTES} min")
+    else:
+        logger.info("[STARTUP] Excel backup disabled (EXCEL_BACKUP_ENABLED=false)")
+
     yield
 
     # Shutdown
@@ -144,6 +155,10 @@ async def lifespan(app: FastAPI):
         journal_task.cancel()
         with suppress(asyncio.CancelledError):
             await journal_task
+    if excel_backup_task:
+        excel_backup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await excel_backup_task
     if line_monitor.is_running:
         await line_monitor.stop()
     if opcua_service.is_connected:
