@@ -5,6 +5,7 @@ Pytest configuration and fixtures
 import sys
 from pathlib import Path
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -14,6 +15,20 @@ backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
 
 from app.db.base import Base
+
+
+@pytest.fixture(autouse=True)
+def _disable_excel_backup(monkeypatch):
+    """Выключить фоновый автобэкап книги во всех тестах.
+
+    Тест, открывший ``TestClient`` через ``with``, поднимает ``lifespan``:
+    боевая шара на машине разработчика существует, и включённая задача
+    сняла бы настоящую копию книги. Правило расписания проверяется отдельно,
+    на ``tmp_path``.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "EXCEL_BACKUP_ENABLED", False)
 
 
 @pytest_asyncio.fixture

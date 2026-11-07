@@ -54,13 +54,16 @@ if [ ! -d "$MOUNT_POINT" ]; then
     sudo mkdir -p "$MOUNT_POINT"
 fi
 
-# 3. Настройка параметров монтирования в зависимости от авторизации
+# 3. Настройка параметров монтирования в зависимости от авторизации.
+# Шара монтируется rw: автобэкап книги пишет только в <книга>_backup/, а
+# саму книгу приложение по-прежнему только читает. С ro (0444/0555) копию
+# рядом с книгой создать нельзя.
 if [ -f "${CREDS_FILE}-guest" ]; then
-    MOUNT_OPTS="guest,iocharset=utf8,ro,file_mode=0444,dir_mode=0555"
-    FSTAB_LINE="$SHARE_PATH $MOUNT_POINT cifs guest,iocharset=utf8,ro,file_mode=0444,dir_mode=0555,$MOUNT_EXTRA 0 0"
+    MOUNT_OPTS="guest,iocharset=utf8,rw,file_mode=0644,dir_mode=0755"
+    FSTAB_LINE="$SHARE_PATH $MOUNT_POINT cifs guest,iocharset=utf8,rw,file_mode=0644,dir_mode=0755,$MOUNT_EXTRA 0 0"
 else
-    MOUNT_OPTS="credentials=$CREDS_FILE,iocharset=utf8,ro,file_mode=0444,dir_mode=0555"
-    FSTAB_LINE="$SHARE_PATH $MOUNT_POINT cifs credentials=$CREDS_FILE,iocharset=utf8,ro,file_mode=0444,dir_mode=0555,$MOUNT_EXTRA 0 0"
+    MOUNT_OPTS="credentials=$CREDS_FILE,iocharset=utf8,rw,file_mode=0644,dir_mode=0755"
+    FSTAB_LINE="$SHARE_PATH $MOUNT_POINT cifs credentials=$CREDS_FILE,iocharset=utf8,rw,file_mode=0644,dir_mode=0755,$MOUNT_EXTRA 0 0"
 fi
 
 # 4. Настройка fstab для автоподключения при перезагрузке. Строка переписывается

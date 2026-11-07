@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     # `/app/excel/…` против UNC-пути dev-хоста).
     EXCEL_ACTIVE_FILE_NAME: str = "active_excel.json"
 
+    # Автобэкап книги учёта (тикет 0007): снимок самого Excel-файла, а не
+    # журнал подвесов. Папка — <корень>/<имя книги>_backup.
+    EXCEL_BACKUP_ENABLED: bool = True
+    EXCEL_BACKUP_INTERVAL_MINUTES: int = 120
+    # Пусто — копия ложится рядом с активной книгой (прод-контейнер,
+    # заводская машина). Dev-хост смотрит на ту же шару, поэтому его корень
+    # задан явно (backend/.env): иначе dev и прод писали бы копии в одну
+    # папку. Контейнер получает свой корень через environment в compose.
+    EXCEL_BACKUP_ROOT: str | None = None
+
     # Static files
     STATIC_DIR: str = "../static"  # Relative to backend folder
     IMAGES_DIR: str = "../static/images"

@@ -37,6 +37,11 @@ services:
       # одним именем контейнер и dev-бэкенд переписывают выбор друг друга
       # (путь `/app/excel/…` в контейнере против UNC-пути на dev-хосте).
       - EXCEL_ACTIVE_FILE_NAME=active_excel_prod.json
+      # Автобэкап книги (тикет 0007): корень копий внутри контейнера. Явно,
+      # чтобы dev-значение EXCEL_BACKUP_ROOT из backend/.env не переехало в
+      # контейнер. Запись идёт только в <книга>_backup/, остальная шара
+      # приложением по-прежнему только читается.
+      - EXCEL_BACKUP_ROOT=/app/excel
       - TZ=Europe/Moscow
     # Пустой /app/excel = bind-mount сетевого диска не смонтирован: Docker сам
     # создаёт каталог-источник, и бэкенд стартовал бы с пустым каталогом книги
@@ -60,7 +65,7 @@ services:
       - ../../static:/app/static
       - ../../testdata:/app/testdata
       - ../../journal:/app/journal
-      - excel:/app/excel:ro
+      - excel:/app/excel:rw
     networks:
       - ekranchik-prod-network
     restart: always
@@ -131,10 +136,12 @@ services:
 # монтирует шару до старта контейнера, и если диска нет, `up` падает с
 # текстом ошибки. Прежний bind-mount молча создавал пустой каталог-источник,
 # и контейнер уходил в бесконечный рестарт с «Файл не найден» при живой книге.
+# Том монтируется rw: автобэкап книги (тикет 0007) пишет в <книга>_backup/,
+# остальную шару приложение только читает.
 volumes:
   excel:
     driver: local
     driver_opts:
       type: ${EXCEL_VOL_TYPE:-none}
-      o: ${EXCEL_VOL_OPTS:-bind,ro}
+      o: ${EXCEL_VOL_OPTS:-bind,rw}
       device: ${EXCEL_VOL_DEVICE:-/mnt/ktm-disk}
