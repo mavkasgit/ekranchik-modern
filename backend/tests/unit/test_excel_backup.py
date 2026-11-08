@@ -154,6 +154,28 @@ def test_copy_error_leaves_no_tmp_and_no_backup(book, monkeypatch):
     assert list(folder.iterdir()) == []
 
 
+def test_replace_keeps_source_mtime_on_cifs(book, monkeypatch):
+    """CIFS-том теряет mtime при rename — копия возвращает метку книги.
+
+    На проде `os.replace` в контейнере ставит файлу время переименования,
+    и `is_unchanged` перестаёт видеть «книга не менялась». Проверка
+    симулирует это поведение CIFS.
+    """
+    real_replace = os.replace
+
+    def cifs_replace(src, dst):
+        real_replace(src, dst)
+        os.utime(dst, None)
+
+    monkeypatch.setattr(excel_backup.os, "replace", cifs_replace)
+
+    result = backup_once(now=NOW)
+
+    assert result == BackupStatus.CREATED
+    copy = book.parent / "Учет КПЗ 2026_backup" / "2026-11-07_14-00_Учет КПЗ 2026.xlsm"
+    assert copy.stat().st_mtime == pytest.approx(book.stat().st_mtime, abs=0.001)
+
+
 def test_mkdir_is_retried_three_times(book, monkeypatch):
     """На read-only шаре падает именно mkdir — он входит в те же 3 попытки."""
     calls: list[Path] = []

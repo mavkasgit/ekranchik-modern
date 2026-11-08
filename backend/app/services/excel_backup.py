@@ -309,7 +309,19 @@ def _copy_with_retries(
             tmp = backup_dir / f"{_TMP_PREFIX}{target.name}"
             try:
                 shutil.copy2(book_path, tmp)
+                # CIFS-том в контейнере теряет mtime при rename: os.replace
+                # ставит файлу время переименования, и is_unchanged перестаёт
+                # видеть «книга не менялась». Метку, которую copy2 взял у
+                # книги, переносим на итоговый файл явно.
+                copied = tmp.stat()
                 os.replace(tmp, target)
+                try:
+                    os.utime(target, ns=(copied.st_atime_ns, copied.st_mtime_ns))
+                except OSError as error:
+                    _warn_once(
+                        f"utime:{backup_dir}",
+                        f"[ExcelBackup] Не удалось сохранить mtime копии {target.name}: {error}",
+                    )
             finally:
                 tmp.unlink(missing_ok=True)
             return target
