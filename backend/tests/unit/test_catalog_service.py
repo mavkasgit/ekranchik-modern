@@ -84,3 +84,28 @@ async def test_slash_between_articles_gets_a_safe_photo_name(images_dir, db_sess
 
     assert full == "images/2020_1010.jpg"
     assert (images_dir / "2020_1010.jpg").exists()
+
+
+async def test_delete_profile_removes_legacy_photo_paths(images_dir, db_session):
+    """Старый путь «/static/images/…» при удалении профиля тоже удаляется.
+
+    Остальные операции с фото давно нормализуют путь из БД, а удаление
+    профиля брало его как есть: файл оставался на диске сиротой.
+    """
+    images_dir.mkdir()
+    legacy_thumb = images_dir / "legacy-thumb.jpg"
+    legacy_full = images_dir / "legacy.jpg"
+    legacy_thumb.write_bytes(b"thumb")
+    legacy_full.write_bytes(b"full")
+    profile = Profile(
+        name="legacy",
+        photo_thumb="/static/images/legacy-thumb.jpg",
+        photo_full="images/legacy.jpg",
+    )
+    db_session.add(profile)
+    await db_session.flush()
+
+    assert await catalog_service.delete_profile(profile.id, session=db_session)
+
+    assert not legacy_thumb.exists()
+    assert not legacy_full.exists()

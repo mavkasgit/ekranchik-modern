@@ -731,16 +731,21 @@ class CatalogService:
             if not profile:
                 return False
 
-            # Delete photo files
+            # Delete photo files. Путь из БД нормализуем, как в остальных
+            # операциях с фото: старые записи могли хранить «/static/images/…».
             if profile.photo_thumb:
-                thumb_path = settings.images_path.parent / profile.photo_thumb
-                if thumb_path.exists():
-                    thumb_path.unlink()
+                norm_thumb = self._normalize_db_path(profile.photo_thumb)
+                if norm_thumb:
+                    thumb_path = settings.images_path.parent / norm_thumb
+                    if thumb_path.exists():
+                        thumb_path.unlink()
 
             if profile.photo_full:
-                full_path = settings.images_path.parent / profile.photo_full
-                if full_path.exists():
-                    full_path.unlink()
+                norm_full = self._normalize_db_path(profile.photo_full)
+                if norm_full:
+                    full_path = settings.images_path.parent / norm_full
+                    if full_path.exists():
+                        full_path.unlink()
 
             await sess.delete(profile)
             await sess.flush()
