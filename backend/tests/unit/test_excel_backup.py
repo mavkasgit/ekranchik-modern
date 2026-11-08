@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import logging
 import os
 import time
 from contextlib import suppress
@@ -162,6 +163,8 @@ def test_replace_keeps_source_mtime_on_cifs(book, monkeypatch):
     симулирует это поведение CIFS.
     """
     real_replace = os.replace
+    stamp = 1_700_000_000
+    os.utime(book, (stamp, stamp))
 
     def cifs_replace(src, dst):
         real_replace(src, dst)
@@ -173,7 +176,24 @@ def test_replace_keeps_source_mtime_on_cifs(book, monkeypatch):
 
     assert result == BackupStatus.CREATED
     copy = book.parent / "Учет КПЗ 2026_backup" / "2026-11-07_14-00_Учет КПЗ 2026.xlsm"
-    assert copy.stat().st_mtime == pytest.approx(book.stat().st_mtime, abs=0.001)
+    assert copy.stat().st_mtime == pytest.approx(stamp, abs=0.001)
+    # Именно этого требует спека: после фикса mtime книга считается неизменной.
+    assert backup_once(now=NOW + timedelta(hours=2)) == BackupStatus.SKIPPED_UNCHANGED
+
+
+def test_utime_warning_survives_successful_copy(monkeypatch, caplog):
+    """Успешная копия не сбрасывает предупреждение о неудачном utime."""
+    backup_dir = Path("/share/Учет КПЗ 2026_backup")
+    monkeypatch.setattr(excel_backup, "_utime_warned", set())
+
+    with caplog.at_level(logging.WARNING, logger="app.services.excel_backup"):
+        excel_backup._warn_utime_once(backup_dir, "mtime failed")
+        # Успешная копия сбрасывает обычные ошибки — utime-предупреждение нет.
+        excel_backup._reset_warn_state()
+        excel_backup._warn_utime_once(backup_dir, "mtime failed")
+
+    warnings = [record.getMessage() for record in caplog.records if "mtime" in record.getMessage()]
+    assert len(warnings) == 1
 
 
 def test_mkdir_is_retried_three_times(book, monkeypatch):
@@ -395,6 +415,8 @@ def test_prune_keeps_foreign_files(tmp_path):
 
 
 async def test_run_forever_first_tick_immediately_and_not_faster_than_interval(monkeypatch):
+    from app.core.config import settings
+
     calls: list[float] = []
 
     def fake_backup(now=None):
@@ -405,9 +427,11 @@ async def test_run_forever_first_tick_immediately_and_not_faster_than_interval(m
 
     monkeypatch.setattr(excel_backup, "backup_once", fake_backup)
     monkeypatch.setattr(excel_backup, "POLL_SECONDS", 0.01)
+    # 0.001 минуты = 0.06 секунды: интервал задаётся тем же путём, что и в проде.
+    monkeypatch.setattr(settings, "EXCEL_BACKUP_INTERVAL_MINUTES", 0.001)
     started = time.monotonic()
 
-    task = asyncio.create_task(excel_backup.excel_backup.run_forever(interval_seconds=0.06))
+    task = asyncio.create_task(excel_backup.excel_backup.run_forever())
     await asyncio.sleep(0.2)
     task.cancel()
     with suppress(asyncio.CancelledError):
