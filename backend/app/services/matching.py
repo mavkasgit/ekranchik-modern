@@ -82,7 +82,14 @@ class CycleMatch:
 
 
 def parse_excel_date(date_str: str) -> tuple[int, int, int]:
-    """Parse DD.MM.YYYY or DD.MM.YY to (year, month, day); (0, 0, 0) if bad."""
+    """Parse DD.MM.YYYY or DD.MM.YY to (year, month, day); (0, 0, 0) if bad.
+
+    Календарь проверяется ``datetime``: текстовая ячейка вида ``31.02.2026``
+    разбирается по частям, но датой не является. Вернуть такие числа как
+    «дату» значило бы уронить того, кто строит из них ``datetime`` (журнал
+    пишет момент входа по книге), поэтому невалидный календарь — те же нули,
+    что и пустая ячейка.
+    """
     if not date_str or date_str == "—":
         return (0, 0, 0)
     try:
@@ -95,13 +102,19 @@ def parse_excel_date(date_str: str) -> tuple[int, int, int]:
             year += 2000
         elif year < 100:
             year += 1900
+        datetime(year, month, day)
         return (year, month, day)
     except (ValueError, IndexError):
         return (0, 0, 0)
 
 
 def parse_excel_time(time_str: str) -> tuple[int, int, int]:
-    """Parse HH:MM:SS or HH:MM to (hour, minute, second); (0, 0, 0) if bad."""
+    """Parse HH:MM:SS or HH:MM to (hour, minute, second); (0, 0, 0) if bad.
+
+    Часы, минуты и секунды проверяются по своим границам: ``25:00`` или
+    ``18:61`` — текстовая ячейка с опечаткой, а не время. Без проверки
+    ``datetime`` на таком значении падает уже при записи прохода в журнал.
+    """
     if not time_str or time_str == "—":
         return (0, 0, 0)
     try:
@@ -109,6 +122,8 @@ def parse_excel_time(time_str: str) -> tuple[int, int, int]:
         hour = int(parts[0]) if len(parts) > 0 else 0
         minute = int(parts[1]) if len(parts) > 1 else 0
         second = int(parts[2]) if len(parts) > 2 else 0
+        if not (0 <= hour < 24 and 0 <= minute < 60 and 0 <= second < 60):
+            return (0, 0, 0)
         return (hour, minute, second)
     except (ValueError, IndexError):
         return (0, 0, 0)

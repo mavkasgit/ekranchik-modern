@@ -154,6 +154,19 @@ def test_record_without_book_row_has_no_book_time():
     assert record["book_entry_at"] is None
 
 
+def test_bad_book_date_is_an_empty_moment_not_a_crash():
+    """Опечатка в дате книги не роняет запись журнала.
+
+    Дата приходит из текстовой ячейки и может быть несуществующей
+    (``31.02.2026``). Фоновая задача пишет проходы подряд: исключение на
+    одной строке останавливало бы журнал целиком, а не только её момент.
+    """
+    record = record_from_match(_match(row=_row(date="31.02.2026")))
+
+    assert record["book_entry_at"] is None
+    assert record["line_entry_at"] is not None
+
+
 def test_pass_without_book_row_records_the_code_only():
     """Прохода без строки книги в книге нет: пустые поля, а не выдуманные."""
     record = record_from_match(_match(row=None, code=CODE_NO_ROW, delta=None))

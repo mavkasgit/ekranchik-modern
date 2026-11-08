@@ -51,3 +51,18 @@ def test_unparseable_cell_is_not_a_date():
     assert parse_excel_date("—") == (0, 0, 0)
     assert parse_excel_time("") == (0, 0, 0)
     assert _seconds("", "") == 0.0
+
+
+def test_out_of_range_calendar_values_are_not_a_date():
+    """Текстовая ячейка с несуществующей датой/временем — не дата.
+
+    Такие значения раньше разбирались как настоящие и падали уже при
+    построении ``datetime`` в журнале: одна опечатка в книге останавливала
+    запись всех проходов. Парсер обязан вернуть «нет значения».
+    """
+    assert parse_excel_date("31.02.2026") == (0, 0, 0)
+    assert parse_excel_date("32.01.2026") == (0, 0, 0)
+    assert parse_excel_time("25:00") == (0, 0, 0)
+    assert parse_excel_time("18:61") == (0, 0, 0)
+    assert parse_excel_time("18:31:60") == (0, 0, 0)
+    assert _seconds("31.02.2026", "18:31") == 0.0

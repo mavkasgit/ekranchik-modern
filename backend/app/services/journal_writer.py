@@ -54,7 +54,13 @@ def _book_entry_at(row) -> str | None:
     hour, minute, second = parse_excel_time(str(row.time))
     if not (year and month and day):
         return None
-    return datetime(year, month, day, hour, minute, second).isoformat(timespec="seconds")
+    try:
+        return datetime(year, month, day, hour, minute, second).isoformat(timespec="seconds")
+    except ValueError:
+        # Текстовая ячейка с опечаткой — это отсутствие момента, а не повод
+        # уронить фоновую задачу: одна строка книги не должна останавливать
+        # запись всех остальных проходов.
+        return None
 
 
 # Как часто фоновая задача смотрит, не появились ли новые проходы, задаётся
