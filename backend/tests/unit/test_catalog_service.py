@@ -6,11 +6,14 @@
 """
 
 import io
+from datetime import UTC, datetime
 
 import pytest
 from PIL import Image
+from sqlalchemy import select
 
 from app.core.config import settings
+from app.db.models import Profile
 from app.services.catalog_service import catalog_service
 
 
@@ -39,6 +42,23 @@ async def test_repeated_upload_keeps_the_new_photo(images_dir, db_session):
     assert full.exists(), "старый файл совпал с новым и был удалён"
     assert thumb.exists(), "новый эскиз не должен удаляться как старый"
     assert full.read_bytes() == _jpeg((0, 160, 0))
+
+
+async def test_repeated_upload_refreshes_photo_version(images_dir, db_session):
+    """Повторная загрузка двигает updated_at — по нему сбрасывается кэш фото.
+
+    Путь к файлу при повторной загрузке тот же, поэтому без явной метки
+    SQLAlchemy не увидела бы изменений и браузер показал бы старое фото.
+    """
+    await catalog_service.upload_photo("1010", _jpeg(), "first.jpg", session=db_session)
+    row = (await db_session.execute(select(Profile).where(Profile.name == "1010"))).scalar_one()
+    row.updated_at = datetime(2020, 1, 1, tzinfo=UTC)
+    await db_session.flush()
+
+    await catalog_service.upload_photo("1010", _jpeg((0, 160, 0)), "second.jpg", session=db_session)
+    await db_session.refresh(row)
+
+    assert row.updated_at.year >= 2026
 
 
 async def test_separators_in_profile_name_do_not_escape_images_dir(images_dir, db_session, tmp_path):

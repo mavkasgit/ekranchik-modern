@@ -506,6 +506,10 @@ class CatalogService:
 
                 profile.photo_thumb = rel_thumb
                 profile.photo_full = rel_full
+                # Поля могли не измениться: повторная загрузка пишет файл по
+                # тому же имени. Явная метка нужна, чтобы updated_at сменился
+                # и браузер (cache-buster по нему) показал новое фото.
+                profile.updated_at = datetime.now(UTC)
             else:
                 # Create new profile with photo
                 new_profile = Profile(name=profile_name, photo_thumb=rel_thumb, photo_full=rel_full)
