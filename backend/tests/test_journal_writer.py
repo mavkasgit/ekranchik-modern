@@ -24,7 +24,7 @@ from app.services.journal_writer import (
     record_from_match,
 )
 from app.services.line_monitor import LineMonitorService
-from app.services.matching import CODE_NO_ROW, TRUSTED_FIRST_SEEN, CycleMatch
+from app.services.matching import CODE_CYCLE_ERROR, CODE_NO_ROW, TRUSTED_FIRST_SEEN, CycleMatch
 
 
 def _row(number=5, date="28.09.2026", time="18:31", profile="10104", sheet_row=15830) -> HangerRow:
@@ -152,6 +152,17 @@ def test_record_without_book_row_has_no_book_time():
 
     assert record["line_entry_at"] is not None, "линия знает и вход, и выход"
     assert record["book_entry_at"] is None
+
+
+def test_cycle_error_record_has_an_empty_bath_list():
+    """У аварийного события списка ванн нет — пишем [], а не null."""
+    cycle = _cycle(cycle_id=None, type_="cycle_error")
+    cycle["baths_visited"] = None
+    cycle["path"] = None
+    record = record_from_match(CycleMatch(cycle=cycle, row=None, code=CODE_CYCLE_ERROR))
+
+    assert record["baths_visited"] == []
+    assert record["path"] == []
 
 
 def test_bad_book_date_is_an_empty_moment_not_a_crash():

@@ -115,7 +115,9 @@ def record_from_match(match: CycleMatch) -> dict[str, Any]:
         "total_time_sec": cycle.get("total_time_sec"),
         "type": cycle.get("type"),
         "reason": cycle.get("reason"),
-        "baths_visited": cycle.get("baths_visited"),
+        # У аварийного события прохода нет, поэтому список ванн пуст, а не
+        # null: поле читается как список и не должно пропускать запись.
+        "baths_visited": cycle.get("baths_visited") or [],
         "path": cycle.get("path") or [],
         "row_date": str(row.date) if row else None,
         "row_time": str(row.time) if row else None,

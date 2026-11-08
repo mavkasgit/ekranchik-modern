@@ -136,6 +136,31 @@ async def test_passes_endpoint_reports_unreadable_journal_as_empty(monkeypatch):
     assert body["total"] == 0
 
 
+async def test_cycle_error_record_is_not_dropped(journal):
+    """Аварийный проход без списка ванн остаётся в таблице.
+
+    У ``cycle_error`` нет ни прохода, ни ванн, поэтому baths_visited в старых
+    записях — null. Схема ответа с обязательным списком выбрасывала такую
+    запись целиком, и «ОШИБКА ПРОХОДА» в журнале не появлялась никогда.
+    """
+    journal.append(
+        _record(
+            hanger=9,
+            cycle_id=None,
+            exit_at="2026-09-29T23:00:00",
+            profile="—",
+        )
+        | {"type": "cycle_error", "code": "CYCLE_ERROR", "baths_visited": None, "path": []}
+    )
+
+    body = await _get({"limit": 10})
+
+    errors = [item for item in body["items"] if item["code"] == "CYCLE_ERROR"]
+    assert len(errors) == 1
+    assert errors[0]["hanger"] == 9
+    assert errors[0]["baths_visited"] is None
+
+
 async def test_passes_endpoint_skips_line_that_is_not_a_pass(journal, caplog):
     """Мусор в файле журнала не превращается в пустую строку таблицы.
 

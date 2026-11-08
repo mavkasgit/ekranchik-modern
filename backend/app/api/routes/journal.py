@@ -50,7 +50,9 @@ class JournalPass(BaseModel):
     type: str | None = None
     reason: str | None = None
     path: list[dict[str, Any]] = []
-    baths_visited: list[str] = []
+    # У записей, сделанных до этой правки, поле было null у аварийного
+    # события. Читаем их как «список неизвестен», а не выбрасываем запись.
+    baths_visited: list[str] | None = []
     row_date: str | None = None
     row_time: str | None = None
     row_number: str | None = None
