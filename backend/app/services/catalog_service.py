@@ -17,6 +17,24 @@ from app.db.session import get_session
 from app.schemas.profile import ProfileCreate, ProfileResponse, ProfileSearchResult, ProfileUpdate
 from app.services.profile_name import parse_profile
 
+# Символы, запрещённые в именах файлов Windows. Имя файла фото строится из
+# имени профиля, а оно приходит снаружи: из адреса запроса и из книги учёта.
+_FORBIDDEN_FILENAME_CHARS = '<>:"/\\|?*'
+
+
+def _photo_file_stem(profile_name: str) -> str:
+    """Имя файла фото из имени профиля, безопасное для каталога images.
+
+    ``/`` и ``\\`` в имени профиля — не редкость (несколько артикулов через
+    ``/``), но в имени файла они означают подкаталог или выход за пределы
+    images. Заменяем запрещённые символы на ``_``, как это делает автобэкап
+    книги для имён папок; буквы (в том числе кириллица) не трогаем, иначе
+    уже лежащие на диске фото перестали бы находиться.
+    """
+    stem = "".join("_" if char in _FORBIDDEN_FILENAME_CHARS or ord(char) < 32 else char for char in profile_name)
+    stem = stem.rstrip(" .")
+    return stem or "_"
+
 
 class CatalogService:
     """
@@ -308,7 +326,7 @@ class CatalogService:
             if norm_thumb:
                 old_thumb_file = images_dir.parent / norm_thumb
                 if old_thumb_file.exists():
-                    new_thumb_filename = f"{new_name}-thumb.jpg"
+                    new_thumb_filename = f"{_photo_file_stem(new_name)}-thumb.jpg"
                     new_thumb_file = images_dir / new_thumb_filename
                     old_thumb_file.rename(new_thumb_file)
                     new_thumb_path = f"images/{new_thumb_filename}"
@@ -319,7 +337,7 @@ class CatalogService:
             if norm_full:
                 old_full_file = images_dir.parent / norm_full
                 if old_full_file.exists():
-                    new_full_filename = f"{new_name}.jpg"
+                    new_full_filename = f"{_photo_file_stem(new_name)}.jpg"
                     new_full_file = images_dir / new_full_filename
                     old_full_file.rename(new_full_file)
                     new_full_path = f"images/{new_full_filename}"
@@ -413,10 +431,9 @@ class CatalogService:
             f"[upload_photo] images_dir: {images_dir}, exists: {images_dir.exists()}, absolute: {images_dir.absolute()}"
         )
 
-        # Generate safe filename
-        # Use profile name directly (keep original format: name.jpg, name-thumb.jpg)
-        # safe_filename handles transliteration for Latin-only names
-        base_name = profile_name
+        # Имя файла из имени профиля: без разделителей пути и запрещённых
+        # символов (см. _photo_file_stem). Буквы и дефисы сохраняются.
+        base_name = _photo_file_stem(profile_name)
         ext = ".jpg"  # Always save as jpg for consistency
 
         full_filename = f"{base_name}{ext}"
@@ -524,7 +541,7 @@ class CatalogService:
         images_dir = settings.images_path
         images_dir.mkdir(parents=True, exist_ok=True)
 
-        thumb_filename = f"{profile_name}-thumb.jpg"
+        thumb_filename = f"{_photo_file_stem(profile_name)}-thumb.jpg"
         thumb_path = images_dir / thumb_filename
         rel_thumb = f"images/{thumb_filename}"
 
