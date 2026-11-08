@@ -207,7 +207,17 @@ function joinBookDateTime(
   const parsed = /^(\d{2})\.(\d{2})\.(\d{2,4})$/.exec(date.trim());
   if (!parsed) return null;
   const year = parsed[3].length === 2 ? `20${parsed[3]}` : parsed[3];
-  return `${year}-${parsed[2]}-${parsed[1]}T${time.trim().slice(0, 8).padEnd(8, ":00").slice(0, 8)}`;
+  return `${year}-${parsed[2]}-${parsed[1]}T${bookClock(time)}`;
+}
+
+/**
+ * Время книги `Ч:ММ`/`ЧЧ:ММ[:СС]` в ISO-вид. Час может быть однозначным
+ * (текстовая ячейка): без выравнивания `9:31` превращалось в битую метку,
+ * и старые записи журнала показывали прочерк вместо момента.
+ */
+function bookClock(time: string): string {
+  const [hour, minute = "00", second = "00"] = time.trim().split(":");
+  return [hour, minute, second].map((part) => part.padStart(2, "0")).join(":");
 }
 
 /**
