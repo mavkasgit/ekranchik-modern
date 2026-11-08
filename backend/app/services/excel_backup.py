@@ -21,7 +21,9 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -72,7 +74,7 @@ class BackupEntry(NamedTuple):
     """Своя копия в папке: время из имени, суффикс минуты и путь."""
 
     moment: datetime
-    sequence: int
+    minute_ordinal: int
     path: Path
 
 
@@ -107,9 +109,11 @@ def backup_dir_for(book_path: Path) -> Path:
 def is_unchanged(book_path: Path, latest_backup: Path | None) -> bool:
     """Источник не менялся с самой новой копии: размер и ``mtime`` совпали.
 
-    ``shutil.copy2`` сохраняет ``mtime``, поэтому сравнение с копией дешевле
-    хеширования книги каждые два часа и достаточно для файла, который
-    сохраняет человек. Допуск 2 секунды — SMB/CIFS может округлять метку.
+    ``shutil.copy2`` сохраняет ``mtime``, а ``_copy_with_retries``
+    восстанавливает его после ``os.replace``: CIFS теряет метку при rename.
+    Сравнение с копией дешевле хеширования книги каждые два часа и достаточно
+    для файла, который сохраняет человек. Допуск 2 секунды — SMB/CIFS может
+    округлять метку.
     """
     if latest_backup is None:
         return False
@@ -152,9 +156,9 @@ def _own_entries(backup_dir: Path, book_stem: str, suffix: str | None) -> list[B
             moment = datetime.strptime(match.group(1), "%Y-%m-%d_%H-%M")
         except ValueError:
             continue
-        sequence = int(match.group(2)) if match.group(2) else 0
-        entries.append(BackupEntry(moment, sequence, child))
-    entries.sort(key=lambda entry: (entry.moment, entry.sequence), reverse=True)
+        minute_ordinal = int(match.group(2)) if match.group(2) else 0
+        entries.append(BackupEntry(moment, minute_ordinal, child))
+    entries.sort(key=lambda entry: (entry.moment, entry.minute_ordinal), reverse=True)
     return entries
 
 
@@ -162,6 +166,29 @@ def _dir_book_stem(backup_dir: Path) -> str:
     """Имя книги из имени папки копий (``<имя>_backup``)."""
     name = backup_dir.name
     return name[: -len("_backup")] if name.endswith("_backup") else name
+
+
+def _first_per(
+    entries: list[BackupEntry],
+    key: Callable[[datetime], object],
+    allowed: Callable[[datetime], bool] | None = None,
+) -> set[Path]:
+    """Первая (самая новая) запись на каждое значение ключа.
+
+    ``entries`` уже отсортированы новыми сверху. ``allowed`` отсекает записи,
+    которые уровень не рассматривает (например, старее 7 дней).
+    """
+    kept: set[Path] = set()
+    seen: set[object] = set()
+    for entry in entries:
+        if allowed is not None and not allowed(entry.moment):
+            continue
+        value = key(entry.moment)
+        if value in seen:
+            continue
+        seen.add(value)
+        kept.add(entry.path)
+    return kept
 
 
 def _keep_paths(entries: list[BackupEntry], now: datetime) -> set[Path]:
@@ -174,46 +201,34 @@ def _keep_paths(entries: list[BackupEntry], now: datetime) -> set[Path]:
 
     # Двухчасовой уровень: 24 новейших не старше 48 часов.
     recent_cutoff = now - timedelta(hours=KEEP_2H_HOURS)
-    recent_count = 0
-    for moment, _sequence, path in entries:
-        if moment < recent_cutoff:
+    recent: list[BackupEntry] = []
+    for entry in entries:
+        if entry.moment < recent_cutoff:
             continue
-        if recent_count >= KEEP_2H:
+        if len(recent) >= KEEP_2H:
             break
-        recent_count += 1
-        keep.add(path)
+        recent.append(entry)
+    keep.update(entry.path for entry in recent)
 
     # Дневной уровень: по одной (самой новой) за каждый из последних 7 дней.
     oldest_day = now.date() - timedelta(days=KEEP_DAILY - 1)
-    seen_days: set = set()
-    for moment, _sequence, path in entries:
-        day = moment.date()
-        if day < oldest_day:
-            continue
-        if day in seen_days:
-            continue
-        seen_days.add(day)
-        keep.add(path)
+    keep |= _first_per(
+        entries,
+        key=lambda moment: moment.date(),
+        allowed=lambda moment: moment.date() >= oldest_day,
+    )
 
     # Недельный уровень: по одной за каждую из последних 7 ISO-недель.
     week_start = now.date() - timedelta(days=now.weekday())
     weeks = {tuple((week_start - timedelta(weeks=index)).isocalendar()[:2]) for index in range(KEEP_WEEKLY)}
-    seen_weeks: set = set()
-    for moment, _sequence, path in entries:
-        key = tuple(moment.isocalendar()[:2])
-        if key not in weeks or key in seen_weeks:
-            continue
-        seen_weeks.add(key)
-        keep.add(path)
+    keep |= _first_per(
+        entries,
+        key=lambda moment: tuple(moment.isocalendar()[:2]),
+        allowed=lambda moment: tuple(moment.isocalendar()[:2]) in weeks,
+    )
 
     # Месячный уровень: по одной за каждый месяц, бессрочно.
-    seen_months: set = set()
-    for moment, _sequence, path in entries:
-        key = (moment.year, moment.month)
-        if key in seen_months:
-            continue
-        seen_months.add(key)
-        keep.add(path)
+    keep |= _first_per(entries, key=lambda moment: (moment.year, moment.month))
 
     return keep
 
@@ -233,7 +248,7 @@ def prune(backup_dir: Path, now: datetime | None = None) -> list[Path]:
 
     keep = _keep_paths(entries, now)
     deleted: list[Path] = []
-    for _moment, _sequence, path in entries:
+    for _moment, _minute_ordinal, path in entries:
         if path in keep:
             continue
         try:
@@ -260,6 +275,20 @@ def _reset_warn_state() -> None:
     _last_warn_key = None
 
 
+# Предупреждение о неудачном ``utime`` — свойство монтирования, а не
+# состояние копии: успешная копия не должна сбрасывать его и повторять
+# строку каждые 2 часа. Ключ — папка копий.
+_utime_warned: set[str] = set()
+
+
+def _warn_utime_once(backup_dir: Path, message: str) -> None:
+    key = str(backup_dir)
+    if key in _utime_warned:
+        return
+    _utime_warned.add(key)
+    logger.warning(message)
+
+
 def _is_settled(book_path: Path) -> bool | None:
     """Книга не дописывается прямо сейчас: два ``stat`` с паузой совпали.
 
@@ -277,13 +306,17 @@ def _is_settled(book_path: Path) -> bool | None:
 
 
 def _unique_target(backup_dir: Path, stem: str, suffix: str, moment: datetime) -> Path:
-    """Свободное имя копии; существующий файл не перезаписывается никогда."""
+    """Свободное имя копии: существующее имя не выбирается.
+
+    Проверка стоит непосредственно перед ``os.replace``, поэтому окно гонки с
+    другим писателем мало; второй сервер на ту же папку не запускается.
+    """
     stamp = moment.strftime("%Y-%m-%d_%H-%M")
     candidate = backup_dir / f"{stamp}_{stem}{suffix}"
-    sequence = 1
+    ordinal = 1
     while candidate.exists():
-        candidate = backup_dir / f"{stamp}_{stem}-{sequence:02d}{suffix}"
-        sequence += 1
+        candidate = backup_dir / f"{stamp}_{stem}-{ordinal:02d}{suffix}"
+        ordinal += 1
     return candidate
 
 
@@ -303,34 +336,42 @@ def _copy_with_retries(
     """
     last_error: OSError | None = None
     for attempt in range(1, COPY_ATTEMPTS + 1):
+        tmp: Path | None = None
         try:
             backup_dir.mkdir(parents=True, exist_ok=True)
+            # Временный файл создаётся заранее и получает случайное имя:
+            # итоговое имя выбирается непосредственно перед replace, поэтому
+            # окно «кто-то успел создать такое же имя» минимально.
+            fd, tmp_name = tempfile.mkstemp(prefix=_TMP_PREFIX, dir=backup_dir)
+            tmp = Path(tmp_name)
+            os.close(fd)
+            shutil.copy2(book_path, tmp)
+            # CIFS-том в контейнере теряет mtime при rename: os.replace
+            # ставит файлу время переименования, и is_unchanged перестаёт
+            # видеть «книга не менялась». Метку, которую copy2 взял у
+            # книги, переносим на итоговый файл явно.
+            copied = tmp.stat()
             target = _unique_target(backup_dir, stem, suffix, moment)
-            tmp = backup_dir / f"{_TMP_PREFIX}{target.name}"
+            os.replace(tmp, target)
             try:
-                shutil.copy2(book_path, tmp)
-                # CIFS-том в контейнере теряет mtime при rename: os.replace
-                # ставит файлу время переименования, и is_unchanged перестаёт
-                # видеть «книга не менялась». Метку, которую copy2 взял у
-                # книги, переносим на итоговый файл явно.
-                copied = tmp.stat()
-                os.replace(tmp, target)
-                try:
-                    os.utime(target, ns=(copied.st_atime_ns, copied.st_mtime_ns))
-                except OSError as error:
-                    _warn_once(
-                        f"utime:{backup_dir}",
-                        f"[ExcelBackup] Не удалось сохранить mtime копии {target.name}: {error}",
-                    )
-            finally:
-                tmp.unlink(missing_ok=True)
+                os.utime(target, ns=(copied.st_atime_ns, copied.st_mtime_ns))
+                _utime_warned.discard(str(backup_dir))
+            except OSError as error:
+                _warn_utime_once(
+                    backup_dir,
+                    f"[ExcelBackup] Не удалось сохранить mtime копии {target.name}: {error}",
+                )
             return target
         except OSError as error:
             last_error = error
             if attempt < COPY_ATTEMPTS and COPY_RETRY_DELAY_SECONDS:
                 time.sleep(COPY_RETRY_DELAY_SECONDS)
-    assert last_error is not None
-    raise last_error
+        finally:
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("копирование не выполнило ни одной попытки")
 
 
 def backup_once(now: datetime | None = None) -> BackupStatus:
@@ -398,7 +439,7 @@ def backup_once(now: datetime | None = None) -> BackupStatus:
 class ExcelBackup:
     """Фоновая задача автобэкапа: цикл, старт и повтор."""
 
-    async def run_forever(self, interval_seconds: float | None = None) -> None:
+    async def run_forever(self) -> None:
         """Просыпаться каждые ``POLL_SECONDS`` и делать попытку по расписанию.
 
         Сразу при старте — немедленная проверка: если книга менялась, пока
@@ -406,11 +447,7 @@ class ExcelBackup:
         пропуска «не менялась» следующий запуск через интервал, после ошибки —
         через 5 минут.
         """
-        interval = (
-            float(interval_seconds)
-            if interval_seconds is not None
-            else float(settings.EXCEL_BACKUP_INTERVAL_MINUTES) * 60
-        )
+        interval = float(settings.EXCEL_BACKUP_INTERVAL_MINUTES) * 60
         loop = asyncio.get_running_loop()
         next_run = loop.time()
         while True:
