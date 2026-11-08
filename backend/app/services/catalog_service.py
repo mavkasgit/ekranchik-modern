@@ -470,18 +470,21 @@ class CatalogService:
             profile = result.scalar_one_or_none()
 
             if profile:
-                # Delete old photos if they exist
+                # Delete old photos that live under a different name. При
+                # повторной загрузке того же профиля старый путь совпадает с
+                # только что записанным файлом: удалять его нельзя, иначе
+                # запись в БД указывает на несуществующий файл.
                 if profile.photo_thumb:
                     norm_old_thumb = self._normalize_db_path(profile.photo_thumb)
                     if norm_old_thumb:
                         old_thumb = settings.images_path.parent / norm_old_thumb
-                        if old_thumb.exists():
+                        if old_thumb.resolve() != thumb_path.resolve() and old_thumb.exists():
                             old_thumb.unlink()
                 if profile.photo_full:
                     norm_old_full = self._normalize_db_path(profile.photo_full)
                     if norm_old_full:
                         old_full = settings.images_path.parent / norm_old_full
-                        if old_full.exists():
+                        if old_full.resolve() != full_path.resolve() and old_full.exists():
                             old_full.unlink()
 
                 profile.photo_thumb = rel_thumb
