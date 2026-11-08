@@ -472,10 +472,13 @@ async def get_bath_status(bath_number: int):
         raise HTTPException(status_code=400, detail="Bath number must be between 1 and 39")
 
     try:
+        free = opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].Free")
         bath_data = {
             "bath_number": bath_number,
             "in_use": bool(opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].InUse") or False),
-            "free": bool(opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].Free") or True),
+            # Неизвестное значение — «свободна» (как в /line/status), но
+            # явный False от PLC означает «занята» и теряться не должен.
+            "free": bool(free) if free is not None else True,
             "pallete": int(opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].Pallete") or 0),
             "in_time": float(opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].InTime") or 0),
             "out_time": float(opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].OutTime") or 0),
