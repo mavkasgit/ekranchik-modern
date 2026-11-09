@@ -261,3 +261,18 @@ async def test_thumbnail_update_runs_off_the_event_loop_thread(images_dir, db_se
 
     assert seen, "PIL вообще не вызывался"
     assert loop_thread not in seen, "пережатие превью осталось в потоке event loop"
+
+
+async def test_custom_rgba_thumbnail_is_saved_as_rgb_jpeg(images_dir, db_session):
+    """Присланное превью с альфой тоже пишется RGB-JPEG в пределах размера."""
+    buffer = io.BytesIO()
+    Image.new("RGBA", (400, 400), (10, 20, 30, 128)).save(buffer, format="PNG")
+
+    await catalog_service.upload_photo(
+        "3000", _jpeg(), "photo.jpg", thumbnail_data=buffer.getvalue(), session=db_session
+    )
+
+    thumb_path = images_dir / f"{_photo_file_stem('3000')}-thumb.jpg"
+    with Image.open(thumb_path) as thumb:
+        assert thumb.mode == "RGB"
+        assert max(thumb.size) <= max(settings.THUMBNAIL_SIZE)

@@ -61,6 +61,17 @@ class OPCUAState(Enum):
     ERROR = "error"
 
 
+# Текст состояния для интерфейса. Живёт рядом с самим состоянием, а не в
+# роуте: один и тот же ``state`` показывают дашборд и диагностика, и
+# ``CONNECTING`` не должен читаться как «Отключено».
+_STATUS_TEXT = {
+    OPCUAState.DISCONNECTED: "Отключено",
+    OPCUAState.CONNECTING: "Подключение...",
+    OPCUAState.CONNECTED: "Подключено",
+    OPCUAState.ERROR: "Ошибка",
+}
+
+
 class OPCUAService:
     """
     OPC UA сервис с пакетным чтением и защитой от зомби-сессий.
@@ -146,6 +157,11 @@ class OPCUAService:
         return self._state
 
     @property
+    def status_text(self) -> str:
+        """Текст состояния для дашборда; неизвестное состояние — «Отключено»."""
+        return _STATUS_TEXT.get(self.state, "Отключено")
+
+    @property
     def stats(self) -> dict:
         stats = self._stats.copy()
         # Это гейдж, а не накопительный счётчик: сколько ошибок соединения
@@ -180,26 +196,32 @@ class OPCUAService:
             "cache_size_kb": round(cache_size_bytes / 1024, 2),
         }
 
-    @property
-    def last_ping_ms(self) -> float | None:
-        """Последний замер ping, мс; ``None`` — замер не удался."""
-        return self._last_ping_ms
-
     async def ping_server(self, max_age: float = PING_CACHE_TTL_SECONDS) -> float | None:
         """Измерить ping до сервера (совместимость с API).
 
         Сам замер синхронный и уходит в поток; повторный вызов в пределах
-        ``max_age`` отдаёт прошлый результат. Неудачный замер тоже кэшируется:
-        иначе лежащий PLC получал бы новый таймаут на каждый запрос.
+        ``max_age`` отдаёт прошлый успешный результат. Неудачный замер не
+        кэшируется: PLC мог вернуться сразу после пробы, и замокший на TTL
+        ``None`` заставлял бы диагностику и дашборд ещё десять секунд
+        показывать «недоступен». Следующий вызов в этом случае снова
+        пробует сокет.
         """
         now = time.monotonic()
-        if self._ping_measured_at is not None and now - self._ping_measured_at < max_age:
+        if (
+            self._last_ping_ms is not None
+            and self._ping_measured_at is not None
+            and now - self._ping_measured_at < max_age
+        ):
             return self._last_ping_ms
 
         parsed = urlparse(self._url)
         host = parsed.hostname
         port = parsed.port or 4840
         ping_ms = await asyncio.to_thread(_probe_ping, host, port)
+        if ping_ms is None:
+            self._last_ping_ms = None
+            self._ping_measured_at = None
+            return None
         self._last_ping_ms = ping_ms
         self._ping_measured_at = time.monotonic()
         return ping_ms
@@ -586,9 +608,13 @@ class OPCUAService:
                 f"[OPC UA] Динамическое переключение: Активирован режим реального OPC UA. Эндпоинт: {self._url}"
             )
 
-        # Очищаем кэш и списки при смене режима
+        # Очищаем кэш и списки при смене режима. Замер ping тоже забываем:
+        # он сделан до другого эндпоинта, и диагностика иначе до истечения
+        # TTL называла бы замер прежнего режима.
         self._cache.clear()
         self._blacklist.clear()
+        self._last_ping_ms = None
+        self._ping_measured_at = None
 
         if was_running:
             await self.start()

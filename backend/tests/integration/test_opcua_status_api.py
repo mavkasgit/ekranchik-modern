@@ -62,6 +62,7 @@ async def test_status_does_not_wait_for_connect(no_connect):
     ("connected", "state", "expected"),
     [
         (True, OPCUAState.CONNECTED, "Подключено"),
+        (False, OPCUAState.CONNECTING, "Подключение..."),
         (False, OPCUAState.DISCONNECTED, "Отключено"),
         (False, OPCUAState.ERROR, "Ошибка"),
     ],

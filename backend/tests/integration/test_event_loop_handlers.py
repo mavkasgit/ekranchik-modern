@@ -143,6 +143,30 @@ def ping_probe(monkeypatch):
     monkeypatch.setattr(settings, "OPCUA_ENDPOINT", "opc.tcp://127.0.0.1:4840")
     monkeypatch.setattr(opcua_service, "_url", "opc.tcp://127.0.0.1:4840")
     # Кэш последнего замера с TTL: тесту нужен именно новый замер.
+    monkeypatch.setattr(opcua_service, "_last_ping_ms", None, raising=False)
+    monkeypatch.setattr(opcua_service, "_ping_measured_at", None, raising=False)
+    return seen
+
+
+@pytest.fixture
+def ping_ok(monkeypatch):
+    """Сокет PLC отвечает; каждый замер записывает свой поток."""
+    import app.services.opcua_service as opcua_module
+    from app.services.opcua_service import opcua_service
+
+    seen: list[int] = []
+
+    class _Socket:
+        def close(self):
+            pass
+
+    def fake_create_connection(address, timeout=None):
+        seen.append(threading.get_ident())
+        return _Socket()
+
+    monkeypatch.setattr(opcua_module.socket, "create_connection", fake_create_connection)
+    monkeypatch.setattr(opcua_service, "_url", "opc.tcp://127.0.0.1:4840")
+    monkeypatch.setattr(opcua_service, "_last_ping_ms", None, raising=False)
     monkeypatch.setattr(opcua_service, "_ping_measured_at", None, raising=False)
     return seen
 
@@ -174,13 +198,84 @@ async def test_metrics_probes_the_socket_off_the_event_loop_thread(ping_probe):
     assert loop_thread not in ping_probe, "socket-замер остался в потоке event loop"
 
 
-async def test_repeated_probes_use_the_cached_ping(ping_probe):
+async def test_diagnose_names_the_endpoint_it_actually_probed(ping_probe, monkeypatch):
+    """Host/port в ответе — того эндпоинта, до которого шёл сокет.
+
+    Настройка ``OPCUA_ENDPOINT`` и фактический ``_url`` расходятся в режиме
+    симуляции: ответ и лог не должны называть реальный PLC, который не
+    опрашивали.
+    """
+    from app.core.config import settings
+    from app.services.opcua_service import opcua_service
+
+    monkeypatch.setattr(settings, "OPCUA_ENDPOINT", "opc.tcp://real-plc:4840")
+    monkeypatch.setattr(opcua_service, "_url", "opc.tcp://simulator:4841")
+
+    async with _client() as client:
+        response = await client.get("/api/opcua/diagnose")
+
+    body = response.json()
+    assert response.status_code == 200, response.text
+    assert body["endpoint"] == "opc.tcp://simulator:4841"
+    assert body["host"] == "simulator"
+    assert body["port"] == 4841
+
+
+async def test_repeated_probes_use_the_cached_ping(ping_ok):
     """Повторный опрос в пределах TTL не открывает сокет заново."""
     async with _client() as client:
         await client.get("/api/opcua/metrics")
         await client.get("/api/opcua/diagnose")
 
-    assert len(ping_probe) == 1, "кэш last_ping_ms обязан переживать повторный запрос"
+    assert len(ping_ok) == 1, "удачный замер ping обязан переживать повторный запрос"
+
+
+async def test_failed_probe_is_probed_again(ping_probe):
+    """Неудача не кэшируется на TTL: PLC мог вернуться сразу после пробы."""
+    async with _client() as client:
+        metrics = await client.get("/api/opcua/metrics")
+        diagnose = await client.get("/api/opcua/diagnose")
+
+    assert metrics.json()["current_ping_ms"] is None
+    assert diagnose.json()["host_reachable"] is False
+    assert len(ping_probe) == 2, "неудачный замер не должен залипать на десять секунд"
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/api/signal/refresh", None),
+        ("/api/signal", {"source": "excel", "event": "refresh"}),
+    ],
+)
+async def test_signal_invalidates_excel_cache_off_the_event_loop_thread(path, payload, monkeypatch):
+    """Сброс кэша книги ждёт ``_lock`` сервиса — значит, не в event loop.
+
+    Пока книга перечитывается по CIFS, ``_lock`` занят; синхронный
+    ``invalidate_cache`` в обработчике остановил бы API на всё чтение.
+    """
+    from app.services.excel_service import excel_service
+
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+
+    def slow_invalidate():
+        time.sleep(0.3)
+        seen.append(threading.get_ident())
+
+    monkeypatch.setattr(excel_service, "invalidate_cache", slow_invalidate)
+
+    async with _client() as client:
+        started = time.monotonic()
+        request = asyncio.create_task(client.post(path, json=payload))
+        await asyncio.sleep(0.05)
+        tick_after = time.monotonic() - started
+        response = await request
+
+    assert response.status_code == 200, response.text
+    assert seen, "сброс кэша вообще не выполнялся"
+    assert loop_thread not in seen, "сброс кэша остался в потоке event loop"
+    assert tick_after < 0.2, f"loop стоял {tick_after:.2f} с на сбросе кэша"
 
 
 async def test_settings_toggle_goes_off_the_event_loop_thread(monkeypatch):

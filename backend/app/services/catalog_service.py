@@ -84,6 +84,29 @@ def _resolve_photo_path(images_dir: Path, filename: str) -> Path:
     return path
 
 
+def _write_thumbnail(source: bytes | Path, thumb_path: Path) -> None:
+    """Пережать картинку в превью JPEG: PIL, зовётся только из потока.
+
+    ``source`` — байты присланного превью или путь к полному фото. Правило
+    одно для обоих входов: цветовой режим, размер и качество превью не
+    должны зависеть от того, откуда взялась картинка.
+    """
+    if isinstance(source, bytes):
+        with io.BytesIO(source) as buffer, Image.open(buffer) as img:
+            _save_jpeg_thumbnail(img, thumb_path)
+        return
+    with Image.open(source) as img:
+        _save_jpeg_thumbnail(img, thumb_path)
+
+
+def _save_jpeg_thumbnail(img: Image.Image, thumb_path: Path) -> None:
+    """Записать открытую картинку превью: RGB и ``thumbnail`` не увеличивают."""
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+    img.save(thumb_path, "JPEG", quality=85, optimize=True)
+
+
 def _save_photo(
     images_dir: Path,
     stem: str,
@@ -105,20 +128,10 @@ def _save_photo(
     try:
         if thumbnail_data:
             # Use custom thumbnail provided by user (cropped area)
-            with Image.open(io.BytesIO(thumbnail_data)) as img:
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                # Resize to thumbnail size if larger
-                if img.width > settings.THUMBNAIL_SIZE[0] or img.height > settings.THUMBNAIL_SIZE[1]:
-                    img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                img.save(thumb_path, "JPEG", quality=85, optimize=True)
+            _write_thumbnail(thumbnail_data, thumb_path)
         else:
             # Auto-generate thumbnail from full image
-            with Image.open(full_path) as img:
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                img.save(thumb_path, "JPEG", quality=85, optimize=True)
+            _write_thumbnail(full_path, thumb_path)
     except Exception as e:
         # Clean up full image if thumbnail fails
         if full_path.exists():
@@ -131,12 +144,7 @@ def _save_photo(
 def _save_thumbnail(thumb_path: Path, thumbnail_data: bytes) -> None:
     """Пережать и записать превью: PIL, зовётся из потока."""
     try:
-        with Image.open(io.BytesIO(thumbnail_data)) as img:
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            if img.width > settings.THUMBNAIL_SIZE[0] or img.height > settings.THUMBNAIL_SIZE[1]:
-                img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-            img.save(thumb_path, "JPEG", quality=85, optimize=True)
+        _write_thumbnail(thumbnail_data, thumb_path)
     except Exception as e:
         raise ValueError(f"Failed to process thumbnail: {e}") from e
 
