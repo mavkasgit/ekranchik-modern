@@ -171,6 +171,16 @@ async def test_delete_profile_removes_legacy_photo_paths(images_dir, db_session)
     assert not legacy_full.exists()
 
 
+def test_same_photo_file_is_not_crashed_by_missing_file(tmp_path):
+    """``samefile`` на пропавшем старом файле — не исключение, а «разные»."""
+    existing = tmp_path / "existing.jpg"
+    existing.write_bytes(b"photo")
+    missing = tmp_path / "missing.jpg"
+
+    assert catalog_service._same_photo_file(existing, missing) is False
+    assert catalog_service._same_photo_file(missing, missing) is True
+
+
 async def test_delete_profile_does_not_delete_outside_images(images_dir, db_session, tmp_path):
     """Путь из БД с ``..`` не удаляет файл за пределами каталога images."""
     outside = tmp_path.parent / f"outside-{tmp_path.name}.jpg"
