@@ -148,13 +148,6 @@ export function passClock(iso: string | null | undefined): string {
   return match ? match[1] : "—";
 }
 
-/** Сутки выхода прохода: YYYY-MM-DD из ISO-метки. */
-export function passDay(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const match = /^(\d{4}-\d{2}-\d{2})/.exec(iso);
-  return match ? match[1] : "";
-}
-
 /** Путь по ваннам строкой: ``3 → 4 → 34``. */
 export function formatPath(path: JournalPass["path"]): string {
   if (!path || path.length === 0) return "—";

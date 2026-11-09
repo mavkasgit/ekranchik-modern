@@ -25,13 +25,6 @@ class HangerData(BaseModel):
     is_defect: bool = Field(default=False, description="True if defect/браk")
 
 
-class UnloadEvent(BaseModel):
-    """Raw unload event from OPC UA"""
-
-    time: str
-    hanger: int = Field(..., ge=0)
-
-
 class MatchedUnloadEvent(BaseModel):
     """Проход подвеса по линии, сопоставленный со строкой книги учёта"""
 
