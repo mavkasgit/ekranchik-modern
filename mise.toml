@@ -5,22 +5,22 @@
 # и CLI, а не за библиотеки приложения.
 #
 # Python сознательно не пинится в [tools]: проект работает из backend/.venv на
-# Python 3.12 (его создаёт `mise run install`), а директория venv подключается
-# ниже через `_.python.venv`. Так `python` в задачах — это интерпретатор venv,
-# а не случайный глобальный PATH.
+# Python 3.14 (его создаёт `mise run install`, см. scripts/setup-python.js),
+# а директория venv подключается ниже через `_.python.venv`. Так `python` в
+# задачах — это интерпретатор venv, а не случайный глобальный PATH.
 
 [tools]
 # Точные пины: mise.lock фиксирует те же версии для CI (mise install --locked).
-node = "24.22.2"
-ruff = "0.17.3"
+node = "26.13.0"
+ruff = "0.17.4"
 hk = "2.11.0"
 betterleaks = "1.9.0"
 osv-scanner = "2.7.0"
 jactionlint = "2.4.0"
 hadolint = "2.15.1"
 shellcheck = "0.11.0"
-oxlint = "1.90.0"
-oxfmt = "0.75.0"
+oxlint = "1.92.0"
+oxfmt = "0.77.0"
 
 [env]
 # PYTHONUTF8/PYTHONIOENCODING: русские комментарии в файлах читаются одинаково

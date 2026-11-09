@@ -6,7 +6,7 @@
 
 ```bash
 npm run install-all     # node-зависимости + фронтенд
-npm run setup:python    # backend/.venv на Python 3.12: системный python и pip не использовать
+npm run setup:python    # backend/.venv на Python 3.14: системный python и pip не использовать
 npm run dev             # бэкенд :8013 + фронтенд :5173, рабочий режим (реальный PLC и книга)
 npm run dev:sim         # то же + OPC UA симулятор и SIMULATION_ENABLED=true
 npm run dev:sim:fast    # то же, но симулятор в профиле fast: ~70 с на проход вместо ~25 мин
@@ -16,7 +16,7 @@ npm run dev:kill        # освободить порты
 ### mise
 
 Версии toolchain (Node, ruff, hk, линтеры) — только в корневом `mise.toml`;
-`mise.lock` фиксирует их для CI. Python 3.12 живёт в `backend/.venv`, и mise
+`mise.lock` фиксирует их для CI. Python 3.14 живёт в `backend/.venv`, и mise
 активирует его директивой `_.python.venv` — поэтому `python` в задачах не
 зависит от системного PATH.
 
