@@ -21,7 +21,7 @@ python-calamine==0.9.1  # Fast Rust-based Excel reader (4x faster)
 pillow==13.0.0
 
 # File watching
-watchdog==6.0.0
+watchdog==7.1.0
 
 # HTTP client
 httpx==0.28.1
@@ -36,7 +36,7 @@ pytest-asyncio==1.4.1
 hypothesis==6.170.15
 
 # Utilities
-python-dateutil==3.0.0
+python-dateutil==4.0.0
 
 # OPC UA
 asyncua==2.1.0
