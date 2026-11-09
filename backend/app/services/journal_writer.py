@@ -14,6 +14,7 @@
 
 import asyncio
 import logging
+import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -220,6 +221,9 @@ class JournalWriter:
     ``prune`` (удаление старых файлов). Строки книги на входе ``flush``
     не берутся из сервисов, а приходят ``rows_provider``-ом: так
     разбор проходов отвязан от чтения книги и проверяется без Excel.
+    ``flush`` и ``prune`` — корутины: чтение книги и обход каталога идут в
+    потоке и не останавливают event loop, а общий замок не даёт им идти
+    одновременно.
     """
 
     def __init__(
@@ -233,6 +237,18 @@ class JournalWriter:
         # чтением журнала при старте — иначе после перезапуска последние
         # проходы записались бы в файл повторно.
         self._written: OrderedDict[tuple, None] = OrderedDict()
+        # Single-flight: пока идёт один flush, второй не начинается. Флаг
+        # живёт в event loop, поэтому проверяется и ставится без await между
+        # ними. Без него второй flush увидел бы проход ещё не помеченным
+        # (ключ попадает в ``_written`` только после записи) и записал бы его
+        # в файл второй раз.
+        self._flushing = False
+        # Общий замок файловых операций: запись flush и уборка prune идут в
+        # разных потоках, а ``_written`` и файлы журнала — общие. Отмена
+        # корутины не останавливает уже запущенный поток, поэтому мало
+        # отпустить флаг в event loop: поток, начавший работу, доводит её до
+        # конца под этим замком, а prune ждёт его, а не идёт поверх.
+        self._io_lock = threading.Lock()
 
     def load_written_keys(self) -> None:
         """Пометить уже записанные проходы как записанные.
@@ -275,36 +291,60 @@ class JournalWriter:
         return len(records)
 
     async def flush(self, line_monitor) -> int:
-        """Записать проходы, которых в журнале ещё нет. Возвращает их число."""
-        events = line_monitor.get_unload_events(limit=LOOKBACK_EVENTS)
-        # События монитор отдаёт новыми сверху, а сопоставление разбирает
-        # проходы от ранних к поздним (одна строка книги достаётся первому).
-        pending = [e for e in reversed(events) if _event_key(e) not in self._written]
-        if not pending:
-            return 0
+        """Записать проходы, которых в журнале ещё нет. Возвращает их число.
 
+        Чтение книги, сопоставление и запись файла идут в отдельном потоке:
+        Excel на сетевом диске читается секундами, и в event loop это
+        держало бы весь API, включая ``/health`` и тикер монитора.
+
+        Второй flush, начавшийся пока первый ещё не закончился, уступает ему
+        и возвращает 0 (single-flight): проход, который уже пишется, не
+        записывается второй раз и не теряется.
+        """
+        if self._flushing:
+            logger.debug("[Journal] Flush skipped: the previous flush is still running")
+            return 0
+        self._flushing = True
         try:
-            rows_by_hanger = self.rows_provider()
-        except Exception as error:
-            logger.warning(f"[Journal] Book rows unavailable, pass deferred: {error}")
-            return 0
+            events = line_monitor.get_unload_events(limit=LOOKBACK_EVENTS)
+            # События монитор отдаёт новыми сверху, а сопоставление разбирает
+            # проходы от ранних к поздним (одна строка книги достаётся первому).
+            pending = [e for e in reversed(events) if _event_key(e) not in self._written]
+            if not pending:
+                return 0
+            return await asyncio.to_thread(self._flush_sync, pending)
+        finally:
+            self._flushing = False
 
-        written = 0
-        for match in match_cycles_to_rows(pending, rows_by_hanger):
-            key = _event_key(match.cycle)
-            if key in self._written:
-                continue
+    def _flush_sync(self, pending: list[dict[str, Any]]) -> int:
+        """Записать новые проходы: книга, сопоставление, файл, память ключей.
+
+        Всё это — одна операция под ``_io_lock``: prune не должен пройти по
+        каталогу, пока проход дописывается, и наоборот.
+        """
+        with self._io_lock:
             try:
-                self.store.append(record_from_match(match))
-            except OSError as error:
-                logger.error(f"[Journal] Could not write pass {key}: {error}")
-                continue
-            self._remember(key)
-            written += 1
-            # Та же строка, что раньше уходила в stdout из роута: в
-            # docker logs она появляется независимо от открытого дашборда.
-            logger.info(match_log_line(match, str(match.cycle.get("hanger"))))
-        return written
+                rows_by_hanger = self.rows_provider()
+            except Exception as error:
+                logger.warning(f"[Journal] Book rows unavailable, pass deferred: {error}")
+                return 0
+
+            written = 0
+            for match in match_cycles_to_rows(pending, rows_by_hanger):
+                key = _event_key(match.cycle)
+                if key in self._written:
+                    continue
+                try:
+                    self.store.append(record_from_match(match))
+                except OSError as error:
+                    logger.error(f"[Journal] Could not write pass {key}: {error}")
+                    continue
+                self._remember(key)
+                written += 1
+                # Та же строка, что раньше уходила в stdout из роута: в
+                # docker logs она появляется независимо от открытого дашборда.
+                logger.info(match_log_line(match, str(match.cycle.get("hanger"))))
+            return written
 
     def _remember(self, key: tuple) -> None:
         """Запомнить ключ прохода, вытесняя самый старый.
@@ -317,9 +357,20 @@ class JournalWriter:
         while len(self._written) > RECENT_KEYS_MAX:
             self._written.popitem(last=False)
 
-    def prune(self) -> list[Path]:
-        """Удалить файлы старше срока хранения (с записью в лог)."""
-        return self.store.prune()
+    async def prune(self) -> list[Path]:
+        """Удалить файлы старше срока хранения (с записью в лог).
+
+        Glob по каталогу и unlink тоже уходят в поток: каталог журнала может
+        быть на сетевом диске, а удалять файлы на нём в event loop — значит
+        подвесить API на время обхода. Тот же ``_io_lock``, что у flush, не
+        даёт уборке пройти по каталогу во время записи: файл, в который
+        сейчас дописывают, не должен удаляться.
+        """
+        return await asyncio.to_thread(self._prune_sync)
+
+    def _prune_sync(self) -> list[Path]:
+        with self._io_lock:
+            return self.store.prune()
 
     async def run_forever(self, line_monitor, interval: int) -> None:
         """Фоновая задача: дописывает новые проходы и убирает старые файлы.
@@ -328,13 +379,16 @@ class JournalWriter:
         молча прекращала бы журнал до перезапуска сервера. Ротация по сроку
         идёт здесь же, а не только при старте: сервер может не перезапускаться
         месяцами, и срок хранения без неё не наступал бы никогда.
+
+        flush и prune ждутся, а не запускаются задачами: так очередь тиков
+        не копится, и второй записи одновременно с первой не бывает.
         """
         last_prune = asyncio.get_running_loop().time()
         while True:
             try:
                 await self.flush(line_monitor)
                 if asyncio.get_running_loop().time() - last_prune >= PRUNE_INTERVAL_SECONDS:
-                    self.prune()
+                    await self.prune()
                     last_prune = asyncio.get_running_loop().time()
             except asyncio.CancelledError:
                 raise
