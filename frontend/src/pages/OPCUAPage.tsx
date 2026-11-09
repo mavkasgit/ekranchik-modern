@@ -5,7 +5,6 @@ import {
   Loader,
   RefreshCw,
   Activity,
-  Zap,
   Clock,
   Settings,
   FlaskConical,
@@ -18,8 +17,6 @@ import { formatLocalized } from "@/lib/domain/time";
 interface PLCData {
   status: string;
   server_time: string;
-  num_vars?: number;
-  num_values?: number;
   device_status?: string;
   connected: boolean;
 }
@@ -33,7 +30,8 @@ interface OPCUAStatus {
   stats: {
     reads: number;
     errors: number;
-    reconnects: number;
+    connections: number;
+    consecutive_errors: number;
   };
 }
 
@@ -191,7 +189,7 @@ export function OPCUAPage() {
         )}
 
         {/* Quick Stats */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 gap-4 mb-6">
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-gray-600">Server Time</span>
@@ -200,22 +198,6 @@ export function OPCUAPage() {
             <div className="text-lg font-mono text-gray-900">
               {formatLocalized(data?.server_time)}
             </div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-600">Total Variables</span>
-              <Zap className="w-4 h-4 text-blue-500" />
-            </div>
-            <div className="text-2xl font-bold text-gray-900">{data?.num_vars ?? "—"}</div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-600">Active Values</span>
-              <Activity className="w-4 h-4 text-green-500" />
-            </div>
-            <div className="text-2xl font-bold text-gray-900">{data?.num_values ?? "—"}</div>
           </div>
 
           <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -386,8 +368,14 @@ export function OPCUAPage() {
                     <span className="font-mono text-red-600">{status?.stats?.errors ?? 0}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-600">Reconnects:</span>
-                    <span className="font-mono">{status?.stats?.reconnects ?? 0}</span>
+                    <span className="text-gray-600">Connections:</span>
+                    <span className="font-mono">{status?.stats?.connections ?? 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Consecutive errors:</span>
+                    <span className="font-mono text-red-600">
+                      {status?.stats?.consecutive_errors ?? 0}
+                    </span>
                   </div>
                 </div>
               </div>
