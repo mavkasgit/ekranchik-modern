@@ -74,9 +74,17 @@ class OPCUAService:
         # Черный список (битые адреса)
         self._blacklist: set[str] = set()
 
-        # Счётчик последовательных ошибок чтения (для автопереподключения)
+        # Счётчик последовательных ошибок чтения (для пересоздания клиента)
         self._consecutive_read_errors = 0
         self._max_consecutive_read_errors = 5
+
+        # Счётчик последовательных ошибок соединения. Только диагностика: по
+        # нему логируется порог и он отдаётся в /status. Выхода процесса по
+        # нему нет — на заводской Windows-машине backend никто не поднимет.
+        self._consecutive_errors = 0
+        self._error_log_threshold = 5
+        # Пауза перед следующей попыткой: 1 → 2 → 5 → 10 с, дальше потолок 10.
+        self._reconnect_delays = (1.0, 2.0, 5.0, 10.0)
 
         # Статистика (с защитой от переполнения)
         self._stats = {
@@ -131,6 +139,7 @@ class OPCUAService:
             "available": OPCUA_AVAILABLE,
             "enabled": settings.OPCUA_ENABLED,
             "connected": self._connected,
+            "consecutive_errors": self._consecutive_errors,
             "state": self._state.value,
             "endpoint": self._url,
             "stats": self._stats.copy(),
@@ -302,108 +311,139 @@ class OPCUAService:
         """Заглушка для совместимости с line_monitor."""
         pass
 
+    def _new_client(self) -> Client:
+        """Создать и настроить клиента. Сети здесь нет — только объект."""
+        client = Client(url=self._url, timeout=10)
+
+        # === ВАЖНЫЕ НАСТРОЙКИ ДЛЯ OMRON ===
+        # Таймаут сессии 1 час - если опрашиваем постоянно, она не умрет
+        client.session_timeout = 3600000
+
+        # ОТКЛЮЧАЕМ ВСТРОЕННЫЙ WATCHDOG/KEEP-ALIVE
+        # 0 = не слать пустые пакеты фоном
+        # Наш опрос (_poll_data_batched) держит сессию живой
+        client.keepalive_interval = 0
+
+        # Увеличиваем таймаут канала безопасности (реже обновляет ключи)
+        client.secure_channel_timeout = 3600000
+        # ===================================
+        return client
+
+    async def _close_client(self, client: Client | None) -> None:
+        """Закрыть старое соединение перед следующей попыткой."""
+        if client is None:
+            return
+        with contextlib.suppress(BaseException):
+            await asyncio.wait_for(client.disconnect(), timeout=2.0)
+        if self._client is client:
+            self._client = None
+
+    def _record_connection_error(self, reason: str) -> None:
+        """Учесть ошибку соединения. Выхода процесса здесь нет."""
+        self._consecutive_errors += 1
+        self._stats["errors"] += 1
+        # Защита от переполнения счётчика
+        if self._stats["errors"] > self._stats_max:
+            self._stats["errors"] = 0
+        if self._consecutive_errors == self._error_log_threshold:
+            logger.error(
+                f"[OPC UA] {self._consecutive_errors} ошибок соединения подряд "
+                f"({reason}). Продолжаем переподключение, процесс не завершается."
+            )
+
+    def _record_success(self) -> None:
+        """Сбросить счётчик последовательных ошибок после удачи."""
+        if self._consecutive_errors:
+            logger.info("[OPC UA] Связь восстановлена, счётчик ошибок соединения сброшен.")
+        self._consecutive_errors = 0
+
+    def _reconnect_delay(self) -> float:
+        """Пауза перед следующей попыткой: 1 → 2 → 5 → 10 → 10 с."""
+        index = min(max(self._consecutive_errors, 1), len(self._reconnect_delays)) - 1
+        return self._reconnect_delays[index]
+
     async def _worker(self):
-        """Вечный цикл подключения и опроса."""
+        """Вечный цикл подключения и опроса.
+
+        Каждая попытка — новый клиент: старое соединение закрывается в
+        ``finally``, чтобы на ПЛК не оставалась зомби-сессия. Ошибки
+        накапливаются в ``_consecutive_errors``, но процесс не завершается:
+        на заводской Windows-машине backend никто не поднимет.
+        """
         logger.info(f"[OPC UA] Worker started, URL: {self._url}")
 
         while self._running:
+            client: Client | None = None
             try:
-                # 1. Создаем клиента
+                # 1. Новый клиент на каждую попытку: старый закрыт в finally
+                #    предыдущей итерации.
                 logger.debug(f"[OPC UA] Creating client for {self._url}")
-                self._client = Client(url=self._url, timeout=10)
-
-                # === ВАЖНЫЕ НАСТРОЙКИ ДЛЯ OMRON ===
-                # Таймаут сессии 1 час - если опрашиваем постоянно, она не умрет
-                self._client.session_timeout = 3600000
-
-                # ОТКЛЮЧАЕМ ВСТРОЕННЫЙ WATCHDOG/KEEP-ALIVE
-                # 0 = не слать пустые пакеты фоном
-                # Наш опрос (_poll_data_batched) держит сессию живой
-                self._client.keepalive_interval = 0
-
-                # Увеличиваем таймаут канала безопасности (реже обновляет ключи)
-                self._client.secure_channel_timeout = 3600000
-                # ===================================
+                client = self._new_client()
+                self._client = client
 
                 logger.info(f"[OPC UA] Подключение к {self._url}...")
                 self._state = OPCUAState.CONNECTING
 
                 # 2. Подключаемся с таймаутом (чуть больше времени на старт)
-                try:
-                    await asyncio.wait_for(self._client.connect(), timeout=20.0)
-                except TimeoutError:
-                    logger.error("[OPC UA] Таймаут подключения (20 сек)")
-                    self._stats["errors"] += 1
-                    await asyncio.sleep(10)  # Даем ПЛК время сбросить слот
-                    continue
+                await asyncio.wait_for(client.connect(), timeout=20.0)
 
                 logger.info("[OPC UA] Успешно подключено! Начинаем опрос.")
                 self._connected = True
                 self._state = OPCUAState.CONNECTED
                 self._stats["connections"] += 1
+                self._record_success()
 
                 # 3. Внутренний цикл опроса (пока есть связь)
-                try:
-                    while self._running:
-                        start_time = time.time()
+                while self._running:
+                    start_time = time.time()
 
-                        # Читаем данные пачками
-                        await self._poll_data_batched(self._client)
+                    # Читаем данные пачками
+                    await self._poll_data_batched(client)
+                    self._record_success()
 
-                        # Вычисляем время сна для стабильного ритма
-                        elapsed = time.time() - start_time
-                        sleep_time = max(0, self._poll_interval - elapsed)
-                        await asyncio.sleep(sleep_time)
-                finally:
-                    # Гарантируем корректное отключение
-                    with contextlib.suppress(BaseException):
-                        await asyncio.wait_for(self._client.disconnect(), timeout=2.0)
+                    # Вычисляем время сна для стабильного ритма
+                    elapsed = time.time() - start_time
+                    sleep_time = max(0, self._poll_interval - elapsed)
+                    await asyncio.sleep(sleep_time)
 
             except BadSessionIdInvalid as e:
                 # Сессия "испортилась" - ПЛК её убил
-                self._connected = False
                 self._state = OPCUAState.ERROR
-                self._stats["errors"] += 1
-                logger.error(f"[OPC UA] BadSessionIdInvalid: {e}. Ждем 10 сек очистки слота на ПЛК...")
-                # ВАЖНО ДЛЯ OMRON: даем время сбросить зомби-сессию
-                await asyncio.sleep(10)
+                self._record_connection_error(f"BadSessionIdInvalid: {e}")
+                logger.error(f"[OPC UA] BadSessionIdInvalid: {e}")
 
             except BadTooManySessions:
-                self._connected = False
                 self._state = OPCUAState.ERROR
-                self._stats["errors"] += 1
-                logger.error("[OPC UA] Ошибка: Нет свободных слотов! Ждем 20 сек очистки...")
-                await asyncio.sleep(20)
+                self._record_connection_error("нет свободных слотов")
+                logger.error("[OPC UA] Ошибка: нет свободных слотов OPC UA")
 
             except (TimeoutError, OSError) as e:
-                self._connected = False
                 self._state = OPCUAState.ERROR
-                self._stats["errors"] += 1
-                logger.warning(f"[OPC UA] Ошибка сети: {type(e).__name__}: {e}. Ждем 10 сек...")
-                # Omron держит порт занятым (TIME_WAIT), нужна пауза
-                await asyncio.sleep(10)
+                self._record_connection_error(f"{type(e).__name__}: {e}")
+                logger.warning(f"[OPC UA] Ошибка сети: {type(e).__name__}: {e}")
 
             except Exception as e:
-                self._connected = False
                 self._state = OPCUAState.ERROR
-                self._stats["errors"] += 1
-                logger.error(f"[OPC UA] Критическая ошибка: {type(e).__name__}: {e}", exc_info=True)
-
-                # Если слишком много ошибок подряд - перезапускаем бекенд
-                if self._stats["errors"] > 10:
-                    logger.critical("[OPC UA] Слишком много ошибок! Перезапуск бекенда...")
-                    import os
-
-                    os._exit(1)  # Принудительный выход, launcher перезапустит
-
-                await asyncio.sleep(5)
+                self._record_connection_error(f"{type(e).__name__}: {e}")
+                logger.error(
+                    f"[OPC UA] Критическая ошибка: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
 
             finally:
                 self._connected = False
                 self._state = OPCUAState.DISCONNECTED
                 self._last_update = datetime.min
-                self._client = None
+                await self._close_client(client)
                 logger.debug("[OPC UA] Connection closed, will retry...")
+
+            if self._running:
+                delay = self._reconnect_delay()
+                logger.info(
+                    f"[OPC UA] Переподключение через {delay:.0f} с "
+                    f"(ошибок подряд: {self._consecutive_errors})"
+                )
+                await asyncio.sleep(delay)
 
     async def _poll_data_batched(self, client: Client):
         """Читает данные, разбивая их на пачки по 100 штук."""
