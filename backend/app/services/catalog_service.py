@@ -2,9 +2,13 @@
 Catalog Service - handles profile search, CRUD operations, and photo management.
 """
 
+import hashlib
 import io
+import logging
+import os
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 
 from PIL import Image
 from sqlalchemy import select
@@ -17,9 +21,25 @@ from app.db.session import get_session
 from app.schemas.profile import ProfileCreate, ProfileResponse, ProfileSearchResult, ProfileUpdate
 from app.services.profile_name import parse_profile
 
+logger = logging.getLogger(__name__)
+
 # Символы, запрещённые в именах файлов Windows. Имя файла фото строится из
 # имени профиля, а оно приходит снаружи: из адреса запроса и из книги учёта.
 _FORBIDDEN_FILENAME_CHARS = '<>:"/\\|?*'
+
+# Имена, которые Windows не разрешает использовать даже с расширением.
+_RESERVED_FILENAME_STEMS = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
+
+# Запас под ``-thumb.jpg`` и суффикс: длинное имя не должно упираться в
+# ограничение файловой системы (255 символов на компонент пути).
+_MAX_PHOTO_STEM = 80
 
 
 def _photo_file_stem(profile_name: str) -> str:
@@ -28,12 +48,39 @@ def _photo_file_stem(profile_name: str) -> str:
     ``/`` и ``\\`` в имени профиля — не редкость (несколько артикулов через
     ``/``), но в имени файла они означают подкаталог или выход за пределы
     images. Заменяем запрещённые символы на ``_``, как это делает автобэкап
-    книги для имён папок; буквы (в том числе кириллица) не трогаем, иначе
-    уже лежащие на диске фото перестали бы находиться.
+    книги для имён папок; буквы (в том числе кириллица) не трогаем, чтобы
+    имя файла оставалось узнаваемым. Старые фото находятся по пути из БД,
+    а не по имени профиля.
+
+    К имени добавляется короткий хеш исходного имени. Без него ``A/B`` и
+    ``A_B`` давали один и тот же файл, и фото одного профиля затирало фото
+    другого. Хеш считается от исходной строки, поэтому одинаковое имя
+    профиля всегда даёт одно имя файла, а разные — разные (в том числе если
+    они различаются только регистром: на NTFS/CIFS это один файл).
     """
     stem = "".join("_" if char in _FORBIDDEN_FILENAME_CHARS or ord(char) < 32 else char for char in profile_name)
     stem = stem.rstrip(" .")
-    return stem or "_"
+    if not stem:
+        stem = "_"
+    if len(stem) > _MAX_PHOTO_STEM:
+        stem = stem[:_MAX_PHOTO_STEM].rstrip(" .") or "_"
+    if stem.upper() in _RESERVED_FILENAME_STEMS:
+        stem = f"_{stem}"
+    digest = hashlib.sha1(profile_name.encode("utf-8")).hexdigest()[:8]
+    return f"{stem}-{digest}"
+
+
+def _resolve_photo_path(images_dir: Path, filename: str) -> Path:
+    """Путь к файлу фото с проверкой, что он остался внутри images.
+
+    Имя строится из внешней строки, поэтому проверка на выход за каталог
+    нужна на выходе, а не только при замене разделителей: ``..``, точка или
+    пробел в конце не должны превратить запись в файл где-то ещё.
+    """
+    path = (images_dir / filename).resolve()
+    if not path.is_relative_to(images_dir.resolve()):
+        raise ValueError(f"Photo path escapes images directory: {filename!r}")
+    return path
 
 
 class CatalogService:
@@ -63,6 +110,38 @@ class CatalogService:
             clean_path = clean_path[7:]
 
         return clean_path
+
+    def _db_photo_path(self, path: str | None) -> Path | None:
+        """Абсолютный путь к фото из БД, но только внутри каталога images.
+
+        Путь в БД — тоже внешние данные: он мог остаться от старой версии,
+        быть поправленным вручную или прийти из импортированной базы. Без
+        проверки ``../../x`` удалял бы файл за пределами images.
+        """
+        normalized = self._normalize_db_path(path)
+        if not normalized:
+            return None
+
+        images_root = settings.images_path.resolve()
+        resolved = (settings.images_path.parent / normalized).resolve()
+        if not resolved.is_relative_to(images_root):
+            logger.warning(f"[Catalog] Refusing photo path outside images: {path!r}")
+            return None
+        return resolved
+
+    @staticmethod
+    def _same_photo_file(first: Path, second: Path) -> bool:
+        """Один ли это файл: на NTFS/CIFS регистр в пути не различается.
+
+        Сравнение строк пути без учёта регистра считало ``A.jpg`` и
+        ``a.jpg`` разными и удаляло только что записанный файл как
+        «старый». ``samefile`` спрашивает файловую систему и не зависит от
+        того, канонизирует ли ``resolve()`` регистр на конкретной шаре.
+        """
+        try:
+            return os.path.samefile(first, second)
+        except OSError:
+            return os.path.normcase(str(first)) == os.path.normcase(str(second))
 
     async def search_profiles(
         self, query: str, limit: int = 50, session: AsyncSession | None = None
@@ -305,7 +384,8 @@ class CatalogService:
         """
         Rename photo files when profile name changes.
 
-        Uses format: {name}.jpg and {name}-thumb.jpg
+        Uses format: {stem}.jpg and {stem}-thumb.jpg, where ``stem`` is
+        produced by ``_photo_file_stem``.
 
         Args:
             old_thumb_path: Current thumbnail path (relative)
@@ -320,27 +400,23 @@ class CatalogService:
         new_thumb_path = old_thumb_path
         new_full_path = old_full_path
 
-        # Rename thumbnail: {name}-thumb.jpg
+        # Rename thumbnail: {stem}-thumb.jpg
         if old_thumb_path:
-            norm_thumb = self._normalize_db_path(old_thumb_path)
-            if norm_thumb:
-                old_thumb_file = images_dir.parent / norm_thumb
-                if old_thumb_file.exists():
-                    new_thumb_filename = f"{_photo_file_stem(new_name)}-thumb.jpg"
-                    new_thumb_file = images_dir / new_thumb_filename
-                    old_thumb_file.rename(new_thumb_file)
-                    new_thumb_path = f"images/{new_thumb_filename}"
+            old_thumb_file = self._db_photo_path(old_thumb_path)
+            if old_thumb_file and old_thumb_file.exists():
+                new_thumb_filename = f"{_photo_file_stem(new_name)}-thumb.jpg"
+                new_thumb_file = _resolve_photo_path(images_dir, new_thumb_filename)
+                old_thumb_file.rename(new_thumb_file)
+                new_thumb_path = f"images/{new_thumb_filename}"
 
-        # Rename full photo: {name}.jpg
+        # Rename full photo: {stem}.jpg
         if old_full_path:
-            norm_full = self._normalize_db_path(old_full_path)
-            if norm_full:
-                old_full_file = images_dir.parent / norm_full
-                if old_full_file.exists():
-                    new_full_filename = f"{_photo_file_stem(new_name)}.jpg"
-                    new_full_file = images_dir / new_full_filename
-                    old_full_file.rename(new_full_file)
-                    new_full_path = f"images/{new_full_filename}"
+            old_full_file = self._db_photo_path(old_full_path)
+            if old_full_file and old_full_file.exists():
+                new_full_filename = f"{_photo_file_stem(new_name)}.jpg"
+                new_full_file = _resolve_photo_path(images_dir, new_full_filename)
+                old_full_file.rename(new_full_file)
+                new_full_path = f"images/{new_full_filename}"
 
         return new_thumb_path, new_full_path
 
@@ -424,9 +500,6 @@ class CatalogService:
         images_dir = settings.images_path
         images_dir.mkdir(parents=True, exist_ok=True)
 
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.info(
             f"[upload_photo] images_dir: {images_dir}, exists: {images_dir.exists()}, absolute: {images_dir.absolute()}"
         )
@@ -439,8 +512,8 @@ class CatalogService:
         full_filename = f"{base_name}{ext}"
         thumb_filename = f"{base_name}-thumb{ext}"
 
-        full_path = images_dir / full_filename
-        thumb_path = images_dir / thumb_filename
+        full_path = _resolve_photo_path(images_dir, full_filename)
+        thumb_path = _resolve_photo_path(images_dir, thumb_filename)
 
         logger.info(f"[upload_photo] Saving to full_path: {full_path.absolute()}, thumb_path: {thumb_path.absolute()}")
 
@@ -490,19 +563,15 @@ class CatalogService:
                 # Delete old photos that live under a different name. При
                 # повторной загрузке того же профиля старый путь совпадает с
                 # только что записанным файлом: удалять его нельзя, иначе
-                # запись в БД указывает на несуществующий файл.
-                if profile.photo_thumb:
-                    norm_old_thumb = self._normalize_db_path(profile.photo_thumb)
-                    if norm_old_thumb:
-                        old_thumb = settings.images_path.parent / norm_old_thumb
-                        if old_thumb.resolve() != thumb_path.resolve() and old_thumb.exists():
-                            old_thumb.unlink()
-                if profile.photo_full:
-                    norm_old_full = self._normalize_db_path(profile.photo_full)
-                    if norm_old_full:
-                        old_full = settings.images_path.parent / norm_old_full
-                        if old_full.resolve() != full_path.resolve() and old_full.exists():
-                            old_full.unlink()
+                # запись в БД указывает на несуществующий файл. Сравнение
+                # без учёта регистра: на NTFS/CIFS ``A.jpg`` и ``a.jpg`` —
+                # один файл.
+                old_thumb = self._db_photo_path(profile.photo_thumb)
+                if old_thumb and not self._same_photo_file(old_thumb, thumb_path) and old_thumb.exists():
+                    old_thumb.unlink()
+                old_full = self._db_photo_path(profile.photo_full)
+                if old_full and not self._same_photo_file(old_full, full_path) and old_full.exists():
+                    old_full.unlink()
 
                 profile.photo_thumb = rel_thumb
                 profile.photo_full = rel_full
@@ -546,7 +615,7 @@ class CatalogService:
         images_dir.mkdir(parents=True, exist_ok=True)
 
         thumb_filename = f"{_photo_file_stem(profile_name)}-thumb.jpg"
-        thumb_path = images_dir / thumb_filename
+        thumb_path = _resolve_photo_path(images_dir, thumb_filename)
         rel_thumb = f"images/{thumb_filename}"
 
         # Save new thumbnail
@@ -602,19 +671,13 @@ class CatalogService:
                 return False
 
             # Delete files
-            if profile.photo_thumb:
-                norm_thumb = self._normalize_db_path(profile.photo_thumb)
-                if norm_thumb:
-                    thumb_path = settings.images_path.parent / norm_thumb
-                    if thumb_path.exists():
-                        thumb_path.unlink()
+            thumb_path = self._db_photo_path(profile.photo_thumb)
+            if thumb_path and thumb_path.exists():
+                thumb_path.unlink()
 
-            if profile.photo_full:
-                norm_full = self._normalize_db_path(profile.photo_full)
-                if norm_full:
-                    full_path = settings.images_path.parent / norm_full
-                    if full_path.exists():
-                        full_path.unlink()
+            full_path = self._db_photo_path(profile.photo_full)
+            if full_path and full_path.exists():
+                full_path.unlink()
 
             # Clear DB fields
             profile.photo_thumb = None
@@ -650,12 +713,9 @@ class CatalogService:
                 return False
 
             # Delete full photo file
-            if profile.photo_full:
-                norm_full = self._normalize_db_path(profile.photo_full)
-                if norm_full:
-                    full_path = settings.images_path.parent / norm_full
-                    if full_path.exists():
-                        full_path.unlink()
+            full_path = self._db_photo_path(profile.photo_full)
+            if full_path and full_path.exists():
+                full_path.unlink()
 
             # Clear DB field
             profile.photo_full = None
@@ -691,12 +751,9 @@ class CatalogService:
                 return False
 
             # Delete thumbnail file
-            if profile.photo_thumb:
-                norm_thumb = self._normalize_db_path(profile.photo_thumb)
-                if norm_thumb:
-                    thumb_path = settings.images_path.parent / norm_thumb
-                    if thumb_path.exists():
-                        thumb_path.unlink()
+            thumb_path = self._db_photo_path(profile.photo_thumb)
+            if thumb_path and thumb_path.exists():
+                thumb_path.unlink()
 
             # Clear DB field
             profile.photo_thumb = None
@@ -733,19 +790,13 @@ class CatalogService:
 
             # Delete photo files. Путь из БД нормализуем, как в остальных
             # операциях с фото: старые записи могли хранить «/static/images/…».
-            if profile.photo_thumb:
-                norm_thumb = self._normalize_db_path(profile.photo_thumb)
-                if norm_thumb:
-                    thumb_path = settings.images_path.parent / norm_thumb
-                    if thumb_path.exists():
-                        thumb_path.unlink()
+            thumb_path = self._db_photo_path(profile.photo_thumb)
+            if thumb_path and thumb_path.exists():
+                thumb_path.unlink()
 
-            if profile.photo_full:
-                norm_full = self._normalize_db_path(profile.photo_full)
-                if norm_full:
-                    full_path = settings.images_path.parent / norm_full
-                    if full_path.exists():
-                        full_path.unlink()
+            full_path = self._db_photo_path(profile.photo_full)
+            if full_path and full_path.exists():
+                full_path.unlink()
 
             await sess.delete(profile)
             await sess.flush()
