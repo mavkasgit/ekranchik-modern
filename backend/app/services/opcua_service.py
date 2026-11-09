@@ -120,7 +120,11 @@ class OPCUAService:
 
     @property
     def stats(self) -> dict:
-        return self._stats.copy()
+        stats = self._stats.copy()
+        # Это гейдж, а не накопительный счётчик: сколько ошибок соединения
+        # идёт подряд прямо сейчас. /status отдаёт его вместе со stats.
+        stats["consecutive_errors"] = self._consecutive_errors
+        return stats
 
     @property
     def last_update(self) -> datetime:
@@ -142,7 +146,7 @@ class OPCUAService:
             "consecutive_errors": self._consecutive_errors,
             "state": self._state.value,
             "endpoint": self._url,
-            "stats": self._stats.copy(),
+            "stats": self.stats,
             "monitored_nodes": len(self._monitored_nodes),
             "blacklisted_nodes": len(self._blacklist),
             "cache_entries": len(self._cache),
