@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import pandas as pd
@@ -128,6 +129,10 @@ class ExcelService:
         self._cache: pd.DataFrame | None = None
         self._cache_mtime: float | None = None
         self._cache_path: Path | None = None
+        # Кэш читают и пишут потоки ``asyncio.to_thread``: без блокировки один
+        # запрос видел бы половину обновления другого, а ждущий запрос не мог
+        # бы убедиться, что книгу уже перечитали.
+        self._lock = Lock()
         self._active_file_name: str | None = self._load_persisted_active_file()
         # О каком выборе уже сказали в лог: свойство спрашивают на каждый
         # запрос статуса, повторять одно предупреждение незачем.
@@ -212,7 +217,8 @@ class ExcelService:
     @property
     def cache_mtime(self) -> float | None:
         """Get current cache modification time (for cache invalidation tracking)."""
-        return self._cache_mtime
+        with self._lock:
+            return self._cache_mtime
 
     @property
     def data_version(self) -> tuple:
@@ -223,13 +229,17 @@ class ExcelService:
         Одного mtime мало: тест, подставивший другой лист с тем же именем,
         получил бы ответ из прежнего кэша.
         """
-        return (str(self.current_path), self._cache_mtime, id(self._cache))
+        with self._lock:
+            mtime = self._cache_mtime
+            cache_id = id(self._cache)
+        return (str(self.current_path), mtime, cache_id)
 
     def invalidate_cache(self) -> None:
         """Force cache invalidation."""
-        self._cache = None
-        self._cache_mtime = None
-        self._cache_path = None
+        with self._lock:
+            self._cache = None
+            self._cache_mtime = None
+            self._cache_path = None
 
     @property
     def active_file_name(self) -> str | None:
@@ -256,10 +266,11 @@ class ExcelService:
     @property
     def has_cached_data(self) -> bool:
         """В памяти лежит разобранный лист книги."""
-        return self._cache is not None
+        with self._lock:
+            return self._cache is not None
 
     def _is_cache_valid(self, file_path: Path) -> bool:
-        """Check if cached data is still valid."""
+        """Check if cached data is still valid. Вызывать под ``self._lock``."""
         if self._cache is None:
             return False
         if self._cache_path != file_path:
@@ -269,6 +280,58 @@ class ExcelService:
             return self._cache_mtime == current_mtime
         except OSError:
             return False
+
+    def _cached_dataframe(self, file_path: Path) -> pd.DataFrame | None:
+        """Разобранный лист из кэша либо ``None``, если книга изменилась."""
+        with self._lock:
+            if not self._is_cache_valid(file_path):
+                return None
+            logger.info(f"[CACHE HIT] Using cached data: {len(self._cache)} rows")
+            return self._cache.copy()
+
+    def _refresh_dataframe(self, file_path: Path, sheet_name: str) -> pd.DataFrame | None:
+        """Перечитать книгу один раз; ждущие запросы берут готовый результат.
+
+        Проверка mtime и кэша повторяется уже под блокировкой: пока запрос
+        ждал, соседний мог перечитать ту же книгу, и второе чтение по CIFS
+        было бы лишним.
+        """
+        with self._lock:
+            if self._is_cache_valid(file_path):
+                logger.info(f"[CACHE HIT] Using cached data: {len(self._cache)} rows")
+                return self._cache.copy()
+
+            # Read Excel file from specific sheet.
+            # Columns are resolved by HEADER NAME (see column_map.py, mirrors
+            # kpz-uchet/vba/ColRef.bas), with a legacy positional fallback.
+            # This survives manual column insertions in the workbook (e.g. a
+            # «Фамилия» column right after «Смена») that would shift positions.
+            start_time = time.time()
+            try:
+                # Two-pass read: first the header row (rows 0-1 are
+                # instructions), then only the resolved columns via usecols so
+                # the calamine engine stays fast.
+                df = self._read_dataframe_by_header(file_path, sheet_name)
+                read_time = time.time() - start_time
+                logger.info(f"[EXCEL READ] {len(df)} rows in {read_time:.2f}s from {file_path.name} (calamine)")
+
+                # Remove completely empty rows
+                df = df.dropna(how="all")
+
+                # Filter: keep rows where date OR number is present
+                df = df[(pd.notna(df["date"])) | (pd.notna(df["number"]))]
+
+                logger.info(f"[EXCEL FILTERED] {len(df)} valid rows after filtering")
+
+                self._cache = df
+                self._cache_mtime = file_path.stat().st_mtime
+                self._cache_path = file_path
+                return df.copy()
+            except Exception as e:
+                logger.error(f"[EXCEL ERROR] Failed to read Excel file: {e}")
+                if self._cache is not None:
+                    return self._cache.copy()
+                return None
 
     def get_dataframe(
         self, file_path: Path | None = None, sheet_name: str = "Подвесы", full_dataset: bool = False
@@ -288,41 +351,11 @@ class ExcelService:
         if not path or not path.exists():
             return pd.DataFrame()
 
-        # Check cache validity
-        if self._is_cache_valid(path):
-            logger.info(f"[CACHE HIT] Using cached data: {len(self._cache)} rows")
-            df = self._cache.copy()
-        else:
-            # Read Excel file from specific sheet.
-            # Columns are resolved by HEADER NAME (see column_map.py, mirrors
-            # kpz-uchet/vba/ColRef.bas), with a legacy positional fallback.
-            # This survives manual column insertions in the workbook (e.g. a
-            # «Фамилия» column right after «Смена») that would shift positions.
-            start_time = time.time()
-            try:
-                # Two-pass read: first the header row (rows 0-1 are
-                # instructions), then only the resolved columns via usecols so
-                # the calamine engine stays fast.
-                df = self._read_dataframe_by_header(path, sheet_name)
-                read_time = time.time() - start_time
-                logger.info(f"[EXCEL READ] {len(df)} rows in {read_time:.2f}s from {path.name} (calamine)")
-
-                # Remove completely empty rows
-                df = df.dropna(how="all")
-
-                # Filter: keep rows where date OR number is present
-                df = df[(pd.notna(df["date"])) | (pd.notna(df["number"]))]
-
-                logger.info(f"[EXCEL FILTERED] {len(df)} valid rows after filtering")
-
-                self._cache = df
-                self._cache_mtime = path.stat().st_mtime
-                self._cache_path = path
-            except Exception as e:
-                logger.error(f"[EXCEL ERROR] Failed to read Excel file: {e}")
-                if self._cache is not None:
-                    return self._cache.copy()
-                return pd.DataFrame()
+        df = self._cached_dataframe(path)
+        if df is None:
+            df = self._refresh_dataframe(path, sheet_name)
+        if df is None:
+            return pd.DataFrame()
 
         if full_dataset:
             return df

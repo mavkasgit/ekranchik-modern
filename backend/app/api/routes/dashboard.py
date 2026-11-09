@@ -86,7 +86,9 @@ async def get_dashboard(
     Returns recent production data from Excel file with profile photos from catalog.
     """
     try:
-        products = excel_service.get_products(limit=limit, days=days, loading_only=loading_only)
+        products = await asyncio.to_thread(
+            excel_service.get_products, limit=limit, days=days, loading_only=loading_only
+        )
 
         profile_names = _collect_profile_names(products)
 
@@ -141,6 +143,11 @@ async def get_file_status():
     Get Excel file status.
     Detects if file is open by checking for Excel temp file (~$filename).
     """
+    return await asyncio.to_thread(_file_status)
+
+
+def _file_status() -> FileStatus:
+    """``stat`` книги и чтение docProps/core.xml — синхронные, для потока."""
     import time
 
     try:
@@ -284,7 +291,7 @@ async def select_excel_file(request: ExcelFileSelectRequest):
         if target_file.suffix.lower() not in (".xlsx", ".xls", ".xlsm"):
             raise HTTPException(status_code=400, detail=f"Недопустимое расширение файла: {target_file.suffix}")
 
-        excel_service.set_active_file(str(target_file))
+        await asyncio.to_thread(excel_service.set_active_file, str(target_file))
         logger.info(f"[DASHBOARD API] Switched active Excel file to: {target_file}")
 
         # Invalidate watcher cache if running
@@ -484,13 +491,13 @@ async def update_settings(request: SettingsUpdateRequest):
             settings.SIMULATION_ENABLED = new_mode
 
             # 2. Update settings in .env
-            settings.update_simulation_mode_in_env(new_mode)
+            await asyncio.to_thread(settings.update_simulation_mode_in_env, new_mode)
 
             # 3. Update OPC UA service
             await opcua_service.update_simulation_mode(new_mode)
 
             # 4. Update Excel service
-            excel_service.update_simulation_mode()
+            await asyncio.to_thread(excel_service.update_simulation_mode)
 
             logger.info(f"[DASHBOARD API] Dynamically toggled simulation_enabled to: {new_mode}")
 
