@@ -13,6 +13,11 @@ npm run dev:sim:fast    # то же, но симулятор в профиле f
 npm run dev:kill        # освободить порты
 ```
 
+Docker для dev не нужен: `predev` (`scripts/ensure-dev-ports.js`) только
+освобождает порты :8013 и :5173 и Docker не запускает. Процессы Docker,
+занявшие эти порты, скрипт не трогает — если Docker понадобился, его
+запускают вручную.
+
 ### mise
 
 Версии toolchain (Node, ruff, hk, линтеры) — только в корневом `mise.toml`;
