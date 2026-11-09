@@ -113,6 +113,7 @@ async def test_worker_reconnects_without_exiting(monkeypatch, caplog):
     # Счётчик накопился до трёх ошибок и сбросился успешным подключением.
     assert observed_on_success[0] == 3
     assert service._consecutive_errors == 0
+    assert service.stats["consecutive_errors"] == 0
     assert service._stats["connections"] == 1
     assert "2 ошибок соединения подряд" in caplog.text
     assert "Связь восстановлена" in caplog.text
@@ -143,8 +144,9 @@ async def test_batch_read_error_does_not_count_as_connection_error():
 
 
 def test_diagnostics_exposes_consecutive_errors():
-    """Счётчик виден снаружи: /status отдаёт его из диагностики."""
+    """Счётчик виден снаружи: /status отдаёт его вместе со stats."""
     service = make_service()
     service._consecutive_errors = 3
 
     assert service.get_diagnostics()["consecutive_errors"] == 3
+    assert service.stats["consecutive_errors"] == 3
