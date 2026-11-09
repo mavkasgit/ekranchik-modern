@@ -314,7 +314,10 @@ async def test_startup_journal_reads_off_the_event_loop_thread(monkeypatch):
     monkeypatch.setattr(
         journal_writer, "restore_recent", lambda monitor: seen.append(threading.get_ident()) or 0
     )
-    monkeypatch.setattr(journal_writer, "prune", lambda: [])
+    async def noop_prune():
+        return []
+
+    monkeypatch.setattr(journal_writer, "prune", noop_prune)
     monkeypatch.setattr(line_monitor, "resume_cycle_counter", lambda value: None)
 
     async def noop_start():
