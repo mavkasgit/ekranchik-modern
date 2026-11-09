@@ -74,7 +74,7 @@
 ### mise
 
 Единый toolchain — в корневом `mise.toml` (Node, ruff, hk, линтеры), точные
-версии — в `mise.lock`. Python 3.12 живёт в `backend/.venv`: mise активирует
+версии — в `mise.lock`. Python 3.14 живёт в `backend/.venv`: mise активирует
 его директивой `_.python.venv`, поэтому системный `python` в задачах не
 используется. На чистой машине:
 
@@ -88,14 +88,15 @@ mise run dev       # стенд :8013 + :5173
 
 ### Бэкенд
 
-1. Нужен **Python 3.12** (системный или уже созданный `backend/.venv`). Эта же
-   версия работает в установщике (`scripts/build-full-package.ps1`) и в
-   production (`backend/Dockerfile` — `python:3.12-slim`).
+1. Нужен **Python 3.14** (системный или уже созданный `backend/.venv`). Эта же
+   версия работает в production (`backend/Dockerfile` — `python:3.14-slim`);
+   установщик заводской машины пока несёт embedded Python 3.12
+   (`scripts/build-full-package.ps1`), `requirements.txt` поддерживает обе версии.
 2. Поставьте зависимости:
    ```bash
    mise run install
    ```
-   Задача создаёт `backend/.venv` на Python 3.12, ставит
+   Задача создаёт `backend/.venv` на Python 3.14, ставит
    `backend/requirements.txt` и node-зависимости (корень + `frontend/`).
 3. Запуск стека (бэкенд + фронтенд) в рабочем режиме:
 

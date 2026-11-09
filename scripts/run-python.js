@@ -1,15 +1,10 @@
 /**
  * Run the backend with the project's virtualenv, falling back to `python`.
  *
- * Why this exists: `backend/requirements.txt` is pinned for Python 3.12 (the
- * version the installer embeds — see scripts/build-full-package.ps1 — and the
- * version backend/Dockerfile runs in production). Newer interpreters, e.g. the
- * 3.14 that happens to be first on PATH on some machines, have no wheels for
- * those pins, so `pip install -r backend/requirements.txt` cannot succeed there
- * and importing the app fails on missing C-extension packages (PIL, pandas).
- *
- * A bare `python` in the npm scripts silently picks up whichever interpreter
- * PATH resolves to, so the venv is referenced explicitly here instead.
+ * Why this exists: the dev venv (backend/.venv) and production
+ * (backend/Dockerfile) run Python 3.14 — see scripts/setup-python.js. A bare
+ * `python` in the npm scripts silently picks up whichever interpreter PATH
+ * resolves to, so the venv is referenced explicitly here instead.
  *
  * Usage: node scripts/run-python.js <args...>   (run from any directory)
  *   e.g. node scripts/run-python.js -m uvicorn app.main:app --port 8013

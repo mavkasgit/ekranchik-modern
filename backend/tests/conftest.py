@@ -31,6 +31,23 @@ def _disable_excel_backup(monkeypatch):
     monkeypatch.setattr(settings, "EXCEL_BACKUP_ENABLED", False)
 
 
+@pytest.fixture(autouse=True)
+def _stop_excel_watcher():
+    """Останавливать наблюдатель книги после каждого теста.
+
+    Выбор книги через API поднимает настоящий ``Observer``: так же, как это
+    делает ``lifespan`` в приложении. В watchdog 7 поток чтения каталога —
+    не daemon (``DirectoryChangeReader``), поэтому оставленный наблюдатель не
+    даёт интерпретатору завершиться: pytest печатает итог и висит до таймаута.
+    Остановка — часть контракта watcher'а, и тест, его поднявший, обязан её
+    вызвать; ``lifespan`` делает это на штатном shutdown.
+    """
+    yield
+    from app.services.excel_watcher import excel_watcher
+
+    excel_watcher.stop()
+
+
 @pytest_asyncio.fixture
 async def db_session():
     """Create a test database session."""
