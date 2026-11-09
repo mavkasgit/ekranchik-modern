@@ -206,8 +206,10 @@ function joinBookDateTime(
   if (!date || !time) return null;
   const parsed = /^(\d{2})\.(\d{2})\.(\d{2,4})$/.exec(date.trim());
   if (!parsed) return null;
+  const clock = bookClock(time);
+  if (!clock) return null;
   const year = parsed[3].length === 2 ? `20${parsed[3]}` : parsed[3];
-  return `${year}-${parsed[2]}-${parsed[1]}T${bookClock(time)}`;
+  return `${year}-${parsed[2]}-${parsed[1]}T${clock}`;
 }
 
 /**
@@ -215,9 +217,15 @@ function joinBookDateTime(
  * (текстовая ячейка): без выравнивания `9:31` превращалось в битую метку,
  * и старые записи журнала показывали прочерк вместо момента.
  */
-function bookClock(time: string): string {
-  const [hour, minute = "00", second = "00"] = time.trim().split(":");
-  return [hour, minute, second].map((part) => part.padStart(2, "0")).join(":");
+function bookClock(time: string): string | null {
+  const parts = time.trim().split(":");
+  if (parts.length === 0 || parts.length > 3) return null;
+  const [hour, minute = "00", second = "00"] = parts;
+  const raw = [hour, minute, second];
+  if (raw.some((part) => !/^\d{1,2}$/.test(part))) return null;
+  const [h, m, s] = raw.map(Number);
+  if (h > 23 || m > 59 || s > 59) return null;
+  return [h, m, s].map((part) => String(part).padStart(2, "0")).join(":");
 }
 
 /**

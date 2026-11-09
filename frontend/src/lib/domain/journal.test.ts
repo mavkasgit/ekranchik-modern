@@ -208,6 +208,23 @@ describe("passTimes", () => {
 
     expect(times).toEqual([{ source: "книга", role: "вход", at: "29.09 09:31" }]);
   });
+
+  it("битое время книги не превращается в момент", () => {
+    // backend пишет book_entry_at=null для «25:00»; запасное чтение по
+    // row_date/row_time не должно вернуть выдуманные 25:00.
+    const times = passTimes({
+      code: "",
+      path: [],
+      book_entry_at: null,
+      row_date: "29.09.2026",
+      row_time: "25:00",
+      first_seen_at: "2026-09-29T17:04:00",
+      exit_at: "2026-09-29T20:16:00",
+    });
+
+    expect(times.map((time) => time.at)).toEqual(["17:04", "20:16"]);
+    expect(times.some((time) => time.at.includes("25:00"))).toBe(false);
+  });
 });
 
 describe("formatInLine", () => {

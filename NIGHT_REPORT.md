@@ -7,7 +7,7 @@
 | Проверка                                                       | До правок                     | После правок                                   |
 | -------------------------------------------------------------- | ----------------------------- | ---------------------------------------------- |
 | Backend tests (`cd backend && .venv/Scripts/python -m pytest`) | 259 passed                    | **280 passed**                                 |
-| Frontend tests (`cd frontend && npx vitest run`)               | 100 passed (7 files)          | **106 passed (8 files)**                       |
+| Frontend tests (`cd frontend && npx vitest run`)               | 100 passed (7 files)          | **107 passed (8 files)**                       |
 | Полный гейт (`mise exec -- hk check --all`)                    | exit 0                        | **exit 0**                                     |
 | Dev-стенд                                                      | backend healthy, frontend 200 | **healthy, frontend 200, перезапущен в 00:16** |
 
@@ -41,7 +41,7 @@
 
 Плюс `5351ed4` — доводка `58ceb0b`: хеш имени фото увеличен с 8 до 12 hex-символов.
 
-Финальная проверка: backend 280 passed, frontend 106 passed, `mise exec -- hk check --all` — exit 0.
+Финальная проверка: backend 280 passed, frontend 107 passed, `mise exec -- hk check --all` — exit 0.
 
 ## Проверка замечаний ревью (P1)
 
@@ -55,7 +55,7 @@
 
 ## P2: что закрыто и что осталось
 
-- **Битое время книги.** `is_valid_excel_time` отличает полночь от пустой/битой ячейки; `_book_entry_at` пишет `warning` и отдаёт `None`; `product_entry_seconds` не превращает `25:00` в полночь. Сам `parse_excel_time` по-прежнему отдаёт `(0,0,0)` — контракт сохранён для остальных вызовов.
+- **Битое время книги.** `is_valid_excel_time` отличает полночь от пустой/битой ячейки; `_book_entry_at` пишет `warning` и отдаёт `None`; `product_entry_seconds` не превращает `25:00` в полночь. Сам `parse_excel_time` по-прежнему отдаёт `(0,0,0)` — контракт сохранён для остальных вызовов. UI-тест `passTimes` проверяет, что из `row_time=25:00` не строится момент: показываются только моменты линии.
 - **`_book_entry_at` и одна плохая строка.** В `except ValueError` добавлен `exc_info=True`; тест `test_bad_book_row_does_not_stop_the_other_pass` проверяет, что плохая строка не мешает записать соседнюю.
 - **`photoUrl` и `updated_at`.** `null`/`undefined` cache-buster даёт базовый URL без `?v`; `datetime.now(UTC)` и SQLite хранят микросекунды, две загрузки в одну секунду дают разные версии. Прод-nginx отдаёт `/static/` с `expires 7d` и `Cache-Control: public, immutable`, dev `StaticFiles` — `ETag`/`Last-Modified`; cache-buster меняется при загрузке/удалении.
 - **Тесты и `static/`.** SHA-256 `static/ekranchik.db` и всех 367 файлов `static/images` до и после полного `pytest` + `vitest`: 368 файлов, 0 изменений, 0 удалений. Тесты пишут в `tmp_path` и подменяют `IMAGES_DIR`.
