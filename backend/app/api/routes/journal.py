@@ -7,6 +7,7 @@
 запись вообще идёт.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -17,6 +18,8 @@ from app.services.hanger_journal import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
     JournalFile,
+    JournalPage,
+    JournalStore,
     journal_store,
 )
 
@@ -108,7 +111,9 @@ async def get_journal_passes(
     """
     store = journal_store()
     try:
-        page = store.query(
+        page, files, directory, retention = await asyncio.to_thread(
+            _read_store,
+            store,
             search=search,
             date_from=date_from,
             date_to=date_to,
@@ -117,9 +122,6 @@ async def get_journal_passes(
             limit=limit,
             offset=offset,
         )
-        files = [_file_info(f) for f in store.files()]
-        directory = str(store.directory)
-        retention = store.retention_days
     except OSError as error:
         logger.error(f"[Journal] Read failed: {error}", exc_info=True)
         return JournalResponse(items=[], total=0, limit=limit, offset=offset)
@@ -133,6 +135,18 @@ async def get_journal_passes(
         files=files,
         retention_days=retention,
     )
+
+
+def _read_store(store: JournalStore, **query) -> tuple[JournalPage, list[JournalFileInfo], str, int]:
+    """Страница, файлы и каталог журнала — одним чтением в потоке.
+
+    ``store.query`` и ``store.files`` ходят на диск; в event loop они
+    останавливали бы и WebSocket, и секундный опрос линии. Файлы читаются
+    тем же вызовом, что и страница: между ними ответ всё равно несогласован.
+    """
+    page = store.query(**query)
+    files = [_file_info(f) for f in store.files()]
+    return page, files, str(store.directory), store.retention_days
 
 
 def _passes(records: list[dict]) -> list[JournalPass]:

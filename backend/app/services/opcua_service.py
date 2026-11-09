@@ -8,10 +8,12 @@ OPC UA Service - подключение к OMRON PLC через OPC UA.
 import asyncio
 import contextlib
 import logging
+import socket
 import time
 from datetime import datetime
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 from app.core.config import settings
 
@@ -19,6 +21,11 @@ from app.core.config import settings
 logger = logging.getLogger("OPCUA")
 # Убираем спам от библиотеки asyncua (оставляем только ошибки)
 logging.getLogger("asyncua").setLevel(logging.WARNING)
+
+# Сколько живёт замер ping: диагностика опрашивается и дашбордом, и
+# оператором, а каждый замер — это новый TCP-коннект к PLC. Повторный
+# запрос в пределах TTL берёт прошлое значение, а не открывает сокет.
+PING_CACHE_TTL_SECONDS = 10.0
 
 # Проверка наличия библиотеки asyncua
 OPCUA_AVAILABLE = True
@@ -28,6 +35,21 @@ try:
 except ImportError:
     OPCUA_AVAILABLE = False
     logger.warning("[OPC UA] asyncua not installed. Run: pip install asyncua")
+
+
+def _probe_ping(host: str, port: int, timeout: float = 5.0) -> float | None:
+    """Замер ping до сервера: синхронный вызов, звать только в потоке.
+
+    ``socket.create_connection`` при лежащем PLC висит до таймаута, а в event
+    loop это останавливает и опрос линии, и WebSocket, и ``/health``.
+    """
+    try:
+        start = time.time()
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        return (time.time() - start) * 1000
+    except Exception:
+        return None
 
 
 class OPCUAState(Enum):
@@ -96,6 +118,11 @@ class OPCUAService:
         self._stats_max = 1_000_000_000  # Сброс после 1 млрд
         self._client: Client | None = None
 
+        # Последний замер ping и когда он сделан: диагностика ходит сюда
+        # часто, а TCP-коннект к PLC — не бесплатный.
+        self._last_ping_ms: float | None = None
+        self._ping_measured_at: float | None = None
+
     @property
     def is_available(self) -> bool:
         return OPCUA_AVAILABLE
@@ -153,22 +180,29 @@ class OPCUAService:
             "cache_size_kb": round(cache_size_bytes / 1024, 2),
         }
 
-    async def ping_server(self) -> float | None:
-        """Измерить ping до сервера (совместимость с API)."""
-        import socket
-        from urllib.parse import urlparse
+    @property
+    def last_ping_ms(self) -> float | None:
+        """Последний замер ping, мс; ``None`` — замер не удался."""
+        return self._last_ping_ms
 
-        try:
-            parsed = urlparse(self._url)
-            host = parsed.hostname
-            port = parsed.port or 4840
+    async def ping_server(self, max_age: float = PING_CACHE_TTL_SECONDS) -> float | None:
+        """Измерить ping до сервера (совместимость с API).
 
-            start = time.time()
-            sock = socket.create_connection((host, port), timeout=5)
-            sock.close()
-            return (time.time() - start) * 1000
-        except Exception:
-            return None
+        Сам замер синхронный и уходит в поток; повторный вызов в пределах
+        ``max_age`` отдаёт прошлый результат. Неудачный замер тоже кэшируется:
+        иначе лежащий PLC получал бы новый таймаут на каждый запрос.
+        """
+        now = time.monotonic()
+        if self._ping_measured_at is not None and now - self._ping_measured_at < max_age:
+            return self._last_ping_ms
+
+        parsed = urlparse(self._url)
+        host = parsed.hostname
+        port = parsed.port or 4840
+        ping_ms = await asyncio.to_thread(_probe_ping, host, port)
+        self._last_ping_ms = ping_ms
+        self._ping_measured_at = time.monotonic()
+        return ping_ms
 
     async def browse_node(self, node_id: str) -> list[dict[str, str]]:
         """Получить дочерние узлы (совместимость с API)."""
