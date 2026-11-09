@@ -476,8 +476,12 @@ async def get_bath_status(bath_number: int):
         bath_data = {
             "bath_number": bath_number,
             "in_use": bool(opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].InUse") or False),
-            # Неизвестное значение — «свободна» (как в /line/status), но
-            # явный False от PLC означает «занята» и теряться не должен.
+            # Отдаём значение тега PLC как есть, как это уже делает
+            # /line/status. Прежнее ``or True`` превращало явный False в
+            # True, и два эндпоинта расходились по одному и тому же тегу.
+            # Неизвестное значение (тег ещё не прочитан) — True, как в
+            # /line/status; семантика тега на конкретной линии этим не
+            # подменяется.
             "free": bool(free) if free is not None else True,
             "pallete": int(opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].Pallete") or 0),
             "in_time": float(opcua_service.get_value(f"ns=4;s=Bath[{bath_number}].InTime") or 0),

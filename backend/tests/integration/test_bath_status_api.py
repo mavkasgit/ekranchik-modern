@@ -29,7 +29,12 @@ async def _bath(number: int = 5) -> dict:
 
 
 async def test_free_from_plc_is_not_lost(plc):
-    """PLC сказал «занята» — в ответе ``free: false``, а не всегда ``true``."""
+    """Явный ``False`` от PLC доходит до ответа, а не превращается в ``True``.
+
+    Это не утверждение «False = занята»: на живой линии часть незанятых ванн
+    тоже отдаёт ``False``. Контракт эндпоинта — вернуть значение тега, как
+    его отдаёт ``/line/status``, а не подставить удобное умолчание.
+    """
     plc["ns=4;s=Bath[5].Free"] = False
     assert (await _bath(5))["free"] is False
 
