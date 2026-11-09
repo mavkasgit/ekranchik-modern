@@ -144,7 +144,7 @@ async def test_startup_migrations_apply_alembic_head(clean_env, tmp_path, monkey
 
 
 @pytest.mark.asyncio()
-async def test_startup_migrations_fallback_to_init_db(clean_env, tmp_path, monkeypatch):
+async def test_startup_migrations_fallback_to_create_all(clean_env, tmp_path, monkeypatch):
     """Упавший alembic не роняет старт: init через create_all + stamp head."""
     from app.db import startup
 

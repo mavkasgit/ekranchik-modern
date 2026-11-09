@@ -8,10 +8,12 @@ OPC UA Service - подключение к OMRON PLC через OPC UA.
 import asyncio
 import contextlib
 import logging
+import socket
 import time
 from datetime import datetime
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 from app.core.config import settings
 
@@ -19,6 +21,11 @@ from app.core.config import settings
 logger = logging.getLogger("OPCUA")
 # Убираем спам от библиотеки asyncua (оставляем только ошибки)
 logging.getLogger("asyncua").setLevel(logging.WARNING)
+
+# Сколько живёт замер ping: диагностика опрашивается и дашбордом, и
+# оператором, а каждый замер — это новый TCP-коннект к PLC. Повторный
+# запрос в пределах TTL берёт прошлое значение, а не открывает сокет.
+PING_CACHE_TTL_SECONDS = 10.0
 
 # Проверка наличия библиотеки asyncua
 OPCUA_AVAILABLE = True
@@ -30,6 +37,21 @@ except ImportError:
     logger.warning("[OPC UA] asyncua not installed. Run: pip install asyncua")
 
 
+def _probe_ping(host: str, port: int, timeout: float = 5.0) -> float | None:
+    """Замер ping до сервера: синхронный вызов, звать только в потоке.
+
+    ``socket.create_connection`` при лежащем PLC висит до таймаута, а в event
+    loop это останавливает и опрос линии, и WebSocket, и ``/health``.
+    """
+    try:
+        start = time.time()
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        return (time.time() - start) * 1000
+    except Exception:
+        return None
+
+
 class OPCUAState(Enum):
     """Состояния подключения OPC UA."""
 
@@ -37,6 +59,17 @@ class OPCUAState(Enum):
     CONNECTING = "connecting"
     CONNECTED = "connected"
     ERROR = "error"
+
+
+# Текст состояния для интерфейса. Живёт рядом с самим состоянием, а не в
+# роуте: один и тот же ``state`` показывают дашборд и диагностика, и
+# ``CONNECTING`` не должен читаться как «Отключено».
+_STATUS_TEXT = {
+    OPCUAState.DISCONNECTED: "Отключено",
+    OPCUAState.CONNECTING: "Подключение...",
+    OPCUAState.CONNECTED: "Подключено",
+    OPCUAState.ERROR: "Ошибка",
+}
 
 
 class OPCUAService:
@@ -96,6 +129,11 @@ class OPCUAService:
         self._stats_max = 1_000_000_000  # Сброс после 1 млрд
         self._client: Client | None = None
 
+        # Последний замер ping и когда он сделан: диагностика ходит сюда
+        # часто, а TCP-коннект к PLC — не бесплатный.
+        self._last_ping_ms: float | None = None
+        self._ping_measured_at: float | None = None
+
     @property
     def is_available(self) -> bool:
         return OPCUA_AVAILABLE
@@ -117,6 +155,11 @@ class OPCUAService:
     @property
     def state(self) -> OPCUAState:
         return self._state
+
+    @property
+    def status_text(self) -> str:
+        """Текст состояния для дашборда; неизвестное состояние — «Отключено»."""
+        return _STATUS_TEXT.get(self.state, "Отключено")
 
     @property
     def stats(self) -> dict:
@@ -153,22 +196,35 @@ class OPCUAService:
             "cache_size_kb": round(cache_size_bytes / 1024, 2),
         }
 
-    async def ping_server(self) -> float | None:
-        """Измерить ping до сервера (совместимость с API)."""
-        import socket
-        from urllib.parse import urlparse
+    async def ping_server(self, max_age: float = PING_CACHE_TTL_SECONDS) -> float | None:
+        """Измерить ping до сервера (совместимость с API).
 
-        try:
-            parsed = urlparse(self._url)
-            host = parsed.hostname
-            port = parsed.port or 4840
+        Сам замер синхронный и уходит в поток; повторный вызов в пределах
+        ``max_age`` отдаёт прошлый успешный результат. Неудачный замер не
+        кэшируется: PLC мог вернуться сразу после пробы, и замокший на TTL
+        ``None`` заставлял бы диагностику и дашборд ещё десять секунд
+        показывать «недоступен». Следующий вызов в этом случае снова
+        пробует сокет.
+        """
+        now = time.monotonic()
+        if (
+            self._last_ping_ms is not None
+            and self._ping_measured_at is not None
+            and now - self._ping_measured_at < max_age
+        ):
+            return self._last_ping_ms
 
-            start = time.time()
-            sock = socket.create_connection((host, port), timeout=5)
-            sock.close()
-            return (time.time() - start) * 1000
-        except Exception:
+        parsed = urlparse(self._url)
+        host = parsed.hostname
+        port = parsed.port or 4840
+        ping_ms = await asyncio.to_thread(_probe_ping, host, port)
+        if ping_ms is None:
+            self._last_ping_ms = None
+            self._ping_measured_at = None
             return None
+        self._last_ping_ms = ping_ms
+        self._ping_measured_at = time.monotonic()
+        return ping_ms
 
     async def browse_node(self, node_id: str) -> list[dict[str, str]]:
         """Получить дочерние узлы (совместимость с API)."""
@@ -552,9 +608,13 @@ class OPCUAService:
                 f"[OPC UA] Динамическое переключение: Активирован режим реального OPC UA. Эндпоинт: {self._url}"
             )
 
-        # Очищаем кэш и списки при смене режима
+        # Очищаем кэш и списки при смене режима. Замер ping тоже забываем:
+        # он сделан до другого эндпоинта, и диагностика иначе до истечения
+        # TTL называла бы замер прежнего режима.
         self._cache.clear()
         self._blacklist.clear()
+        self._last_ping_ms = None
+        self._ping_measured_at = None
 
         if was_running:
             await self.start()

@@ -9,6 +9,10 @@
  *   node scripts/ensure-dev-ports.js --check   # report only; exit 1 if busy
  *   EKRANCHIK_DEV_KILL=1                       # same as --kill
  *
+ * Docker is not needed for dev (uvicorn + Vite + Python simulator): this script
+ * never starts Docker and never waits for its daemon. Docker processes that hold
+ * the dev ports are left alone; start Docker manually when a task really needs it.
+ *
  * Safety: LISTENING only; skips PID 0–4 and own PID; process tree kill on Windows; protects Docker processes.
  */
 
@@ -257,80 +261,6 @@ function askYesNo(question) {
   });
 }
 
-function isDockerDaemonReady() {
-  try {
-    const r = spawnSync("docker", ["info"], {
-      encoding: "utf8",
-      timeout: 4000,
-      windowsHide: true,
-    });
-    return r.status === 0;
-  } catch {
-    return false;
-  }
-}
-
-function startDockerDesktop() {
-  if (isWin) {
-    const exePath = "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe";
-    try {
-      spawnSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          `if (Test-Path '${exePath}') { Start-Process '${exePath}' } else { Start-Process 'Docker Desktop' }`,
-        ],
-        { windowsHide: true },
-      );
-      return true;
-    } catch {
-      return false;
-    }
-  } else if (process.platform === "darwin") {
-    try {
-      spawnSync("open", ["-a", "Docker"]);
-      return true;
-    } catch {
-      return false;
-    }
-  } else {
-    try {
-      spawnSync("sudo", ["systemctl", "start", "docker"]);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
-
-function ensureDockerRunning(maxWaitSeconds = 45) {
-  if (isDockerDaemonReady()) {
-    return true;
-  }
-
-  console.log("⚠ Docker daemon is not responding. Launching Docker Desktop...");
-  startDockerDesktop();
-
-  const startTime = Date.now();
-  const timeoutMs = maxWaitSeconds * 1000;
-
-  while (Date.now() - startTime < timeoutMs) {
-    sleepMs(2500);
-    if (isDockerDaemonReady()) {
-      console.log("\n✓ Docker Desktop is ready.");
-      return true;
-    }
-    const elapsed = Math.round((Date.now() - startTime) / 1000);
-    process.stdout.write(`   Waiting for Docker daemon to initialize... (${elapsed}s)\r`);
-  }
-
-  console.log("");
-  console.error("✗ Docker daemon did not respond within timeout. Please check Docker Desktop.");
-  return false;
-}
-
 async function main() {
   const { forceKill, checkOnly, ports } = parseArgs(process.argv.slice(2));
 
@@ -399,12 +329,6 @@ async function main() {
   }
 
   console.log(`✓ Dev ports free: ${ports.map((p) => ":" + p).join(", ")}`);
-
-  if (!checkOnly) {
-    const dockerOk = ensureDockerRunning();
-    if (!dockerOk) process.exit(1);
-  }
-
   process.exit(0);
 }
 

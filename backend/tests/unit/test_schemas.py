@@ -7,7 +7,7 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.dashboard import FileStatus, HangerData, UnloadEvent
+from app.schemas.dashboard import FileStatus, HangerData
 from app.schemas.profile import (
     ProfileBase,
     ProfileCreate,
@@ -77,17 +77,6 @@ class TestDashboardSchemas:
         assert hanger.number == "123"
         assert hanger.client == "—"
         assert hanger.profile == "—"
-
-    def test_unload_event(self):
-        """UnloadEvent creates correctly"""
-        event = UnloadEvent(time="10:30:45", hanger=42)
-        assert event.time == "10:30:45"
-        assert event.hanger == 42
-
-    def test_unload_event_negative_hanger_fails(self):
-        """Negative hanger number should fail"""
-        with pytest.raises(ValidationError):
-            UnloadEvent(time="10:00:00", hanger=-1)
 
     def test_file_status_schema(self):
         """FileStatus schema works with optional seconds_since_modified"""

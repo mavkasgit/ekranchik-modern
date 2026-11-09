@@ -9,7 +9,6 @@ import {
   journalQueryParams,
   pageCount,
   passClock,
-  passDay,
   passTimes,
   toggleSort,
   withFilter,
@@ -95,15 +94,13 @@ describe("formatDelta", () => {
   });
 });
 
-describe("passClock / passDay", () => {
-  it("время выхода и сутки берутся из метки прохода", () => {
+describe("passClock", () => {
+  it("время выхода берётся из метки прохода", () => {
     expect(passClock(PASS.exit_at)).toBe("20:16:03");
-    expect(passDay(PASS.exit_at)).toBe("2026-09-29");
   });
 
-  it("у аварийного прохода без метки выхода — прочерк, а не пустая дата", () => {
+  it("у аварийного прохода без метки выхода — прочерк", () => {
     expect(passClock(null)).toBe("—");
-    expect(passDay(undefined)).toBe("");
   });
 });
 

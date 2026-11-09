@@ -11,6 +11,8 @@
 
 import asyncio
 import json
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -361,11 +363,18 @@ def test_pass_visible_to_the_monitor_is_never_written_twice(tmp_path):
     monitor = _monitor_with([])
 
     total = RECENT_KEYS_MAX + 50
-    for index in range(total):
-        monitor._events.append(
-            _cycle(cycle_id=1000 + index, hanger=5, exit_at=f"2026-09-29T{index % 24:02d}:{index % 60:02d}:00")
-        )
-        asyncio.run(writer.flush(line_monitor=monitor))
+
+    async def scenario():
+        # Один event loop на весь прогон: flush теперь идёт через поток,
+        # а создавать и гасить поток на каждый из тысячи проходов — это
+        # проверка скорости Windows, а не памяти ключей.
+        for index in range(total):
+            monitor._events.append(
+                _cycle(cycle_id=1000 + index, hanger=5, exit_at=f"2026-09-29T{index % 24:02d}:{index % 60:02d}:00")
+            )
+            await writer.flush(line_monitor=monitor)
+
+    asyncio.run(scenario())
 
     lines = [
         line
@@ -469,6 +478,227 @@ def test_restore_of_an_empty_journal_is_a_no_op(tmp_path):
 
     assert writer.restore_recent(monitor) == 0
     assert monitor.get_unload_events(limit=100) == []
+
+
+def _writer_with_slow_book(tmp_path, delay: float, calls: list | None = None) -> JournalWriter:
+    """Писатель, у которого чтение книги занимает ``delay`` секунд."""
+
+    def provider():
+        if calls is not None:
+            calls.append(1)
+        time.sleep(delay)
+        return {"5": [_row()]}
+
+    return JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=provider)
+
+
+def test_two_concurrent_flushes_write_the_pass_once(tmp_path, caplog):
+    """Два одновременных flush — один опрос книги и одна запись.
+
+    Фоновый писатель и ручной вызов (или два тика подряд) могут совпасть:
+    чтение книги долгое, и второй flush, начавшийся в это время, увидел бы
+    проход ещё не помеченным и записал бы его в файл второй раз.
+    """
+    import logging
+
+    calls: list = []
+    writer = _writer_with_slow_book(tmp_path, delay=0.05, calls=calls)
+    monitor = _monitor_with([_cycle()])
+
+    async def scenario():
+        return await asyncio.gather(
+            writer.flush(line_monitor=monitor),
+            writer.flush(line_monitor=monitor),
+        )
+
+    with caplog.at_level(logging.DEBUG, logger="app.services.journal_writer"):
+        written = asyncio.run(scenario())
+
+    assert sorted(written) == [0, 1], "второй flush уступает первому"
+    assert len(calls) == 1, "книга за один проход читается один раз"
+    assert writer.store.query(limit=10).total == 1
+    assert "Flush skipped" in caplog.text
+
+
+def test_cancelled_flush_keeps_single_flight_until_the_thread_finishes(tmp_path):
+    """Отмена корутины не снимает флаг, пока поток ещё пишет.
+
+    ``asyncio`` отменяет ожидание, но поток, читающий книгу, продолжает
+    работать. Снятый в event loop флаг пустил бы второй flush к тем же
+    ``_written`` и файлу одновременно с первым — проход мог записаться дважды.
+    """
+    release = threading.Event()
+    calls: list[int] = []
+
+    def provider():
+        calls.append(1)
+        release.wait(timeout=5)
+        return {"5": [_row()]}
+
+    writer = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=provider)
+
+    async def scenario():
+        first = asyncio.create_task(writer.flush(line_monitor=_monitor_with([_cycle()])))
+        await asyncio.sleep(0.05)  # поток уже читает книгу
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert writer._flushing.is_set(), "флаг снят раньше, чем закончил поток"
+
+        skipped = await writer.flush(line_monitor=_monitor_with([_cycle()]))
+
+        release.set()
+        for _ in range(200):
+            if not writer._flushing.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert not writer._flushing.is_set(), "поток не снял флаг после записи"
+
+        return skipped, await writer.flush(line_monitor=_monitor_with([_cycle()]))
+
+    skipped, written_after = asyncio.run(scenario())
+
+    assert skipped == 0, "второй flush обязан уступить отменённому, но живому потоку"
+    assert len(calls) == 1, "второй flush начал второй опрос книги"
+    assert written_after == 0, "после завершения потока проход уже записан"
+    assert writer.store.query(limit=10).total == 1, "проход записан ровно один раз"
+
+
+def test_prune_does_not_overlap_a_flush(tmp_path):
+    """Уборка старых файлов ждёт записи, а не идёт поверх неё.
+
+    Иначе prune удалил бы файл, в который прямо сейчас дописываются
+    проходы: они потерялись бы, хотя уже считаются записанными.
+    """
+    store = JournalStore(tmp_path / "journal", retention_days=3650)
+    stale = store.directory / "hanger-passes-2000-01-01.jsonl"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("{}\n", encoding="utf-8")
+    stale_during_flush: list[bool] = []
+
+    def provider():
+        time.sleep(0.15)
+        # Уборка обязана дождаться конца записи: здесь она ещё не прошла.
+        stale_during_flush.append(stale.exists())
+        return {"5": [_row()]}
+
+    writer = JournalWriter(store, rows_provider=provider)
+
+    async def scenario():
+        flush_task = asyncio.create_task(writer.flush(line_monitor=_monitor_with([_cycle()])))
+        await asyncio.sleep(0.02)  # flush уже читает книгу
+        removed = await writer.prune()
+        written = await flush_task
+        return written, removed
+
+    written, removed = asyncio.run(scenario())
+
+    assert written == 1
+    assert stale_during_flush == [True], "во время записи prune не удаляет файлы"
+    assert removed == [stale]
+    assert not stale.exists()
+
+
+def test_slow_book_read_does_not_block_the_event_loop(tmp_path):
+    """Чтение книги идёт в потоке: тикер и /health живут во время flush.
+
+    Excel на сетевом диске читается секундами. Пока он ждёт, event loop
+    обязан обслуживать запросы, иначе на это время встаёт весь API.
+    """
+    writer = _writer_with_slow_book(tmp_path, delay=0.2)
+
+    async def scenario():
+        ticks = 0
+        done = asyncio.Event()
+
+        async def ticker():
+            nonlocal ticks
+            while not done.is_set():
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        tick_task = asyncio.create_task(ticker())
+        written = await writer.flush(line_monitor=_monitor_with([_cycle()]))
+        done.set()
+        await tick_task
+        return written, ticks
+
+    written, ticks = asyncio.run(scenario())
+
+    assert written == 1
+    assert ticks >= 5, f"event loop стоял, пока читалась книга: {ticks} тиков"
+
+
+def test_slow_prune_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    """Уборка файлов тоже не держит event loop: glob и unlink идут в потоке."""
+    writer = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=dict)
+    original_prune = writer.store.prune
+
+    def slow_prune():
+        time.sleep(0.2)
+        return original_prune()
+
+    monkeypatch.setattr(writer.store, "prune", slow_prune)
+
+    async def scenario():
+        ticks = 0
+        done = asyncio.Event()
+
+        async def ticker():
+            nonlocal ticks
+            while not done.is_set():
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        tick_task = asyncio.create_task(ticker())
+        removed = await writer.prune()
+        done.set()
+        await tick_task
+        return removed, ticks
+
+    removed, ticks = asyncio.run(scenario())
+
+    assert removed == []
+    assert ticks >= 5, f"event loop стоял, пока убирались файлы: {ticks} тиков"
+
+
+def test_run_forever_does_not_run_flushes_in_parallel(tmp_path):
+    """Фоновая задача не копит flush-задачи: одновременно идёт один опрос.
+
+    Если бы ``run_forever`` запускал flush задачей на каждый тик, а не ждал
+    его, записи накладывались бы друг на друга — а ``_written`` и файл общие.
+    """
+    depth = 0
+    max_depth = 0
+    guard = threading.Lock()
+
+    def provider():
+        nonlocal depth, max_depth
+        with guard:
+            depth += 1
+            max_depth = max(max_depth, depth)
+        time.sleep(0.02)
+        with guard:
+            depth -= 1
+        return {"5": [_row()]}
+
+    writer = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=provider)
+    monitor = _monitor_with([])
+
+    async def scenario():
+        task = asyncio.create_task(writer.run_forever(monitor, interval=0))
+        # Новый проход на каждом шаге: flush снова и снова идёт в книгу.
+        for index in range(1, 6):
+            monitor._events.append(_cycle(cycle_id=index, exit_at=f"2026-09-29T20:{index:02d}:00"))
+            await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert max_depth == 1, "два flush шли одновременно"
+    assert writer.store.query(limit=10).total == 5, "каждый проход записан один раз"
 
 
 def _monitor_with(events):

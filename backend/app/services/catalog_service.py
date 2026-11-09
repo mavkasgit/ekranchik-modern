@@ -2,6 +2,7 @@
 Catalog Service - handles profile search, CRUD operations, and photo management.
 """
 
+import asyncio
 import hashlib
 import io
 import logging
@@ -81,6 +82,71 @@ def _resolve_photo_path(images_dir: Path, filename: str) -> Path:
     if not path.is_relative_to(images_dir.resolve()):
         raise ValueError(f"Photo path escapes images directory: {filename!r}")
     return path
+
+
+def _write_thumbnail(source: bytes | Path, thumb_path: Path) -> None:
+    """Пережать картинку в превью JPEG: PIL, зовётся только из потока.
+
+    ``source`` — байты присланного превью или путь к полному фото. Правило
+    одно для обоих входов: цветовой режим, размер и качество превью не
+    должны зависеть от того, откуда взялась картинка.
+    """
+    if isinstance(source, bytes):
+        with io.BytesIO(source) as buffer, Image.open(buffer) as img:
+            _save_jpeg_thumbnail(img, thumb_path)
+        return
+    with Image.open(source) as img:
+        _save_jpeg_thumbnail(img, thumb_path)
+
+
+def _save_jpeg_thumbnail(img: Image.Image, thumb_path: Path) -> None:
+    """Записать открытую картинку превью: RGB и ``thumbnail`` не увеличивают."""
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+    img.save(thumb_path, "JPEG", quality=85, optimize=True)
+
+
+def _save_photo(
+    images_dir: Path,
+    stem: str,
+    image_data: bytes,
+    thumbnail_data: bytes | None = None,
+) -> tuple[Path, Path]:
+    """Записать фото и превью: I/O и PIL, поэтому зовётся только из потока.
+
+    Декодирование и пережатие JPEG занимает десятки миллисекунд, а запись на
+    диск — ещё больше; в event loop это останавливало бы опрос линии.
+    """
+    ext = ".jpg"  # Always save as jpg for consistency
+    full_path = _resolve_photo_path(images_dir, f"{stem}{ext}")
+    thumb_path = _resolve_photo_path(images_dir, f"{stem}-thumb{ext}")
+
+    with open(full_path, "wb") as f:
+        f.write(image_data)
+
+    try:
+        if thumbnail_data:
+            # Use custom thumbnail provided by user (cropped area)
+            _write_thumbnail(thumbnail_data, thumb_path)
+        else:
+            # Auto-generate thumbnail from full image
+            _write_thumbnail(full_path, thumb_path)
+    except Exception as e:
+        # Clean up full image if thumbnail fails
+        if full_path.exists():
+            full_path.unlink()
+        raise ValueError(f"Failed to process image: {e}") from e
+
+    return full_path, thumb_path
+
+
+def _save_thumbnail(thumb_path: Path, thumbnail_data: bytes) -> None:
+    """Пережать и записать превью: PIL, зовётся из потока."""
+    try:
+        _write_thumbnail(thumbnail_data, thumb_path)
+    except Exception as e:
+        raise ValueError(f"Failed to process thumbnail: {e}") from e
 
 
 class CatalogService:
@@ -247,32 +313,6 @@ class CatalogService:
 
         async def _get(sess: AsyncSession) -> ProfileResponse | None:
             stmt = select(Profile).where(Profile.name == name)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-            if profile:
-                return ProfileResponse.model_validate(profile)
-            return None
-
-        if session:
-            return await _get(session)
-        else:
-            async with get_session() as sess:
-                return await _get(sess)
-
-    async def get_profile_by_id(self, profile_id: int, session: AsyncSession | None = None) -> ProfileResponse | None:
-        """
-        Get a profile by ID.
-
-        Args:
-            profile_id: Profile ID
-            session: Optional database session
-
-        Returns:
-            Profile if found, None otherwise
-        """
-
-        async def _get(sess: AsyncSession) -> ProfileResponse | None:
-            stmt = select(Profile).where(Profile.id == profile_id)
             result = await sess.execute(stmt)
             profile = result.scalar_one_or_none()
             if profile:
@@ -507,51 +547,20 @@ class CatalogService:
         # Имя файла из имени профиля: без разделителей пути и запрещённых
         # символов (см. _photo_file_stem). Буквы и дефисы сохраняются.
         base_name = _photo_file_stem(profile_name)
-        ext = ".jpg"  # Always save as jpg for consistency
 
-        full_filename = f"{base_name}{ext}"
-        thumb_filename = f"{base_name}-thumb{ext}"
+        logger.info(f"[upload_photo] Saving photo for {profile_name!r} to: {images_dir.absolute()}")
 
-        full_path = _resolve_photo_path(images_dir, full_filename)
-        thumb_path = _resolve_photo_path(images_dir, thumb_filename)
-
-        logger.info(f"[upload_photo] Saving to full_path: {full_path.absolute()}, thumb_path: {thumb_path.absolute()}")
-
-        # Save full-size image
-        with open(full_path, "wb") as f:
-            f.write(image_data)
+        full_path, thumb_path = await asyncio.to_thread(
+            _save_photo, images_dir, base_name, image_data, thumbnail_data
+        )
 
         logger.info(
             f"[upload_photo] Full image saved, size: {full_path.stat().st_size if full_path.exists() else 'NOT FOUND'}"
         )
 
-        # Generate or save thumbnail
-        try:
-            if thumbnail_data:
-                # Use custom thumbnail provided by user (cropped area)
-                with Image.open(io.BytesIO(thumbnail_data)) as img:
-                    if img.mode in ("RGBA", "P"):
-                        img = img.convert("RGB")
-                    # Resize to thumbnail size if larger
-                    if img.width > settings.THUMBNAIL_SIZE[0] or img.height > settings.THUMBNAIL_SIZE[1]:
-                        img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                    img.save(thumb_path, "JPEG", quality=85, optimize=True)
-            else:
-                # Auto-generate thumbnail from full image
-                with Image.open(full_path) as img:
-                    if img.mode in ("RGBA", "P"):
-                        img = img.convert("RGB")
-                    img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                    img.save(thumb_path, "JPEG", quality=85, optimize=True)
-        except Exception as e:
-            # Clean up full image if thumbnail fails
-            if full_path.exists():
-                full_path.unlink()
-            raise ValueError(f"Failed to process image: {e}") from e
-
         # Relative paths for storage in DB
-        rel_thumb = f"images/{thumb_filename}"
-        rel_full = f"images/{full_filename}"
+        rel_thumb = f"images/{thumb_path.name}"
+        rel_full = f"images/{full_path.name}"
 
         # Update profile in database
         async def _update(sess: AsyncSession) -> None:
@@ -618,16 +627,8 @@ class CatalogService:
         thumb_path = _resolve_photo_path(images_dir, thumb_filename)
         rel_thumb = f"images/{thumb_filename}"
 
-        # Save new thumbnail
-        try:
-            with Image.open(io.BytesIO(thumbnail_data)) as img:
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                if img.width > settings.THUMBNAIL_SIZE[0] or img.height > settings.THUMBNAIL_SIZE[1]:
-                    img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                img.save(thumb_path, "JPEG", quality=85, optimize=True)
-        except Exception as e:
-            raise ValueError(f"Failed to process thumbnail: {e}") from e
+        # Save new thumbnail: PIL пережимает JPEG, это работа потока.
+        await asyncio.to_thread(_save_thumbnail, thumb_path, thumbnail_data)
 
         # Update profile in database
         async def _update(sess: AsyncSession) -> None:

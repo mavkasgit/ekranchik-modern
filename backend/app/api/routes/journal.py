@@ -7,8 +7,9 @@
 запись вообще идёт.
 """
 
+import asyncio
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, ValidationError
@@ -17,6 +18,8 @@ from app.services.hanger_journal import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
     JournalFile,
+    JournalPage,
+    JournalStore,
     journal_store,
 )
 
@@ -91,6 +94,20 @@ class JournalResponse(BaseModel):
     retention_days: int = 0
 
 
+class JournalView(NamedTuple):
+    """Всё, что даёт одно чтение журнала в потоке: страница и место на диске.
+
+    Четыре значения ходят вместе (их собирает ``_read_store`` и разбирает
+    роут), но по отдельности они безымянны: ``page[3]`` не говорит, срок
+    хранения это или каталог.
+    """
+
+    page: JournalPage
+    files: list[JournalFileInfo]
+    directory: str
+    retention_days: int
+
+
 @router.get("/passes", response_model=JournalResponse)
 async def get_journal_passes(
     search: str = Query(default="", description="Номер подвеса, cycle_id, код, строка книги"),
@@ -108,7 +125,9 @@ async def get_journal_passes(
     """
     store = journal_store()
     try:
-        page = store.query(
+        view = await asyncio.to_thread(
+            _read_store,
+            store,
             search=search,
             date_from=date_from,
             date_to=date_to,
@@ -117,21 +136,53 @@ async def get_journal_passes(
             limit=limit,
             offset=offset,
         )
-        files = [_file_info(f) for f in store.files()]
-        directory = str(store.directory)
-        retention = store.retention_days
     except OSError as error:
         logger.error(f"[Journal] Read failed: {error}", exc_info=True)
         return JournalResponse(items=[], total=0, limit=limit, offset=offset)
 
     return JournalResponse(
-        items=_passes(page.items),
-        total=page.total,
-        limit=page.limit,
-        offset=page.offset,
-        directory=directory,
+        items=_passes(view.page.items),
+        total=view.page.total,
+        limit=view.page.limit,
+        offset=view.page.offset,
+        directory=view.directory,
+        files=view.files,
+        retention_days=view.retention_days,
+    )
+
+
+def _read_store(
+    store: JournalStore,
+    *,
+    search: str,
+    date_from: str,
+    date_to: str,
+    sort: str,
+    direction: str,
+    limit: int,
+    offset: int,
+) -> JournalView:
+    """Страница, файлы и каталог журнала — одним чтением в потоке.
+
+    ``store.query`` и ``store.files`` ходят на диск; в event loop они
+    останавливали бы и WebSocket, и секундный опрос линии. Файлы читаются
+    тем же вызовом, что и страница: между ними ответ всё равно несогласован.
+    """
+    page = store.query(
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+        sort=sort,
+        direction=direction,
+        limit=limit,
+        offset=offset,
+    )
+    files = [_file_info(f) for f in store.files()]
+    return JournalView(
+        page=page,
         files=files,
-        retention_days=retention,
+        directory=str(store.directory),
+        retention_days=store.retention_days,
     )
 
 

@@ -86,7 +86,9 @@ async def get_dashboard(
     Returns recent production data from Excel file with profile photos from catalog.
     """
     try:
-        products = excel_service.get_products(limit=limit, days=days, loading_only=loading_only)
+        products = await asyncio.to_thread(
+            excel_service.get_products, limit=limit, days=days, loading_only=loading_only
+        )
 
         profile_names = _collect_profile_names(products)
 
@@ -141,6 +143,11 @@ async def get_file_status():
     Get Excel file status.
     Detects if file is open by checking for Excel temp file (~$filename).
     """
+    return await asyncio.to_thread(_file_status)
+
+
+def _file_status() -> FileStatus:
+    """``stat`` книги и чтение docProps/core.xml — синхронные, для потока."""
     import time
 
     try:
@@ -284,7 +291,7 @@ async def select_excel_file(request: ExcelFileSelectRequest):
         if target_file.suffix.lower() not in (".xlsx", ".xls", ".xlsm"):
             raise HTTPException(status_code=400, detail=f"Недопустимое расширение файла: {target_file.suffix}")
 
-        excel_service.set_active_file(str(target_file))
+        await asyncio.to_thread(excel_service.set_active_file, str(target_file))
         logger.info(f"[DASHBOARD API] Switched active Excel file to: {target_file}")
 
         # Invalidate watcher cache if running
@@ -317,20 +324,21 @@ async def select_excel_file(request: ExcelFileSelectRequest):
 @router.get("/status/opcua", response_model=FileStatus)
 async def get_opcua_status():
     """
-    Get OPC UA connection status.
+    Get OPC UA connection status from the cached service state.
+
+    Соединением владеет фоновый ``_worker``: статус — мгновенное чтение
+    памяти, а не попытка подключиться. Иначе при лежащем PLC каждый опрос
+    дашборда ждал бы весь цикл переподключения.
     """
     try:
         from app.services.opcua_service import opcua_service
 
-        # Check if OPC UA is connected
-        connected = opcua_service.is_connected
-
-        # Try to connect if not connected
-        if not connected:
-            connected = await opcua_service.connect()
-
+        # Текст состояния — свойство сервиса: ``CONNECTING`` не должен
+        # читаться как «Отключено», и правило одно на все поверхности.
         return FileStatus(
-            is_open=connected, status_text="Подключено" if connected else "Отключено", last_modified=datetime.now()
+            is_open=opcua_service.is_connected,
+            status_text=opcua_service.status_text,
+            last_modified=datetime.now(),
         )
     except Exception as e:
         return FileStatus(is_open=False, status_text="Ошибка", error=str(e), last_modified=datetime.now())
@@ -484,13 +492,13 @@ async def update_settings(request: SettingsUpdateRequest):
             settings.SIMULATION_ENABLED = new_mode
 
             # 2. Update settings in .env
-            settings.update_simulation_mode_in_env(new_mode)
+            await asyncio.to_thread(settings.update_simulation_mode_in_env, new_mode)
 
             # 3. Update OPC UA service
             await opcua_service.update_simulation_mode(new_mode)
 
             # 4. Update Excel service
-            excel_service.update_simulation_mode()
+            await asyncio.to_thread(excel_service.update_simulation_mode)
 
             logger.info(f"[DASHBOARD API] Dynamically toggled simulation_enabled to: {new_mode}")
 

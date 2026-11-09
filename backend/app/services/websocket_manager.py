@@ -5,8 +5,6 @@ Optimized for high throughput with timeout protection.
 
 import asyncio
 import contextlib
-from datetime import datetime
-from typing import Any
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketState
@@ -28,11 +26,6 @@ class WebSocketManager:
     def connection_count(self) -> int:
         """Get number of active connections."""
         return len(self._connections)
-
-    @property
-    def connections(self) -> set[WebSocket]:
-        """Get set of active connections (read-only copy)."""
-        return self._connections.copy()
 
     async def connect(self, websocket: WebSocket) -> None:
         """Accept and register a new WebSocket connection."""
@@ -120,22 +113,6 @@ class WebSocketManager:
             self._connections.discard(ws)
 
         return sent_count
-
-    async def broadcast_dict(self, data: dict[str, Any], msg_type: str = "data_update") -> int:
-        """
-        Broadcast a dictionary as a WebSocket message.
-
-        Convenience method that wraps data in WebSocketMessage.
-
-        Args:
-            data: Data to broadcast
-            msg_type: Message type (data_update, unload_event, status, error, ping, pong)
-
-        Returns:
-            Number of clients that received the message
-        """
-        message = WebSocketMessage(type=msg_type, payload=data, timestamp=datetime.now())
-        return await self.broadcast(message)
 
     async def close_all(self) -> None:
         """Close all active connections."""

@@ -5,7 +5,7 @@ Startup helpers for the plant machine (ADR 0002): data dirs + migrations.
   Идемпотентно, dev/Docker не затрагивает (их пути уже существуют/заданы).
 - run_startup_migrations(): `alembic upgrade head` в отдельном потоке
   (у alembic свой asyncio.run — в running loop его вызывать нельзя);
-  если alembic недоступен или миграция упала — идемпотентный init_db()
+  если alembic недоступен или миграция упала — идемпотентный create_all
   (Base.metadata.create_all) + stamp head для свежей БД без версии,
   чтобы бэкенд всё равно стартовал и не реплеил 001.
 """
@@ -44,15 +44,15 @@ def _alembic_upgrade_head() -> None:
 
 
 async def run_startup_migrations() -> None:
-    """Применить миграции при старте; фолбэк — идемпотентный init_db()."""
+    """Применить миграции при старте; фолбэк — идемпотентный create_all."""
     try:
         await asyncio.to_thread(_alembic_upgrade_head)
         logger.info("[STARTUP] Alembic migrations applied (head)")
     except ImportError:
-        logger.warning("[STARTUP] Alembic not installed, using init_db() instead")
+        logger.warning("[STARTUP] Alembic not installed, using create_all fallback")
         await _init_db_fallback()
     except Exception as e:
-        logger.error(f"[STARTUP] Alembic upgrade failed ({e}); using init_db() fallback")
+        logger.error(f"[STARTUP] Alembic upgrade failed ({e}); using create_all fallback")
         await _init_db_fallback()
 
 
@@ -76,7 +76,7 @@ async def _init_db_fallback() -> None:
             await _stamp_head()
     finally:
         await engine.dispose()
-    logger.info("[STARTUP] Database initialized via init_db()")
+    logger.info("[STARTUP] Database initialized via create_all fallback")
 
 
 async def _stamp_head() -> None:

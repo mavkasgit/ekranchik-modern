@@ -106,8 +106,9 @@ async def lifespan(app: FastAPI):
 
     # Нумерация проходов продолжается от журнала (issue #34). Именно ДО старта
     # монитора: он раздаёт номера уже на первом же скане линии, и подстано-
-    # вить позже значило бы переписать выданные.
-    last_cycle_id = journal_writer.store.max_cycle_id()
+    # вить позже значило бы переписать выданные. Чтение файлов — в потоке,
+    # чтобы старт не держал event loop на CIFS.
+    last_cycle_id = await asyncio.to_thread(journal_writer.store.max_cycle_id)
     line_monitor.resume_cycle_counter(last_cycle_id)
     logger.info(f"[STARTUP] Pass numbering continues from {last_cycle_id}: next pass is {last_cycle_id + 1}")
 
@@ -124,13 +125,13 @@ async def lifespan(app: FastAPI):
 
     # Журнал подвесов (issue #34): фоновый писатель. Запускается вместе с
     # монитором и пишет проходы, даже когда дашборд никто не открывал.
-    journal_writer.load_written_keys()
+    await asyncio.to_thread(journal_writer.load_written_keys)
     # Панель «Выход» читает только память монитора. Поднимаем в неё
     # последние проходы из журнала, иначе после перезапуска она пуста до
     # первой новой выгрузки.
-    restored = journal_writer.restore_recent(line_monitor)
+    restored = await asyncio.to_thread(journal_writer.restore_recent, line_monitor)
     logger.info(f"[STARTUP] Restored {restored} recent pass(es) from journal")
-    journal_writer.prune()
+    await journal_writer.prune()
     journal_task = asyncio.create_task(journal_writer.run_forever(line_monitor, settings.JOURNAL_FLUSH_INTERVAL))
     logger.info(f"[STARTUP] Journal writer started: {settings.journal_dir_path}")
 

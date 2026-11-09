@@ -100,32 +100,30 @@ async def get_opcua_status():
 @router.get("/diagnose")
 async def diagnose_opcua():
     """Диагностировать проблемы с OPC UA подключением."""
-    import socket
     from urllib.parse import urlparse
 
     diagnostics = opcua_service.get_diagnostics()
 
-    # Парсим endpoint
-    parsed = urlparse(settings.OPCUA_ENDPOINT)
+    # Парсим фактический эндпоинт сервиса, а не настройку: в симуляции
+    # ``ping_server`` пробует ``_url``, и host/port в логе и ответе обязаны
+    # называть именно ту машину, до которой шёл сокет.
+    endpoint = opcua_service.endpoint
+    parsed = urlparse(endpoint)
     host = parsed.hostname
     port = parsed.port or 4840
 
-    # Проверяем доступность хоста
-    host_reachable = False
-    try:
-        socket.create_connection((host, port), timeout=5)
-        host_reachable = True
-        logger.info(f"[OPC UA Diagnose] Host {host}:{port} is reachable")
-    except TimeoutError:
-        logger.warning(f"[OPC UA Diagnose] Host {host}:{port} timeout")
-    except OSError as e:
-        logger.warning(f"[OPC UA Diagnose] Cannot reach {host}:{port}: {e}")
-
-    # Измеряем ping
+    # Замер ping — единственный TCP-коннект диагностики. Он же отвечает на
+    # «хост доступен»: отдельный ``create_connection`` здесь дублировал тот же
+    # сокет и удваивал ожидание при лежащем PLC.
     ping_ms = await opcua_service.ping_server()
+    host_reachable = ping_ms is not None
+    if host_reachable:
+        logger.info(f"[OPC UA Diagnose] Host {host}:{port} is reachable")
+    else:
+        logger.warning(f"[OPC UA Diagnose] Cannot reach {host}:{port}")
 
     return {
-        "endpoint": settings.OPCUA_ENDPOINT,
+        "endpoint": endpoint,
         "host": host,
         "port": port,
         "host_reachable": host_reachable,
@@ -138,7 +136,7 @@ async def diagnose_opcua():
         "metrics": diagnostics.get("metrics", {}),
         "recommendations": [
             "Check if OPC UA server is running" if not host_reachable else "Host is reachable",
-            "Check firewall rules for port 4840" if not host_reachable else "Port 4840 is open",
+            f"Check firewall rules for port {port}" if not host_reachable else f"Port {port} is open",
             "Verify network connectivity" if not host_reachable else "Network is OK",
             "Check OPC UA endpoint configuration" if not diagnostics["connected"] else "OPC UA is connected",
             f"Network latency: {ping_ms:.1f}ms" if ping_ms else "Cannot measure network latency",

@@ -2,7 +2,9 @@
 Catalog API routes - profile search and photo management.
 """
 
+import asyncio
 import io
+import logging
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -14,6 +16,8 @@ from fastapi.responses import StreamingResponse
 from app.core.config import settings
 from app.schemas.profile import ProfileCreate, ProfileResponse, ProfileSearchResult
 from app.services.catalog_service import catalog_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -75,9 +79,6 @@ async def upload_photo(
     Supported formats: JPEG, PNG, GIF, WebP.
     Max size: 10MB.
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
     logger.info(
         f"[upload_photo API] name={name}, file={file.filename}, thumbnail={thumbnail.filename if thumbnail else None}"
     )
@@ -200,10 +201,6 @@ async def export_catalog_zip():
     1. ekranchik.db database renamed to profiles.db (using sqlite3 backup to ensure integrity)
     2. images/ directory with all profile photos
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     # Resolve the database path from settings.DATABASE_URL
     db_url = settings.DATABASE_URL
     if db_url.startswith("sqlite+aiosqlite:///"):
@@ -228,38 +225,7 @@ async def export_catalog_zip():
         raise HTTPException(status_code=404, detail="Database file not found")
 
     try:
-        zip_buffer = io.BytesIO()
-
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            # 1. Create a safe backup of the sqlite database using sqlite3 backup API
-            with TemporaryDirectory() as tmpdir:
-                temp_db_path = Path(tmpdir) / "profiles.db"
-
-                src_conn = sqlite3.connect(str(db_path))
-                dst_conn = sqlite3.connect(str(temp_db_path))
-
-                # Run the backup synchronously
-                src_conn.backup(dst_conn)
-
-                dst_conn.close()
-                src_conn.close()
-
-                # Read backup bytes and write to ZIP
-                db_bytes = temp_db_path.read_bytes()
-                zf.writestr("profiles.db", db_bytes)
-                logger.info(f"[export_catalog_zip] Added profiles.db to ZIP, size={len(db_bytes)} bytes")
-
-            # 2. Add images to the ZIP archive
-            if images_dir.exists() and images_dir.is_dir():
-                image_count = 0
-                for file_path in images_dir.rglob("*"):
-                    if file_path.is_file() and file_path.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
-                        arcname = Path("images") / file_path.name
-                        zf.write(str(file_path), str(arcname))
-                        image_count += 1
-                logger.info(f"[export_catalog_zip] Added {image_count} images to ZIP")
-
-        zip_buffer.seek(0)
+        zip_buffer = await asyncio.to_thread(_build_catalog_zip, db_path, images_dir)
 
         return StreamingResponse(
             zip_buffer,
@@ -269,3 +235,44 @@ async def export_catalog_zip():
     except Exception as e:
         logger.error(f"[export_catalog_zip] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate export zip: {str(e)}") from e
+
+
+def _build_catalog_zip(db_path: Path, images_dir: Path) -> io.BytesIO:
+    """Собрать архив каталога: бэкап БД и фото — синхронная работа для потока.
+
+    ``sqlite3.backup`` читает базу целиком, а ``rglob`` со сжатием фото — диск:
+    в event loop это подвешивало бы дашборд на всё время выгрузки.
+    """
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1. Create a safe backup of the sqlite database using sqlite3 backup API
+        with TemporaryDirectory() as tmpdir:
+            temp_db_path = Path(tmpdir) / "profiles.db"
+
+            src_conn = sqlite3.connect(str(db_path))
+            dst_conn = sqlite3.connect(str(temp_db_path))
+
+            # Run the backup synchronously
+            src_conn.backup(dst_conn)
+
+            dst_conn.close()
+            src_conn.close()
+
+            # Read backup bytes and write to ZIP
+            db_bytes = temp_db_path.read_bytes()
+            zf.writestr("profiles.db", db_bytes)
+            logger.info(f"[export_catalog_zip] Added profiles.db to ZIP, size={len(db_bytes)} bytes")
+
+        # 2. Add images to the ZIP archive
+        if images_dir.exists() and images_dir.is_dir():
+            image_count = 0
+            for file_path in images_dir.rglob("*"):
+                if file_path.is_file() and file_path.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
+                    arcname = Path("images") / file_path.name
+                    zf.write(str(file_path), str(arcname))
+                    image_count += 1
+            logger.info(f"[export_catalog_zip] Added {image_count} images to ZIP")
+
+    zip_buffer.seek(0)
+    return zip_buffer

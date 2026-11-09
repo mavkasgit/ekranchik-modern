@@ -7,6 +7,8 @@
 
 import io
 import os
+import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,6 +24,8 @@ from app.services.catalog_service import (
     _photo_file_stem,
     catalog_service,
 )
+
+catalog_module = sys.modules["app.services.catalog_service"]
 
 
 def _jpeg(color: tuple[int, int, int] = (192, 0, 0)) -> bytes:
@@ -220,3 +224,55 @@ async def test_repeated_upload_with_case_different_db_path_keeps_new_photo(
 
     assert (images_dir / f"{stem}.jpg").exists()
     assert (images_dir / f"{stem}.jpg").read_bytes() == _jpeg((0, 160, 0))
+
+
+async def test_photo_processing_runs_off_the_event_loop_thread(images_dir, db_session, monkeypatch):
+    """PIL и запись файла фото — в потоке, а не в потоке event loop (#76)."""
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    original_open = catalog_module.Image.open
+
+    def recording_open(*args, **kwargs):
+        seen.append(threading.get_ident())
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(catalog_module.Image, "open", recording_open)
+
+    await catalog_service.upload_photo("1010", _jpeg(), "photo.jpg", session=db_session)
+
+    assert seen, "PIL вообще не вызывался"
+    assert loop_thread not in seen, "обработка фото осталась в потоке event loop"
+
+
+async def test_thumbnail_update_runs_off_the_event_loop_thread(images_dir, db_session, monkeypatch):
+    """Пережатие превью — тоже в потоке."""
+    await catalog_service.upload_photo("2020", _jpeg(), "photo.jpg", session=db_session)
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    original_open = catalog_module.Image.open
+
+    def recording_open(*args, **kwargs):
+        seen.append(threading.get_ident())
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(catalog_module.Image, "open", recording_open)
+
+    await catalog_service.update_thumbnail("2020", _jpeg((0, 0, 192)), session=db_session)
+
+    assert seen, "PIL вообще не вызывался"
+    assert loop_thread not in seen, "пережатие превью осталось в потоке event loop"
+
+
+async def test_custom_rgba_thumbnail_is_saved_as_rgb_jpeg(images_dir, db_session):
+    """Присланное превью с альфой тоже пишется RGB-JPEG в пределах размера."""
+    buffer = io.BytesIO()
+    Image.new("RGBA", (400, 400), (10, 20, 30, 128)).save(buffer, format="PNG")
+
+    await catalog_service.upload_photo(
+        "3000", _jpeg(), "photo.jpg", thumbnail_data=buffer.getvalue(), session=db_session
+    )
+
+    thumb_path = images_dir / f"{_photo_file_stem('3000')}-thumb.jpg"
+    with Image.open(thumb_path) as thumb:
+        assert thumb.mode == "RGB"
+        assert max(thumb.size) <= max(settings.THUMBNAIL_SIZE)
