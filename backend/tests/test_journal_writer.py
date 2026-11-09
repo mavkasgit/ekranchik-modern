@@ -178,6 +178,19 @@ def test_bad_book_date_is_an_empty_moment_not_a_crash():
     assert record["line_entry_at"] is not None
 
 
+def test_bad_book_time_is_an_empty_moment_not_midnight():
+    """``25:00`` в книге — не полночь, а отсутствие момента загрузки.
+
+    ``parse_excel_time`` по контракту отдаёт нули и для пустой ячейки, и для
+    опечатки. Если записать эти нули как время, проход получит выдуманный
+    момент и может сматчиться не со своей строкой книги.
+    """
+    record = record_from_match(_match(row=_row(time="25:00")))
+
+    assert record["book_entry_at"] is None
+    assert record["line_entry_at"] is not None
+
+
 def test_pass_without_book_row_records_the_code_only():
     """Прохода без строки книги в книге нет: пустые поля, а не выдуманные."""
     record = record_from_match(_match(row=None, code=CODE_NO_ROW, delta=None))

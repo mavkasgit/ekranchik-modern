@@ -129,6 +129,31 @@ def parse_excel_time(time_str: str) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
+def is_valid_excel_time(time_str: str) -> bool:
+    """Заполненная и допустимая ячейка времени, а не пустая и не опечатка.
+
+    ``parse_excel_time`` по контракту отдаёт нули и для пустой ячейки, и для
+    битой. Там, где полночь нельзя отличить от «времени нет» (сопоставление
+    строки книги с проходом, запись момента в журнал), нужен отдельный
+    ответ: заполненное, но невалидное время — это отсутствие времени.
+    """
+    if not time_str:
+        return False
+    raw = str(time_str).strip()
+    if raw in _EMPTY_TIME_TOKENS:
+        return False
+    try:
+        parts = raw.split(":")
+        if len(parts) > 3:
+            return False
+        hour = int(parts[0]) if parts else 0
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        second = int(parts[2]) if len(parts) > 2 else 0
+    except (ValueError, IndexError):
+        return False
+    return 0 <= hour < 24 and 0 <= minute < 60 and 0 <= second < 60
+
+
 def excel_datetime_to_seconds(date_tuple: tuple[int, int, int], time_tuple: tuple[int, int, int]) -> float:
     """Convert date+time tuples to epoch seconds; 0.0 if not a real date."""
     try:
@@ -163,7 +188,7 @@ def has_entry_time(product: HangerRow) -> bool:
 
 def product_entry_seconds(product: HangerRow) -> float:
     """Entry moment of an Excel row as epoch seconds; 0.0 if unusable."""
-    if not has_entry_time(product):
+    if not has_entry_time(product) or not is_valid_excel_time(str(product.time)):
         return 0.0
     return excel_datetime_to_seconds(
         parse_excel_date(str(product.date)),
