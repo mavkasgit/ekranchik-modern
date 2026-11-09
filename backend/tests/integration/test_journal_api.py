@@ -181,3 +181,5 @@ async def test_passes_endpoint_skips_line_that_is_not_a_pass(journal, caplog):
 
     assert len(body["items"]) == 7, "настоящие проходы страницы на месте"
     assert "Skipped record without exit_at" in caplog.text
+    assert "cycle_id=None" in caplog.text
+    assert "hanger=None" in caplog.text

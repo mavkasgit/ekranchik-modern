@@ -148,12 +148,20 @@ def _passes(records: list[dict]) -> list[JournalPass]:
     passes: list[JournalPass] = []
     for record in records:
         if not record.get("exit_at"):
-            logger.warning(f"[Journal] Skipped record without exit_at — это не проход: {str(record)[:120]}")
+            logger.warning(
+                "[Journal] Skipped record without exit_at — это не проход: "
+                f"cycle_id={record.get('cycle_id')} hanger={record.get('hanger')} "
+                f"recorded_at={record.get('recorded_at')}"
+            )
             continue
         try:
             passes.append(JournalPass(**record))
         except ValidationError as error:
-            logger.warning(f"[Journal] Skipped record with unexpected fields: {error}")
+            logger.warning(
+                "[Journal] Skipped record with unexpected fields: "
+                f"cycle_id={record.get('cycle_id')} hanger={record.get('hanger')} "
+                f"exit_at={record.get('exit_at')}: {error}"
+            )
     return passes
 
 
