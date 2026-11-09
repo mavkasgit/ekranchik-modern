@@ -317,32 +317,6 @@ class CatalogService:
             async with get_session() as sess:
                 return await _get(sess)
 
-    async def get_profile_by_id(self, profile_id: int, session: AsyncSession | None = None) -> ProfileResponse | None:
-        """
-        Get a profile by ID.
-
-        Args:
-            profile_id: Profile ID
-            session: Optional database session
-
-        Returns:
-            Profile if found, None otherwise
-        """
-
-        async def _get(sess: AsyncSession) -> ProfileResponse | None:
-            stmt = select(Profile).where(Profile.id == profile_id)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-            if profile:
-                return ProfileResponse.model_validate(profile)
-            return None
-
-        if session:
-            return await _get(session)
-        else:
-            async with get_session() as sess:
-                return await _get(sess)
-
     async def create_or_update_profile(
         self, data: ProfileCreate, session: AsyncSession | None = None
     ) -> ProfileResponse:

@@ -21,11 +21,6 @@ export const catalogApi = {
     return data;
   },
 
-  getByName: async (name: string): Promise<Profile> => {
-    const { data } = await api.get<Profile>(`/catalog/${encodeURIComponent(name)}`);
-    return data;
-  },
-
   createOrUpdate: async (profile: ProfileCreate): Promise<Profile> => {
     const { data } = await api.post<Profile>("/catalog", profile);
     return data;
@@ -68,10 +63,6 @@ export const catalogApi = {
       { headers: { "Content-Type": "multipart/form-data" } },
     );
     return data;
-  },
-
-  deletePhoto: async (name: string): Promise<void> => {
-    await api.delete(`/catalog/${encodeURIComponent(name)}/photo`);
   },
 
   deleteFullPhoto: async (name: string): Promise<void> => {

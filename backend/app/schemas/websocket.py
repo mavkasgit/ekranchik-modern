@@ -16,27 +16,3 @@ class WebSocketMessage(BaseModel):
     ]
     payload: dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.now)
-
-
-class DataUpdateMessage(WebSocketMessage):
-    """Message for data updates (Excel changes)"""
-
-    type: Literal["data_update"] = "data_update"
-
-
-class UnloadEventMessage(WebSocketMessage):
-    type: Literal["unload_event"] = "unload_event"
-
-
-class StatusMessage(WebSocketMessage):
-    """Message for status updates"""
-
-    type: Literal["status"] = "status"
-
-
-class ErrorMessage(WebSocketMessage):
-    """Message for errors"""
-
-    type: Literal["error"] = "error"
-    error_code: str | None = None
-    error_detail: str | None = None
