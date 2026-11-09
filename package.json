@@ -5,6 +5,8 @@
   "scripts": {
     "install-all": "npm install && npm install --prefix frontend",
     "setup:python": "node scripts/setup-python.js",
+    "test:backend": "node scripts/run-python.js -m pytest -q",
+    "test:frontend": "npm --prefix frontend run test -- --run",
     "predev": "node scripts/ensure-dev-ports.js",
     "dev": "concurrently --names \"BACKEND,FRONTEND\" -c \"green,cyan\" \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:sim": "concurrently --names \"BACKEND,FRONTEND,SIMULATOR\" -c \"green,cyan,blue\" \"npm run dev:backend:sim\" \"npm run dev:frontend\" \"npm run dev:simulator\"",

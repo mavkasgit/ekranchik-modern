@@ -71,32 +71,40 @@
 
 ## Быстрый запуск (Разработка)
 
+### mise
+
+Единый toolchain — в корневом `mise.toml` (Node, ruff, hk, линтеры), точные
+версии — в `mise.lock`. Python 3.12 живёт в `backend/.venv`: mise активирует
+его директивой `_.python.venv`, поэтому системный `python` в задачах не
+используется. На чистой машине:
+
+```powershell
+mise trust
+mise install
+mise run install   # npm ci + frontend ci + backend/.venv
+mise run check     # полный гейт, как в CI
+mise run dev       # стенд :8013 + :5173
+```
+
 ### Бэкенд
 
-1. Установите **Python 3.12** — именно эта версия нужна: её же ставит
-   установщик (`scripts/build-full-package.ps1`) и она же работает в
-   production (`backend/Dockerfile` — `python:3.12-slim`). На более новом
-   интерпретаторе (например, 3.14) пины из `backend/requirements.txt` не имеют
-   готовых колёс, и `pip install` уходит в сборку из исходников.
-   ```powershell
-   winget install Python.Python.312
-   ```
-2. Создайте venv и поставьте зависимости:
+1. Нужен **Python 3.12** (системный или уже созданный `backend/.venv`). Эта же
+   версия работает в установщике (`scripts/build-full-package.ps1`) и в
+   production (`backend/Dockerfile` — `python:3.12-slim`).
+2. Поставьте зависимости:
    ```bash
-   npm run setup:python
+   mise run install
    ```
-   Скрипт создаёт `backend/.venv` на Python 3.12 и ставит
-   `backend/requirements.txt` в него.
+   Задача создаёт `backend/.venv` на Python 3.12, ставит
+   `backend/requirements.txt` и node-зависимости (корень + `frontend/`).
 3. Запуск стека (бэкенд + фронтенд) в рабочем режиме:
 
    ```bash
-   npm install
-   npm run install-all
-   npm run dev
+   mise run dev
    ```
 
-   `npm run dev` сам подхватывает `backend/.venv`, поэтому системный `python`
-   в PATH значения не имеет.
+   `mise run dev` (то же, что `npm run dev`) сам подхватывает
+   `backend/.venv`, поэтому системный `python` в PATH значения не имеет.
 
    `npm run dev` поднимает стек в **рабочем** режиме: бэкенд со
    `SIMULATION_ENABLED=false` (реальный PLC и сетевая книга учёта) и
@@ -185,16 +193,16 @@ dev-значение из `backend/.env` в него не попадает. Чи
 
 ```bash
 cd backend
-..\backend\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
+mise exec -- python -m uvicorn app.main:app --reload --port 8000
 ```
 
 ### Фронтенд
 
-1. Установите Node.js.
+1. Node.js ставит mise (`mise install`).
 2. Установите зависимости и запустите:
    ```bash
-   npm install
-   npm run dev -- --port 5173
+   mise run install
+   npm --prefix frontend run dev
    ```
 
 ---

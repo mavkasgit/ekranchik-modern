@@ -44,8 +44,7 @@ const python = fs.existsSync(venvPython) ? venvPython : "python";
 if (!fs.existsSync(venvPython)) {
   process.stderr.write(
     `[run-python] venv not found at ${venvPython}, falling back to "python" from PATH.\n` +
-      `[run-python] create it with:  py -3.12 -m venv backend/.venv\n` +
-      `[run-python] then install deps: backend\\.venv\\Scripts\\python.exe -m pip install -r backend\\requirements.txt\n`,
+      `[run-python] create it with:  mise run install\n`,
   );
 }
 

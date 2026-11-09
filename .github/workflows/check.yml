@@ -28,10 +28,8 @@ jobs:
         with:
           fetch-depth: 0 # commitlint читает диапазон коммитов
       - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5
-      - name: npm dependencies
-        run: |
-          npm ci
-          npm --prefix frontend ci
+      - name: project dependencies
+        run: mise run install
       - name: commitlint
         env:
           # Бейзлайн: история до внедрения гейта (2026-11-03) не переписана,
@@ -56,25 +54,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        with:
-          python-version: "3.12"
-      - name: backend tests
-        working-directory: backend
-        run: |
-          pip install -r requirements.txt
-          python -m pytest -q
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: "24"
-      - name: frontend tests
-        working-directory: frontend
-        run: |
-          npm ci
-          npx vitest run
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5
+      - name: project dependencies
+        run: mise run install
+      - name: backend + frontend tests
+        run: mise run test
       - name: frontend build
-        working-directory: frontend
-        run: npm run build
+        run: mise run build
 
   osv-scan:
     name: scheduled dependency scan (non-blocking, baseline 2026-11-03)

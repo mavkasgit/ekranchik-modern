@@ -45,17 +45,29 @@ function run(cmd, args, label) {
 if (fs.existsSync(venvPython)) {
   process.stdout.write(`venv already exists: ${venvDir}\n`);
 } else {
-  const launcher = isWindows ? "py" : "python3";
+  // venv создаётся системным Python 3.12; дальше mise активирует его через
+  // `_.python.venv` (см. mise.toml), поэтому `python` в задачах — из venv.
+  // На Windows сначала пробуем launcher `py -3.12`: дефолтный `python` может
+  // оказаться 3.13/3.14, для которых нет колёс из requirements.txt.
+  let launcher = isWindows ? "python" : "python3";
+  let launcherArgs = [];
+  if (isWindows) {
+    const probe = spawnSync("py", ["-3.12", "--version"], { stdio: "ignore", shell: false });
+    if (!probe.error && probe.status === 0) {
+      launcher = "py";
+      launcherArgs = ["-3.12"];
+    }
+  }
   run(
     launcher,
-    ["-" + TARGET_PYTHON, "-m", "venv", venvDir],
+    [...launcherArgs, "-m", "venv", venvDir],
     `Creating venv with Python ${TARGET_PYTHON}`,
   );
 
   if (!fs.existsSync(venvPython)) {
     process.stderr.write(
       `\nvenv was not created at ${venvPython}.\n` +
-        `Is Python ${TARGET_PYTHON} installed? On Windows:  winget install Python.Python.${TARGET_PYTHON.replace(".", "")}\n`,
+        `Python ${TARGET_PYTHON} is required. Install it (winget install Python.Python.312), then re-run:  mise run install\n`,
     );
     process.exit(1);
   }

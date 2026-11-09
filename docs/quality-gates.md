@@ -8,8 +8,12 @@
 
 ```bash
 mise install       # поставить инструменты из mise.toml (та же версия, что в CI)
+mise run install   # npm ci + frontend ci + backend/.venv
 mise run hooks     # один раз на клон: поставить git-хуки hk
-mise run check     # все проверки по всему проекту — то же, что запускает CI
+mise run check     # все статические проверки — ровно это запускает CI
+mise run lint      # только линтеры/форматтеры (pre-commit-набор)
+mise run test      # backend pytest + frontend vitest
+mise run e2e       # Playwright (нужен запущенный стенд)
 mise run fix       # безопасные автофиксы (ruff, oxfmt, jactionlint); дифф перечитать
 ```
 
@@ -22,7 +26,7 @@ mise run fix       # безопасные автофиксы (ruff, oxfmt, jacti
 | ------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `pre-commit` | `git commit`, только staged-файлы | ruff, oxfmt, oxlint, betterleaks, shellcheck, hadolint, jactionlint; форматтеры правят и докладывают файлы в индекс |
 | `pre-push`   | `git push`, весь проект           | те же проверки + knip + `tsc --noEmit`                                                                              |
-| CI           | push в `main`, PR, понедельник    | `mise run check`, backend pytest, frontend vitest, OSV-скан по расписанию                                           |
+| CI           | push в `main`, PR, понедельник    | `mise run check`, `mise run test`, OSV-скан по расписанию                                                           |
 
 Хук — удобство, а не гейт: проверка, которая есть только в хуке, не enforced.
 `commitlint` вызывается и из `commit-msg`, и в CI: в PR проверяется весь

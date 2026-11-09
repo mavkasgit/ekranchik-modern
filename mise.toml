@@ -1,9 +1,17 @@
-# Единый файл тулчейна: его читают и разработчик, и CI (см. docs/adopt.md — dev-quality-gates).
-# Версии JS-инструментов (oxlint, oxfmt, knip, commitlint) — в корневом package.json,
-# Python-тулчейн боевого бэкенда — в backend/.venv (npm run setup:python).
+# Единый файл тулчейна: его читают и разработчик, и CI (см. docs/quality-gates.md).
+# Версии CLI и рантаймов меняются только здесь; фактическое состояние — mise.lock.
+# JS-зависимости (oxlint, oxfmt, knip, commitlint, playwright) — в package.json,
+# Python-зависимости — в backend/requirements.txt. mise отвечает за интерпретатор
+# и CLI, а не за библиотеки приложения.
+#
+# Python сознательно не пинится в [tools]: проект работает из backend/.venv на
+# Python 3.12 (его создаёт `mise run install`), а директория venv подключается
+# ниже через `_.python.venv`. Так `python` в задачах — это интерпретатор venv,
+# а не случайный глобальный PATH.
 
 [tools]
-node = "24"
+# Точные пины: mise.lock фиксирует те же версии для CI (mise install --locked).
+node = "24.22.2"
 ruff = "0.17.3"
 hk = "2.11.0"
 betterleaks = "1.9.0"
@@ -14,11 +22,50 @@ shellcheck = "0.11.0"
 oxlint = "1.90.0"
 oxfmt = "0.75.0"
 
+[env]
+# PYTHONUTF8/PYTHONIOENCODING: русские комментарии в файлах читаются одинаково
+# на Windows (cp1251) и в Linux-контейнере.
+PYTHONUTF8 = "1"
+PYTHONIOENCODING = "utf-8"
+# Порты dev-стенда (см. ports.json). Vite читает VITE_API_TARGET.
+BACKEND_PORT = "8013"
+FRONTEND_PORT = "5173"
+VITE_API_TARGET = "http://127.0.0.1:8013"
+# Директива mise: python-команды проекта работают из backend/.venv.
+_.python.venv = "backend/.venv"
+
+[tasks.install]
+description = "Поставить node-зависимости и backend/.venv с requirements.txt"
+run = ["npm ci", "npm --prefix frontend ci", "npm run setup:python"]
+
 [tasks.check]
+description = "Полный статический гейт; ровно это запускает CI (hk check --all)"
 run = "hk check --all"
 
+[tasks.dev]
+description = "Локальный стенд: бэкенд :8013 + фронтенд :5173"
+run = "npm run dev"
+
+[tasks.lint]
+description = "Линтеры, формат и секреты по всему проекту (без knip/tsc), только чтение"
+run = "hk check --all --skip-step knip --skip-step tsc"
+
+[tasks.test]
+description = "Тесты backend (pytest) и frontend (vitest run)"
+run = ["npm run test:backend", "npm run test:frontend"]
+
+[tasks.build]
+description = "Сборка фронтенда (tsc + vite build)"
+run = "npm --prefix frontend run build"
+
+[tasks.e2e]
+description = "Playwright e2e; нужен запущенный стенд и Chrome с CDP на :9222"
+run = "npm run test:e2e"
+
 [tasks.fix]
+description = "Безопасные автофиксы hk; после — перечитать дифф"
 run = "hk fix --all"
 
 [tasks.hooks]
+description = "Один раз на клон: git-хуки pre-commit/pre-push/commit-msg"
 run = "hk install"

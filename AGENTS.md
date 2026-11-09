@@ -13,11 +13,26 @@ npm run dev:sim:fast    # то же, но симулятор в профиле f
 npm run dev:kill        # освободить порты
 ```
 
+### mise
+
+Версии toolchain (Node, ruff, hk, линтеры) — только в корневом `mise.toml`;
+`mise.lock` фиксирует их для CI. Python 3.12 живёт в `backend/.venv`, и mise
+активирует его директивой `_.python.venv` — поэтому `python` в задачах не
+зависит от системного PATH.
+
+```bash
+mise trust && mise install   # один раз на клон: инструменты из mise.toml/mise.lock
+mise run install             # npm ci + frontend ci + backend/.venv
+mise run dev                 # локальный стенд :8013 + :5173
+mise run test                # pytest + vitest
+mise run check               # полный гейт, ровно как в CI
+```
+
 Проверка изменения — бэкенд:
 
 ```bash
-cd backend && .venv/Scripts/python -m pytest                             # все backend-тесты
-cd backend && .venv/Scripts/python -m pytest tests/test_hanger_journal.py -k day_change
+mise run test                                                    # все backend+frontend тесты
+cd backend && mise exec -- python -m pytest tests/test_hanger_journal.py -k day_change
 ```
 
 `uvicorn` поднят без `--reload`: после правки в `backend/app/` стенд надо

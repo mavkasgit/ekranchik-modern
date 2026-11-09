@@ -19,8 +19,8 @@ gh run watch <run-id> --exit-status                       # дождаться �
 
 ```bash
 mise run check
-cd backend && .venv/Scripts/python -m pytest -q
-cd frontend && npx vitest run && npm run build
+mise run test
+mise run build
 ```
 
 ## Почему PR падают по одному
