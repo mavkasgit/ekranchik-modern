@@ -66,7 +66,7 @@ def _photo_file_stem(profile_name: str) -> str:
         stem = stem[:_MAX_PHOTO_STEM].rstrip(" .") or "_"
     if stem.upper() in _RESERVED_FILENAME_STEMS:
         stem = f"_{stem}"
-    digest = hashlib.sha1(profile_name.encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha1(profile_name.encode("utf-8")).hexdigest()[:12]
     return f"{stem}-{digest}"
 
 
