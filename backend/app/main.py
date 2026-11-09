@@ -131,7 +131,7 @@ async def lifespan(app: FastAPI):
     # первой новой выгрузки.
     restored = await asyncio.to_thread(journal_writer.restore_recent, line_monitor)
     logger.info(f"[STARTUP] Restored {restored} recent pass(es) from journal")
-    journal_writer.prune()
+    await journal_writer.prune()
     journal_task = asyncio.create_task(journal_writer.run_forever(line_monitor, settings.JOURNAL_FLUSH_INTERVAL))
     logger.info(f"[STARTUP] Journal writer started: {settings.journal_dir_path}")
 
