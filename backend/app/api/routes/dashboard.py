@@ -317,21 +317,21 @@ async def select_excel_file(request: ExcelFileSelectRequest):
 @router.get("/status/opcua", response_model=FileStatus)
 async def get_opcua_status():
     """
-    Get OPC UA connection status.
+    Get OPC UA connection status from the cached service state.
+
+    Соединением владеет фоновый ``_worker``: статус — мгновенное чтение
+    памяти, а не попытка подключиться. Иначе при лежащем PLC каждый опрос
+    дашборда ждал бы весь цикл переподключения.
     """
     try:
-        from app.services.opcua_service import opcua_service
+        from app.services.opcua_service import OPCUAState, opcua_service
 
-        # Check if OPC UA is connected
-        connected = opcua_service.is_connected
+        status_text = {
+            OPCUAState.CONNECTED: "Подключено",
+            OPCUAState.ERROR: "Ошибка",
+        }.get(opcua_service.state, "Отключено")
 
-        # Try to connect if not connected
-        if not connected:
-            connected = await opcua_service.connect()
-
-        return FileStatus(
-            is_open=connected, status_text="Подключено" if connected else "Отключено", last_modified=datetime.now()
-        )
+        return FileStatus(is_open=opcua_service.is_connected, status_text=status_text, last_modified=datetime.now())
     except Exception as e:
         return FileStatus(is_open=False, status_text="Ошибка", error=str(e), last_modified=datetime.now())
 
