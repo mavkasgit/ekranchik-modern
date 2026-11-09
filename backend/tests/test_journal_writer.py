@@ -520,6 +520,50 @@ def test_two_concurrent_flushes_write_the_pass_once(tmp_path, caplog):
     assert "Flush skipped" in caplog.text
 
 
+def test_cancelled_flush_keeps_single_flight_until_the_thread_finishes(tmp_path):
+    """Отмена корутины не снимает флаг, пока поток ещё пишет.
+
+    ``asyncio`` отменяет ожидание, но поток, читающий книгу, продолжает
+    работать. Снятый в event loop флаг пустил бы второй flush к тем же
+    ``_written`` и файлу одновременно с первым — проход мог записаться дважды.
+    """
+    release = threading.Event()
+    calls: list[int] = []
+
+    def provider():
+        calls.append(1)
+        release.wait(timeout=5)
+        return {"5": [_row()]}
+
+    writer = JournalWriter(JournalStore(tmp_path / "journal"), rows_provider=provider)
+
+    async def scenario():
+        first = asyncio.create_task(writer.flush(line_monitor=_monitor_with([_cycle()])))
+        await asyncio.sleep(0.05)  # поток уже читает книгу
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert writer._flushing.is_set(), "флаг снят раньше, чем закончил поток"
+
+        skipped = await writer.flush(line_monitor=_monitor_with([_cycle()]))
+
+        release.set()
+        for _ in range(200):
+            if not writer._flushing.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert not writer._flushing.is_set(), "поток не снял флаг после записи"
+
+        return skipped, await writer.flush(line_monitor=_monitor_with([_cycle()]))
+
+    skipped, written_after = asyncio.run(scenario())
+
+    assert skipped == 0, "второй flush обязан уступить отменённому, но живому потоку"
+    assert len(calls) == 1, "второй flush начал второй опрос книги"
+    assert written_after == 0, "после завершения потока проход уже записан"
+    assert writer.store.query(limit=10).total == 1, "проход записан ровно один раз"
+
+
 def test_prune_does_not_overlap_a_flush(tmp_path):
     """Уборка старых файлов ждёт записи, а не идёт поверх неё.
 

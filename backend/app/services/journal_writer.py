@@ -237,12 +237,12 @@ class JournalWriter:
         # чтением журнала при старте — иначе после перезапуска последние
         # проходы записались бы в файл повторно.
         self._written: OrderedDict[tuple, None] = OrderedDict()
-        # Single-flight: пока идёт один flush, второй не начинается. Флаг
-        # живёт в event loop, поэтому проверяется и ставится без await между
-        # ними. Без него второй flush увидел бы проход ещё не помеченным
-        # (ключ попадает в ``_written`` только после записи) и записал бы его
-        # в файл второй раз.
-        self._flushing = False
+        # Single-flight: пока идёт один flush, второй не начинается. Флаг —
+        # ``Event``, потому что снимает его сам поток записи в своём
+        # ``finally`` (см. ``_flush_sync``): отмена корутины не останавливает
+        # уже запущенный поток, и снятый в event loop флаг пустил бы второй
+        # flush к тем же ``_written`` и файлу одновременно с первым.
+        self._flushing = threading.Event()
         # Общий замок файловых операций: запись flush и уборка prune идут в
         # разных потоках, а ``_written`` и файлы журнала — общие. Отмена
         # корутины не останавливает уже запущенный поток, поэтому мало
@@ -299,52 +299,71 @@ class JournalWriter:
 
         Второй flush, начавшийся пока первый ещё не закончился, уступает ему
         и возвращает 0 (single-flight): проход, который уже пишется, не
-        записывается второй раз и не теряется.
+        записывается второй раз и не теряется. Отменённый flush тоже держит
+        флаг, пока поток записи не завершится: отмена корутины поток не
+        останавливает.
         """
-        if self._flushing:
+        if self._flushing.is_set():
             logger.debug("[Journal] Flush skipped: the previous flush is still running")
             return 0
-        self._flushing = True
+        self._flushing.set()
         try:
             events = line_monitor.get_unload_events(limit=LOOKBACK_EVENTS)
             # События монитор отдаёт новыми сверху, а сопоставление разбирает
             # проходы от ранних к поздним (одна строка книги достаётся первому).
             pending = [e for e in reversed(events) if _event_key(e) not in self._written]
-            if not pending:
-                return 0
-            return await asyncio.to_thread(self._flush_sync, pending)
-        finally:
-            self._flushing = False
+        except BaseException:
+            # Поток ещё не запущен, снимать флаг некому.
+            self._flushing.clear()
+            raise
+        if not pending:
+            self._flushing.clear()
+            return 0
+        try:
+            future = asyncio.get_running_loop().run_in_executor(None, self._flush_sync, pending)
+        except BaseException:
+            # Задание не попало в executor: поток не стартует и флаг не снимает.
+            self._flushing.clear()
+            raise
+        return await future
 
     def _flush_sync(self, pending: list[dict[str, Any]]) -> int:
         """Записать новые проходы: книга, сопоставление, файл, память ключей.
 
         Всё это — одна операция под ``_io_lock``: prune не должен пройти по
         каталогу, пока проход дописывается, и наоборот.
-        """
-        with self._io_lock:
-            try:
-                rows_by_hanger = self.rows_provider()
-            except Exception as error:
-                logger.warning(f"[Journal] Book rows unavailable, pass deferred: {error}")
-                return 0
 
-            written = 0
-            for match in match_cycles_to_rows(pending, rows_by_hanger):
-                key = _event_key(match.cycle)
-                if key in self._written:
-                    continue
+        Флаг single-flight снимается здесь, в ``finally`` потока, а не в
+        ``flush``: отмена корутины не останавливает поток, и до его конца
+        второй flush обязан уступать — иначе два потока одновременно
+        увидели бы проход незаписанным и оба дописали его в файл.
+        """
+        try:
+            with self._io_lock:
                 try:
-                    self.store.append(record_from_match(match))
-                except OSError as error:
-                    logger.error(f"[Journal] Could not write pass {key}: {error}")
-                    continue
-                self._remember(key)
-                written += 1
-                # Та же строка, что раньше уходила в stdout из роута: в
-                # docker logs она появляется независимо от открытого дашборда.
-                logger.info(match_log_line(match, str(match.cycle.get("hanger"))))
-            return written
+                    rows_by_hanger = self.rows_provider()
+                except Exception as error:
+                    logger.warning(f"[Journal] Book rows unavailable, pass deferred: {error}")
+                    return 0
+
+                written = 0
+                for match in match_cycles_to_rows(pending, rows_by_hanger):
+                    key = _event_key(match.cycle)
+                    if key in self._written:
+                        continue
+                    try:
+                        self.store.append(record_from_match(match))
+                    except OSError as error:
+                        logger.error(f"[Journal] Could not write pass {key}: {error}")
+                        continue
+                    self._remember(key)
+                    written += 1
+                    # Та же строка, что раньше уходила в stdout из роута: в
+                    # docker logs она появляется независимо от открытого дашборда.
+                    logger.info(match_log_line(match, str(match.cycle.get("hanger"))))
+                return written
+        finally:
+            self._flushing.clear()
 
     def _remember(self, key: tuple) -> None:
         """Запомнить ключ прохода, вытесняя самый старый.

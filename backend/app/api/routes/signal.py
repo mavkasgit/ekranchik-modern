@@ -2,6 +2,7 @@
 Signal API routes - external event triggers.
 """
 
+import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -39,8 +40,10 @@ async def receive_signal(request: SignalRequest):
     - Integration with other services
     """
     if request.source == "excel":
-        # Invalidate Excel cache and broadcast
-        excel_service.invalidate_cache()
+        # Invalidate Excel cache and broadcast. Сброс берёт ``_lock`` сервиса,
+        # а перечитывание книги держит его на всё время чтения по CIFS:
+        # в event loop сигнал ждал бы чужое чтение и останавливал API.
+        await asyncio.to_thread(excel_service.invalidate_cache)
 
         message = WebSocketMessage(
             type="data_update",
@@ -69,8 +72,9 @@ async def refresh_all():
     """
     Trigger full refresh of all data sources.
     """
-    # Invalidate Excel cache
-    excel_service.invalidate_cache()
+    # Invalidate Excel cache. См. ``receive_signal``: ``invalidate_cache``
+    # ждёт ``_lock``, который держит чтение книги в потоке.
+    await asyncio.to_thread(excel_service.invalidate_cache)
 
     # Broadcast refresh
     message = WebSocketMessage(

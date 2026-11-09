@@ -104,8 +104,11 @@ async def diagnose_opcua():
 
     diagnostics = opcua_service.get_diagnostics()
 
-    # Парсим endpoint
-    parsed = urlparse(settings.OPCUA_ENDPOINT)
+    # Парсим фактический эндпоинт сервиса, а не настройку: в симуляции
+    # ``ping_server`` пробует ``_url``, и host/port в логе и ответе обязаны
+    # называть именно ту машину, до которой шёл сокет.
+    endpoint = opcua_service.endpoint
+    parsed = urlparse(endpoint)
     host = parsed.hostname
     port = parsed.port or 4840
 
@@ -120,7 +123,7 @@ async def diagnose_opcua():
         logger.warning(f"[OPC UA Diagnose] Cannot reach {host}:{port}")
 
     return {
-        "endpoint": settings.OPCUA_ENDPOINT,
+        "endpoint": endpoint,
         "host": host,
         "port": port,
         "host_reachable": host_reachable,
@@ -133,7 +136,7 @@ async def diagnose_opcua():
         "metrics": diagnostics.get("metrics", {}),
         "recommendations": [
             "Check if OPC UA server is running" if not host_reachable else "Host is reachable",
-            "Check firewall rules for port 4840" if not host_reachable else "Port 4840 is open",
+            f"Check firewall rules for port {port}" if not host_reachable else f"Port {port} is open",
             "Verify network connectivity" if not host_reachable else "Network is OK",
             "Check OPC UA endpoint configuration" if not diagnostics["connected"] else "OPC UA is connected",
             f"Network latency: {ping_ms:.1f}ms" if ping_ms else "Cannot measure network latency",

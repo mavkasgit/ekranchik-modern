@@ -4,6 +4,7 @@ Catalog API routes - profile search and photo management.
 
 import asyncio
 import io
+import logging
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -15,6 +16,8 @@ from fastapi.responses import StreamingResponse
 from app.core.config import settings
 from app.schemas.profile import ProfileCreate, ProfileResponse, ProfileSearchResult
 from app.services.catalog_service import catalog_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -76,9 +79,6 @@ async def upload_photo(
     Supported formats: JPEG, PNG, GIF, WebP.
     Max size: 10MB.
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
     logger.info(
         f"[upload_photo API] name={name}, file={file.filename}, thumbnail={thumbnail.filename if thumbnail else None}"
     )
@@ -201,10 +201,6 @@ async def export_catalog_zip():
     1. ekranchik.db database renamed to profiles.db (using sqlite3 backup to ensure integrity)
     2. images/ directory with all profile photos
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     # Resolve the database path from settings.DATABASE_URL
     db_url = settings.DATABASE_URL
     if db_url.startswith("sqlite+aiosqlite:///"):
@@ -247,9 +243,6 @@ def _build_catalog_zip(db_path: Path, images_dir: Path) -> io.BytesIO:
     ``sqlite3.backup`` читает базу целиком, а ``rglob`` со сжатием фото — диск:
     в event loop это подвешивало бы дашборд на всё время выгрузки.
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
     zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:

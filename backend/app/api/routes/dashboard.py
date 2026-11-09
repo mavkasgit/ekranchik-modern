@@ -331,14 +331,15 @@ async def get_opcua_status():
     дашборда ждал бы весь цикл переподключения.
     """
     try:
-        from app.services.opcua_service import OPCUAState, opcua_service
+        from app.services.opcua_service import opcua_service
 
-        status_text = {
-            OPCUAState.CONNECTED: "Подключено",
-            OPCUAState.ERROR: "Ошибка",
-        }.get(opcua_service.state, "Отключено")
-
-        return FileStatus(is_open=opcua_service.is_connected, status_text=status_text, last_modified=datetime.now())
+        # Текст состояния — свойство сервиса: ``CONNECTING`` не должен
+        # читаться как «Отключено», и правило одно на все поверхности.
+        return FileStatus(
+            is_open=opcua_service.is_connected,
+            status_text=opcua_service.status_text,
+            last_modified=datetime.now(),
+        )
     except Exception as e:
         return FileStatus(is_open=False, status_text="Ошибка", error=str(e), last_modified=datetime.now())
 
