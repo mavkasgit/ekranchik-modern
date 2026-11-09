@@ -157,7 +157,6 @@ def test_old_files_removed_with_a_log_record(store, caplog):
     assert [p.name for p in removed] == [stale.name]
     assert not stale.exists()
     assert stale.name in caplog.text
-    assert any(f.name == "hanger-passes-2026-09-29.jsonl" for f in store.files()) or True
 
 
 def test_prune_keeps_files_inside_retention(store):

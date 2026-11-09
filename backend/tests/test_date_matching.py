@@ -10,6 +10,7 @@
 
 from app.services.matching import (
     excel_datetime_to_seconds,
+    is_valid_excel_time,
     parse_excel_date,
     parse_excel_time,
 )
@@ -51,3 +52,29 @@ def test_unparseable_cell_is_not_a_date():
     assert parse_excel_date("—") == (0, 0, 0)
     assert parse_excel_time("") == (0, 0, 0)
     assert _seconds("", "") == 0.0
+
+
+def test_out_of_range_calendar_values_are_not_a_date():
+    """Текстовая ячейка с несуществующей датой/временем — не дата.
+
+    Такие значения раньше разбирались как настоящие и падали уже при
+    построении ``datetime`` в журнале: одна опечатка в книге останавливала
+    запись всех проходов. Парсер обязан вернуть «нет значения».
+    """
+    assert parse_excel_date("31.02.2026") == (0, 0, 0)
+    assert parse_excel_date("32.01.2026") == (0, 0, 0)
+    assert parse_excel_time("25:00") == (0, 0, 0)
+    assert parse_excel_time("18:61") == (0, 0, 0)
+    assert parse_excel_time("18:31:60") == (0, 0, 0)
+    assert _seconds("31.02.2026", "18:31") == 0.0
+
+
+def test_valid_time_is_distinguished_from_empty_and_broken():
+    """Полночь — настоящее время; пустая и битая ячейка — отсутствие времени."""
+    assert is_valid_excel_time("00:00") is True
+    assert is_valid_excel_time("0:00") is True
+    assert is_valid_excel_time("18:31") is True
+    assert is_valid_excel_time("") is False
+    assert is_valid_excel_time("—") is False
+    assert is_valid_excel_time("25:00") is False
+    assert is_valid_excel_time("18:61") is False

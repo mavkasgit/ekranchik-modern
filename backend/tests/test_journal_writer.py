@@ -24,7 +24,7 @@ from app.services.journal_writer import (
     record_from_match,
 )
 from app.services.line_monitor import LineMonitorService
-from app.services.matching import CODE_NO_ROW, TRUSTED_FIRST_SEEN, CycleMatch
+from app.services.matching import CODE_CYCLE_ERROR, CODE_NO_ROW, TRUSTED_FIRST_SEEN, CycleMatch
 
 
 def _row(number=5, date="28.09.2026", time="18:31", profile="10104", sheet_row=15830) -> HangerRow:
@@ -154,6 +154,43 @@ def test_record_without_book_row_has_no_book_time():
     assert record["book_entry_at"] is None
 
 
+def test_cycle_error_record_has_an_empty_bath_list():
+    """У аварийного события списка ванн нет — пишем [], а не null."""
+    cycle = _cycle(cycle_id=None, type_="cycle_error")
+    cycle["baths_visited"] = None
+    cycle["path"] = None
+    record = record_from_match(CycleMatch(cycle=cycle, row=None, code=CODE_CYCLE_ERROR))
+
+    assert record["baths_visited"] == []
+    assert record["path"] == []
+
+
+def test_bad_book_date_is_an_empty_moment_not_a_crash():
+    """Опечатка в дате книги не роняет запись журнала.
+
+    Дата приходит из текстовой ячейки и может быть несуществующей
+    (``31.02.2026``). Фоновая задача пишет проходы подряд: исключение на
+    одной строке останавливало бы журнал целиком, а не только её момент.
+    """
+    record = record_from_match(_match(row=_row(date="31.02.2026")))
+
+    assert record["book_entry_at"] is None
+    assert record["line_entry_at"] is not None
+
+
+def test_bad_book_time_is_an_empty_moment_not_midnight():
+    """``25:00`` в книге — не полночь, а отсутствие момента загрузки.
+
+    ``parse_excel_time`` по контракту отдаёт нули и для пустой ячейки, и для
+    опечатки. Если записать эти нули как время, проход получит выдуманный
+    момент и может сматчиться не со своей строкой книги.
+    """
+    record = record_from_match(_match(row=_row(time="25:00")))
+
+    assert record["book_entry_at"] is None
+    assert record["line_entry_at"] is not None
+
+
 def test_pass_without_book_row_records_the_code_only():
     """Прохода без строки книги в книге нет: пустые поля, а не выдуманные."""
     record = record_from_match(_match(row=None, code=CODE_NO_ROW, delta=None))
@@ -162,6 +199,30 @@ def test_pass_without_book_row_records_the_code_only():
     assert record["row_date"] is None
     assert record["entry_delta_sec"] is None
     assert record["profile"] is None
+
+
+def test_bad_book_row_does_not_stop_the_other_pass(tmp_path, caplog):
+    """Одна опечатка в книге не отменяет запись остальных проходов."""
+    import logging
+
+    store = JournalStore(tmp_path / "journal")
+    writer = JournalWriter(
+        store,
+        rows_provider=lambda: {
+            "5": [_row(time="25:00")],
+            "6": [_row(number=6, time="19:00", sheet_row=15831)],
+        },
+    )
+    monitor = _monitor_with([_cycle(hanger=5, cycle_id=1), _cycle(hanger=6, cycle_id=2)])
+
+    with caplog.at_level(logging.WARNING, logger="app.services.journal_writer"):
+        assert asyncio.run(writer.flush(line_monitor=monitor)) == 2
+
+    records = {record["hanger"]: record for record in store.query(limit=10).items}
+    assert set(records) == {5, 6}
+    assert records[5]["book_entry_at"] is None
+    assert records[6]["book_entry_at"] == "2026-09-28T19:00:00"
+    assert "Book time is not a time" in caplog.text
 
 
 def test_writer_persists_a_pass_without_any_http_request(writer, monkeypatch):

@@ -27,6 +27,8 @@ from app.services.hanger_journal import (
 )
 from app.services.matching import (
     CycleMatch,
+    has_entry_time,
+    is_valid_excel_time,
     match_cycles_to_rows,
     match_log_line,
     parse_excel_date,
@@ -50,11 +52,28 @@ def _book_entry_at(row) -> str | None:
     """
     if row is None:
         return None
-    year, month, day = parse_excel_date(str(row.date))
-    hour, minute, second = parse_excel_time(str(row.time))
+    date_text = str(row.date).strip()
+    time_text = str(row.time).strip()
+    year, month, day = parse_excel_date(date_text)
     if not (year and month and day):
+        if date_text and date_text != "—":
+            logger.warning(f"[Journal] Book date is not a date, moment omitted: {date_text!r}")
         return None
-    return datetime(year, month, day, hour, minute, second).isoformat(timespec="seconds")
+    # parse_excel_time отдаёт (0, 0, 0) и для пустой ячейки, и для опечатки.
+    # Заполненное, но недопустимое время — это не полночь: иначе проход
+    # получил бы выдуманный момент и мог бы сматчиться с чужим.
+    if has_entry_time(row) and not is_valid_excel_time(time_text):
+        logger.warning(f"[Journal] Book time is not a time, moment omitted: {time_text!r}")
+        return None
+    hour, minute, second = parse_excel_time(time_text)
+    try:
+        return datetime(year, month, day, hour, minute, second).isoformat(timespec="seconds")
+    except ValueError:
+        # Текстовая ячейка с опечаткой — это отсутствие момента, а не повод
+        # уронить фоновую задачу: одна строка книги не должна останавливать
+        # запись всех остальных проходов.
+        logger.warning(f"[Journal] Book moment is invalid, omitted: {date_text!r} {time_text!r}", exc_info=True)
+        return None
 
 
 # Как часто фоновая задача смотрит, не появились ли новые проходы, задаётся
@@ -109,7 +128,9 @@ def record_from_match(match: CycleMatch) -> dict[str, Any]:
         "total_time_sec": cycle.get("total_time_sec"),
         "type": cycle.get("type"),
         "reason": cycle.get("reason"),
-        "baths_visited": cycle.get("baths_visited"),
+        # У аварийного события прохода нет, поэтому список ванн пуст, а не
+        # null: поле читается как список и не должно пропускать запись.
+        "baths_visited": cycle.get("baths_visited") or [],
         "path": cycle.get("path") or [],
         "row_date": str(row.date) if row else None,
         "row_time": str(row.time) if row else None,

@@ -82,7 +82,14 @@ class CycleMatch:
 
 
 def parse_excel_date(date_str: str) -> tuple[int, int, int]:
-    """Parse DD.MM.YYYY or DD.MM.YY to (year, month, day); (0, 0, 0) if bad."""
+    """Parse DD.MM.YYYY or DD.MM.YY to (year, month, day); (0, 0, 0) if bad.
+
+    Календарь проверяется ``datetime``: текстовая ячейка вида ``31.02.2026``
+    разбирается по частям, но датой не является. Вернуть такие числа как
+    «дату» значило бы уронить того, кто строит из них ``datetime`` (журнал
+    пишет момент входа по книге), поэтому невалидный календарь — те же нули,
+    что и пустая ячейка.
+    """
     if not date_str or date_str == "—":
         return (0, 0, 0)
     try:
@@ -95,13 +102,19 @@ def parse_excel_date(date_str: str) -> tuple[int, int, int]:
             year += 2000
         elif year < 100:
             year += 1900
+        datetime(year, month, day)
         return (year, month, day)
     except (ValueError, IndexError):
         return (0, 0, 0)
 
 
 def parse_excel_time(time_str: str) -> tuple[int, int, int]:
-    """Parse HH:MM:SS or HH:MM to (hour, minute, second); (0, 0, 0) if bad."""
+    """Parse HH:MM:SS or HH:MM to (hour, minute, second); (0, 0, 0) if bad.
+
+    Часы, минуты и секунды проверяются по своим границам: ``25:00`` или
+    ``18:61`` — текстовая ячейка с опечаткой, а не время. Без проверки
+    ``datetime`` на таком значении падает уже при записи прохода в журнал.
+    """
     if not time_str or time_str == "—":
         return (0, 0, 0)
     try:
@@ -109,9 +122,36 @@ def parse_excel_time(time_str: str) -> tuple[int, int, int]:
         hour = int(parts[0]) if len(parts) > 0 else 0
         minute = int(parts[1]) if len(parts) > 1 else 0
         second = int(parts[2]) if len(parts) > 2 else 0
+        if not (0 <= hour < 24 and 0 <= minute < 60 and 0 <= second < 60):
+            return (0, 0, 0)
         return (hour, minute, second)
     except (ValueError, IndexError):
         return (0, 0, 0)
+
+
+def is_valid_excel_time(time_str: str) -> bool:
+    """Заполненная и допустимая ячейка времени, а не пустая и не опечатка.
+
+    ``parse_excel_time`` по контракту отдаёт нули и для пустой ячейки, и для
+    битой. Там, где полночь нельзя отличить от «времени нет» (сопоставление
+    строки книги с проходом, запись момента в журнал), нужен отдельный
+    ответ: заполненное, но невалидное время — это отсутствие времени.
+    """
+    if not time_str:
+        return False
+    raw = str(time_str).strip()
+    if raw in _EMPTY_TIME_TOKENS:
+        return False
+    try:
+        parts = raw.split(":")
+        if len(parts) > 3:
+            return False
+        hour = int(parts[0]) if parts else 0
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        second = int(parts[2]) if len(parts) > 2 else 0
+    except (ValueError, IndexError):
+        return False
+    return 0 <= hour < 24 and 0 <= minute < 60 and 0 <= second < 60
 
 
 def excel_datetime_to_seconds(date_tuple: tuple[int, int, int], time_tuple: tuple[int, int, int]) -> float:
@@ -148,7 +188,7 @@ def has_entry_time(product: HangerRow) -> bool:
 
 def product_entry_seconds(product: HangerRow) -> float:
     """Entry moment of an Excel row as epoch seconds; 0.0 if unusable."""
-    if not has_entry_time(product):
+    if not has_entry_time(product) or not is_valid_excel_time(str(product.time)):
         return 0.0
     return excel_datetime_to_seconds(
         parse_excel_date(str(product.date)),

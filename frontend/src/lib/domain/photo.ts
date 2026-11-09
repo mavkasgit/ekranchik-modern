@@ -7,7 +7,8 @@ export function photoUrl(
 ): string | null {
   if (!path) return null;
   const base = path.startsWith("/") ? path : `/static/${path}`;
-  // Сбрасываем кэш браузера и по updated_at, и по текущему времени
-  const bust = cacheBuster ? `${cacheBuster}_${Date.now()}` : Date.now();
-  return `${base}?v=${bust}`;
+  // Сбрасываем кэш только при смене фото: updated_at меняется при загрузке и
+  // удалении. Date.now() здесь означал новый URL на каждый рендер — киоск
+  // заново скачивал все превью по кругу, хотя файлы не менялись.
+  return cacheBuster ? `${base}?v=${cacheBuster}` : base;
 }
