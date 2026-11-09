@@ -201,6 +201,30 @@ def test_pass_without_book_row_records_the_code_only():
     assert record["profile"] is None
 
 
+def test_bad_book_row_does_not_stop_the_other_pass(tmp_path, caplog):
+    """Одна опечатка в книге не отменяет запись остальных проходов."""
+    import logging
+
+    store = JournalStore(tmp_path / "journal")
+    writer = JournalWriter(
+        store,
+        rows_provider=lambda: {
+            "5": [_row(time="25:00")],
+            "6": [_row(number=6, time="19:00", sheet_row=15831)],
+        },
+    )
+    monitor = _monitor_with([_cycle(hanger=5, cycle_id=1), _cycle(hanger=6, cycle_id=2)])
+
+    with caplog.at_level(logging.WARNING, logger="app.services.journal_writer"):
+        assert asyncio.run(writer.flush(line_monitor=monitor)) == 2
+
+    records = {record["hanger"]: record for record in store.query(limit=10).items}
+    assert set(records) == {5, 6}
+    assert records[5]["book_entry_at"] is None
+    assert records[6]["book_entry_at"] == "2026-09-28T19:00:00"
+    assert "Book time is not a time" in caplog.text
+
+
 def test_writer_persists_a_pass_without_any_http_request(writer, monkeypatch):
     """Проход попадает в журнал сам, без запроса от страницы.
 
