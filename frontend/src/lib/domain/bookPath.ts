@@ -8,3 +8,9 @@ export function pathHint(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.slice(-2).join("\\");
 }
+
+/** Имя файла без каталога. */
+export function fileName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || path;
+}

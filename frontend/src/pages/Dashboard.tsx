@@ -60,7 +60,7 @@ import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
 import { emptyRun, waitingRows } from "@/lib/domain/testRun";
 import { photoUrl } from "@/lib/domain/photo";
 import { profileText } from "@/lib/domain/profile";
-import { pathHint } from "@/lib/domain/bookPath";
+import { fileName, pathHint } from "@/lib/domain/bookPath";
 import type { Profile } from "@/types/profile";
 import { formatClock, formatLocalized } from "@/lib/domain/time";
 import { BathForecast } from "@/components/BathForecastTable";
@@ -131,19 +131,28 @@ function RecentPathChips({
   // Последние восемь: история хранит двадцать, но двадцать чипов под каждым
   // полем превращают модалку в свалку. Двадцать остаются доступны через API.
   const shown = paths.slice(0, 8);
+  // Имя файла читается лучше папки, но у двух книг оно может совпадать
+  // («Учет КПЗ 2026.xlsm» из разных папок) — тогда добавляем папку.
+  const nameCounts = new Map<string, number>();
+  for (const item of paths) {
+    const name = fileName(item.path);
+    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+  }
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
       <span className="text-[10px] text-muted-foreground">Последние:</span>
       {shown.map((item) => {
         const path = item.path;
         const used = item.used_at ? new Date(item.used_at).toLocaleString("ru") : "";
+        const name = fileName(path);
+        const label = (nameCounts.get(name) ?? 0) > 1 ? pathHint(path) : name;
         return (
           <button
             key={path}
             type="button"
             onClick={() => onPick(path)}
             title={used ? `${path} · вводился ${used}` : path}
-            className={`max-w-[160px] truncate rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors ${
+            className={`max-w-[240px] truncate rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors ${
               path === active.trim()
                 ? tone === "main"
                   ? "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
@@ -151,7 +160,7 @@ function RecentPathChips({
                 : "border-border text-slate-600 hover:bg-muted dark:text-slate-300"
             }`}
           >
-            {pathHint(path)}
+            {label}
           </button>
         );
       })}
