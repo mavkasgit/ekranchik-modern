@@ -66,11 +66,6 @@ export interface FileStatus {
 }
 
 /** Роли книг: какая основная, какая запасная (пустая запасная — режим выключен). */
-export interface ExcelBooksRequest {
-  main_path: string;
-  reserve_path: string | null;
-}
-
 export interface ExcelBooksResponse {
   success: boolean;
   main: string;
