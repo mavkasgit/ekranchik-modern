@@ -32,6 +32,12 @@ _PATH_QUOTES = "\"'`“”„‟«»‘’‹›"
 # ``DATA_ROWS_SKIPPED + 1``.
 DATA_ROWS_SKIPPED = 3
 
+# Сколько введённых путей помним на сервере. Браузерная память (localStorage)
+# живёт на одной машине и стирается с профилем; оператор меняет киоск, и
+# «какие книги были раньше» должно переживать это. 20 путей — несколько недель
+# работы с редкой сменой книги.
+RECENT_FILES_LIMIT = 20
+
 
 def normalize_path_input(path_text: str) -> str:
     """Путь из буфера обмена: пробелы и кавычки по краям, в т.ч. типографские.
@@ -101,12 +107,18 @@ class ExcelService:
         # чтобы пережил обновление (раньше падал в CWD рядом с кодом).
         return settings.data_dir_path / filename
 
-    def _load_persisted_books(self) -> dict[str, str | None]:
-        """Выбор и роли книг из файла выбора.
+    def _load_persisted_books(self) -> dict[str, object]:
+        """Выбор, роли книг и история введённых путей из файла выбора.
 
         Старый формат — только ``active_file``. Тогда основная книга — это
         она же: у оператора ещё нет запасной, и режим выключен.
         """
+        empty: dict[str, object] = {
+            "active_file": None,
+            "main_file": None,
+            "reserve_file": None,
+            "recent_files": [],
+        }
         try:
             path = self._persistence_path
             if path.exists():
@@ -117,13 +129,37 @@ class ExcelService:
                     "active_file": active,
                     "main_file": data.get("main_file") or active,
                     "reserve_file": data.get("reserve_file") or None,
+                    "recent_files": self._parse_recent_files(data.get("recent_files")),
                 }
         except Exception as e:
             logger.error(f"Failed to load active file from persistence: {e}")
-        return {"active_file": None, "main_file": None, "reserve_file": None}
+        return empty
+
+    @staticmethod
+    def _parse_recent_files(raw: object) -> list[dict[str, str]]:
+        """История путей из файла: мусор и дубли наружу не отдаём."""
+        if not isinstance(raw, list):
+            return []
+        result: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            if not isinstance(path, str):
+                continue
+            path = path.strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            used_at = item.get("used_at")
+            result.append({"path": path, "used_at": used_at if isinstance(used_at, str) else ""})
+            if len(result) >= RECENT_FILES_LIMIT:
+                break
+        return result
 
     def _save_persisted_books(self) -> None:
-        """Записать выбор и роли одной записью: читаются они из одного файла."""
+        """Записать выбор, роли и историю путей одной записью."""
         try:
             path = self._persistence_path
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +167,7 @@ class ExcelService:
                 "active_file": self._active_file_name,
                 "main_file": self._main_file_name,
                 "reserve_file": self._reserve_file_name,
+                "recent_files": self._recent_files,
             }
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -146,12 +183,15 @@ class ExcelService:
         # бы убедиться, что книгу уже перечитали.
         self._lock = Lock()
         persisted = self._load_persisted_books()
-        self._active_file_name: str | None = persisted["active_file"]
+        self._active_file_name = persisted["active_file"]
         # Роли книг: какая книга основная, какая запасная. Владелец решения
         # «какую читать» — по-прежнему этот сервис (ADR 0003); роли лишь
         # задают, между чем выбирает правило (app.services.standby_book).
-        self._main_file_name: str | None = persisted["main_file"]
-        self._reserve_file_name: str | None = persisted["reserve_file"]
+        self._main_file_name = persisted["main_file"]
+        self._reserve_file_name = persisted["reserve_file"]
+        # История введённых путей: её спрашивает диалог книг, чтобы оператор
+        # видел, какие книги уже были, и не набирал путь заново.
+        self._recent_files: list[dict[str, str]] = persisted["recent_files"]
         # Кэш числа строк по каждой книге: фоновая задача сравнивает две книги
         # каждые 30 секунд, и общий кэш разбора перечитывал бы обе попеременно.
         self._row_count_cache: dict[str, tuple[int, int, int]] = {}
@@ -286,6 +326,26 @@ class ExcelService:
                     return role
         return None
 
+    @property
+    def recent_files(self) -> list[dict[str, str]]:
+        """История введённых путей, новые сверху: ``[{"path", "used_at"}]``."""
+        return list(self._recent_files)
+
+    def _remember_paths(self, paths: list[str | None]) -> None:
+        """Запомнить пути, которыми оператор реально сохранил роли.
+
+        Автоматическое переключение (``set_active_file``) историю не трогает:
+        иначе правило само себе писало бы «новые пути», и список переставал
+        бы отвечать на вопрос, какие книги выбирал человек.
+        """
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        fresh = list(dict.fromkeys(value.strip() for value in paths if value and value.strip()))
+        if not fresh:
+            return
+        remembered = [{"path": path, "used_at": stamp} for path in fresh]
+        remembered += [item for item in self._recent_files if item["path"] not in fresh]
+        self._recent_files = remembered[:RECENT_FILES_LIMIT]
+
     def set_book_roles(self, main_file: str | None, reserve_file: str | None) -> None:
         """Задать роли книг и привести активную книгу к ним.
 
@@ -298,6 +358,7 @@ class ExcelService:
         self._reserve_file_name = reserve_file
         if self._active_file_name not in (main_file, reserve_file):
             self._active_file_name = main_file
+        self._remember_paths([main_file, reserve_file])
         self._persist_and_watch()
 
     def set_main_file(self, file_path: str) -> None:
@@ -311,6 +372,7 @@ class ExcelService:
         self._main_file_name = file_path
         self._reserve_file_name = reserve
         self._active_file_name = file_path
+        self._remember_paths([file_path])
         self._persist_and_watch()
 
     def count_book_rows(self, file_path: Path | None) -> int | None:
@@ -786,6 +848,7 @@ class ExcelService:
         self._active_file_name = persisted["active_file"]
         self._main_file_name = persisted["main_file"]
         self._reserve_file_name = persisted["reserve_file"]
+        self._recent_files = persisted["recent_files"]
         self.invalidate_cache()
 
         # Restart watcher for new directory if it is running

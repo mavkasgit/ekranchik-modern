@@ -60,16 +60,15 @@ import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
 import { emptyRun, waitingRows } from "@/lib/domain/testRun";
 import { photoUrl } from "@/lib/domain/photo";
 import { profileText } from "@/lib/domain/profile";
-import { parseRecentPaths, pathHint, rememberRecentPath } from "@/lib/domain/recentPaths";
+import { pathHint } from "@/lib/domain/bookPath";
 import type { Profile } from "@/types/profile";
 import { formatClock, formatLocalized } from "@/lib/domain/time";
 import { BathForecast } from "@/components/BathForecastTable";
 import { dashboardApi } from "@/api/dashboard";
-import type { HangerData, ProfileInfo } from "@/types/dashboard";
+import type { HangerData, ProfileInfo, RecentBookPath } from "@/types/dashboard";
 import { useFullscreen } from "@/App";
 
 const FILTERS_KEY = "ekranchik_filters";
-const RECENT_PATHS_KEY = "ekranchik_excel_paths";
 
 /** Рамка тестового режима: баннер убрали, подставные строки помечает заливка. */
 const TEST_FRAME = "border-purple-500/40 bg-purple-500/5";
@@ -117,57 +116,73 @@ function saveFilters(filters: Filters) {
   localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
 }
 
-function loadRecentPaths(): string[] {
-  try {
-    return parseRecentPaths(localStorage.getItem(RECENT_PATHS_KEY));
-  } catch {
-    // localStorage недоступен (приватный режим) — памяти просто не будет.
-    return [];
-  }
-}
-
-function saveRecentPath(path: string): string[] {
-  const next = rememberRecentPath(loadRecentPaths(), path);
-  try {
-    localStorage.setItem(RECENT_PATHS_KEY, JSON.stringify(next));
-  } catch {
-    /* ignore */
-  }
-  return next;
-}
-
 function RecentPathChips({
   paths,
   active,
   tone,
   onPick,
 }: {
-  paths: string[];
+  paths: RecentBookPath[];
   active: string;
   tone: "main" | "reserve";
   onPick: (path: string) => void;
 }) {
   if (paths.length === 0) return null;
+  // Последние восемь: история хранит двадцать, но двадцать чипов под каждым
+  // полем превращают модалку в свалку. Двадцать остаются доступны через API.
+  const shown = paths.slice(0, 8);
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
       <span className="text-[10px] text-muted-foreground">Последние:</span>
-      {paths.map((path) => (
-        <button
-          key={path}
-          type="button"
-          onClick={() => onPick(path)}
-          title={path}
-          className={`max-w-[160px] truncate rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors ${
-            path === active.trim()
-              ? tone === "main"
-                ? "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
-                : "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"
-              : "border-border text-slate-600 hover:bg-muted dark:text-slate-300"
-          }`}
-        >
-          {pathHint(path)}
-        </button>
-      ))}
+      {shown.map((item) => {
+        const path = item.path;
+        const used = item.used_at ? new Date(item.used_at).toLocaleString("ru") : "";
+        return (
+          <button
+            key={path}
+            type="button"
+            onClick={() => onPick(path)}
+            title={used ? `${path} · вводился ${used}` : path}
+            className={`max-w-[160px] truncate rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors ${
+              path === active.trim()
+                ? tone === "main"
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
+                  : "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"
+                : "border-border text-slate-600 hover:bg-muted dark:text-slate-300"
+            }`}
+          >
+            {pathHint(path)}
+          </button>
+        );
+      })}
+      {paths.length > shown.length && (
+        <span className="text-[10px] text-muted-foreground">ещё {paths.length - shown.length}</span>
+      )}
+    </div>
+  );
+}
+
+function BookStat({
+  label,
+  rows,
+  growth,
+  present,
+}: {
+  label: string;
+  rows: number | null | undefined;
+  growth: string | null | undefined;
+  present: boolean | null | undefined;
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5 min-w-0">
+      <span className="shrink-0 font-medium text-slate-700 dark:text-slate-200">{label}:</span>
+      <span className="truncate">
+        {rows === null || rows === undefined ? "нет данных" : `строк: ${rows.toLocaleString("ru")}`}
+        {growth ? ` · рост ${growthClock(growth)}` : ""}
+      </span>
+      {present === false && (
+        <span className="shrink-0 text-amber-700 dark:text-amber-400">файл не найден</span>
+      )}
     </div>
   );
 }
@@ -1366,8 +1381,9 @@ export default function Dashboard() {
   const [mainPathInput, setMainPathInput] = useState("");
   const [reservePathInput, setReservePathInput] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
-  // Последние введённые пути: чипы под каждым полем, чтобы не набирать заново.
-  const [recentPaths, setRecentPaths] = useState<string[]>(loadRecentPaths);
+  // История введённых путей живёт на сервере: киоск меняется, профиль
+  // браузера чистится, а «какие книги были раньше» должно остаться.
+  const [recentBookPaths, setRecentBookPaths] = useState<RecentBookPath[]>([]);
   const [hasNewRows, setHasNewRows] = useState(false);
   const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false);
   const lastModifiedRef = useRef<string | null>(null);
@@ -1434,15 +1450,24 @@ export default function Dashboard() {
     }
   };
 
-  // Открытие диалога: поля заполнены текущими книгами, иначе последним
-  // введённым путём. Путь в поле правится на месте (ClickableBookPath).
-  const openPathModal = () => {
-    const remembered = loadRecentPaths();
-    setRecentPaths(remembered);
-    setMainPathInput(fileStatus?.main_file_path || fileStatus?.file_path || remembered[0] || "");
-    setReservePathInput(fileStatus?.reserve_file_path || "");
+  // Открытие диалога: поля сразу из строки статуса (без пустого мигания),
+  // затем точные книги и история путей с сервера.
+  const openPathModal = async () => {
     setPathError(null);
+    setMainPathInput(fileStatus?.main_file_path || fileStatus?.file_path || "");
+    setReservePathInput(fileStatus?.reserve_file_path || "");
     setIsPathModalOpen(true);
+
+    try {
+      const state = await dashboardApi.getBookPaths();
+      setMainPathInput(state.main || fileStatus?.main_file_path || fileStatus?.file_path || "");
+      setReservePathInput(state.reserve || fileStatus?.reserve_file_path || "");
+      setRecentBookPaths(state.recent ?? []);
+    } catch (err: unknown) {
+      // История — не повод не открыть диалог: поля уже заполнены статусом.
+      console.error("Не удалось загрузить историю путей книг:", err);
+      setRecentBookPaths([]);
+    }
   };
 
   // Сохранить пути: основная обязательна, пустая запасная выключает режим.
@@ -1452,11 +1477,6 @@ export default function Dashboard() {
     const reserve = reservePathInput.trim();
     const accepted = await handleSaveBookRoles(main, reserve || null);
     if (!accepted) return;
-
-    // Память путей: запасная сохраняется раньше, основная — последней,
-    // поэтому в чипах она окажется первой.
-    if (reserve) saveRecentPath(reserve);
-    setRecentPaths(saveRecentPath(main));
 
     setIsPathModalOpen(false);
     setMainPathInput("");
@@ -2094,19 +2114,41 @@ export default function Dashboard() {
           </DialogHeader>
 
           <div className="px-6">
-            <div className="rounded-md border bg-muted/40 px-3 py-2 text-[11px]">
-              <span className="text-muted-foreground">Читается сейчас: </span>
-              <span className="font-medium text-slate-800 dark:text-slate-200">
-                {fileStatus?.role === "reserve"
-                  ? `запасная — основная не пополняется${
-                      growthClock(fileStatus?.main_last_growth)
-                        ? ` с ${growthClock(fileStatus?.main_last_growth)}`
-                        : ""
-                    }`
-                  : fileStatus?.role === "main"
-                    ? "основная — строки растут"
-                    : "режим запасной выключен"}
-              </span>
+            <div className="space-y-1 rounded-md border bg-muted/40 px-3 py-2 text-[11px]">
+              <div>
+                <span className="text-muted-foreground">Читается сейчас: </span>
+                <span className="font-medium text-slate-800 dark:text-slate-200">
+                  {!fileStatus?.reserve_file_path
+                    ? "только основная"
+                    : fileStatus.role === "reserve"
+                      ? "запасная"
+                      : fileStatus.role === "main"
+                        ? "основная"
+                        : "не определена"}
+                </span>
+                {fileStatus?.standby_reason && (
+                  <span className="text-muted-foreground"> — {fileStatus.standby_reason}</span>
+                )}
+              </div>
+              <div className="grid gap-1 pt-0.5 sm:grid-cols-2">
+                <BookStat
+                  label="Основная"
+                  rows={fileStatus?.main_rows}
+                  growth={fileStatus?.main_last_growth}
+                  present={fileStatus?.main_present}
+                />
+                <BookStat
+                  label="Запасная"
+                  rows={fileStatus?.reserve_rows}
+                  growth={fileStatus?.reserve_last_growth}
+                  present={fileStatus?.reserve_present}
+                />
+              </div>
+              {fileStatus?.observed_since && (
+                <div className="text-muted-foreground">
+                  Наблюдение с {formatLocalized(fileStatus.observed_since)}
+                </div>
+              )}
             </div>
           </div>
 
@@ -2123,7 +2165,7 @@ export default function Dashboard() {
                 placeholder="Нажмите, чтобы указать основную книгу"
               />
               <RecentPathChips
-                paths={recentPaths}
+                paths={recentBookPaths}
                 active={mainPathInput}
                 tone="main"
                 onPick={setMainPathInput}
@@ -2145,7 +2187,7 @@ export default function Dashboard() {
                 placeholder="Пусто — режим выключен"
               />
               <RecentPathChips
-                paths={recentPaths}
+                paths={recentBookPaths}
                 active={reservePathInput}
                 tone="reserve"
                 onPick={setReservePathInput}

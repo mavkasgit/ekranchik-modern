@@ -52,7 +52,12 @@ async def test_opcua_service_update_simulation_mode():
 
 def test_excel_service_update_simulation_mode():
     """Test that excel_service.update_simulation_mode invalidates caches and updates path"""
-    persisted = {"active_file": "test.xlsm", "main_file": "test.xlsm", "reserve_file": None}
+    persisted = {
+        "active_file": "test.xlsm",
+        "main_file": "test.xlsm",
+        "reserve_file": None,
+        "recent_files": [],
+    }
     with patch.object(excel_service, "_load_persisted_books", return_value=persisted):
         excel_service.update_simulation_mode()
         assert excel_service.active_file_name == "test.xlsm"

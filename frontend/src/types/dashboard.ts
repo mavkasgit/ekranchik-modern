@@ -63,6 +63,28 @@ export interface FileStatus {
   reserve_file_path?: string | null;
   /** Когда в основной книге последний раз прибавлялись строки. */
   main_last_growth?: string | null;
+  /** Статистика обеих книг: почему читается именно эта. */
+  main_rows?: number | null;
+  reserve_rows?: number | null;
+  reserve_last_growth?: string | null;
+  main_present?: boolean | null;
+  reserve_present?: boolean | null;
+  observed_since?: string | null;
+  standby_reason?: string | null;
+}
+
+/** Путь, который оператор вводил раньше. */
+export interface RecentBookPath {
+  path: string;
+  used_at?: string | null;
+}
+
+/** Текущие книги и история введённых путей. */
+export interface ExcelBooksState {
+  main?: string | null;
+  reserve?: string | null;
+  active?: string | null;
+  recent: RecentBookPath[];
 }
 
 /** Роли книг: какая основная, какая запасная (пустая запасная — режим выключен). */

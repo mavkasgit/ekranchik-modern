@@ -407,3 +407,34 @@ def test_count_book_rows_is_none_when_the_book_is_unreadable(tmp_path):
     assert ExcelService().count_book_rows(broken) is None
     assert ExcelService().count_book_rows(None) is None
     assert ExcelService().count_book_rows(tmp_path / "missing.xlsm") is None
+
+
+# --- Статистика для экрана: почему читается именно эта книга -----------------
+
+
+def test_status_explains_disabled_reserve(monkeypatch):
+    """Режим выключен — так и написано, а не «основная» без причины."""
+    service = StandbyBook()
+    monkeypatch.setattr(type(excel_service), "reserve_path", property(lambda self: None))
+
+    assert "запасная не задана" in service.reason(now=NOW)
+
+
+def test_status_reports_rows_presence_and_observation_time(monkeypatch):
+    """Модалка получает строки, наличие файлов и момент начала наблюдения."""
+    from app.services import standby_book as module
+
+    service = StandbyBook()
+    monkeypatch.setattr(type(excel_service), "main_path", property(lambda self: MAIN_PATH))
+    monkeypatch.setattr(type(excel_service), "reserve_path", property(lambda self: None))
+    monkeypatch.setattr(type(excel_service), "current_role", property(lambda self: "main"))
+    monkeypatch.setattr(excel_service, "count_book_rows", lambda path: 100)
+    monkeypatch.setattr(module, "path_exists", lambda path: True)
+
+    service.tick(now=NOW)
+    status = service.status(now=NOW)
+
+    assert status["main_rows"] == 100
+    assert status["main_present"] is True
+    assert status["observed_since"] is not None
+    assert status["reason"] == "запасная не задана — читается только основная"

@@ -87,6 +87,14 @@ class FileStatus(BaseModel):
     # Когда у основной книги последний раз прибавлялись строки: из этого
     # времени собирается текст «основная не пополняется с …».
     main_last_growth: datetime | None = None
+    # Статистика обеих книг для модалки: почему читается именно эта.
+    main_rows: int | None = None
+    reserve_rows: int | None = None
+    reserve_last_growth: datetime | None = None
+    main_present: bool | None = None
+    reserve_present: bool | None = None
+    observed_since: datetime | None = None
+    standby_reason: str | None = None
 
 
 class ExcelFileSelectRequest(BaseModel):
@@ -106,3 +114,19 @@ class ExcelBooksRequest(BaseModel):
 
     main_path: str | None = None
     reserve_path: str | None = None
+
+
+class RecentBookPath(BaseModel):
+    """Путь, который оператор вводил раньше."""
+
+    path: str
+    used_at: datetime | None = None
+
+
+class ExcelBooksState(BaseModel):
+    """Текущие книги и история введённых путей (для диалога «Книги учёта»)."""
+
+    main: str | None = None
+    reserve: str | None = None
+    active: str | None = None
+    recent: list[RecentBookPath] = Field(default_factory=list)

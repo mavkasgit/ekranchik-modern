@@ -40,6 +40,7 @@ def books(tmp_path, monkeypatch):
     monkeypatch.setattr(excel_service, "_active_file_name", None)
     monkeypatch.setattr(excel_service, "_main_file_name", None)
     monkeypatch.setattr(excel_service, "_reserve_file_name", None)
+    monkeypatch.setattr(excel_service, "_recent_files", [])
     standby_book.reset()
 
     yield main, reserve, record
@@ -90,12 +91,15 @@ async def test_roles_are_saved_and_all_surfaces_name_the_same_book(books):
         "active": expected_main,
     }
 
-    # Файл выбора хранит выбор и роли одной записью: двух источников истины нет.
-    assert json.loads(record.read_text(encoding="utf-8")) == {
-        "active_file": expected_main,
-        "main_file": expected_main,
-        "reserve_file": expected_reserve,
-    }
+    # Файл выбора хранит выбор, роли и историю путей одной записью.
+    saved_record = json.loads(record.read_text(encoding="utf-8"))
+    assert saved_record["active_file"] == expected_main
+    assert saved_record["main_file"] == expected_main
+    assert saved_record["reserve_file"] == expected_reserve
+    assert [item["path"] for item in saved_record["recent_files"]] == [
+        expected_main,
+        expected_reserve,
+    ]
 
     status = await _get("/api/dashboard/status/file")
     assert status["role"] == "main"
@@ -124,6 +128,23 @@ async def test_status_names_the_reserve_book_that_is_being_read(books):
 
     settings_response = await _get("/api/dashboard/settings")
     assert settings_response["excel_role"] == "reserve"
+
+
+async def test_books_endpoint_returns_path_history(books):
+    """История введённых путей: какие книги были раньше и когда вводились."""
+    main, reserve, _ = books
+    await _post("/api/dashboard/excel/books", {"main_path": str(main), "reserve_path": str(reserve)})
+
+    state = await _get("/api/dashboard/excel/books")
+
+    assert state["main"] == str(main.resolve())
+    assert state["reserve"] == str(reserve.resolve())
+    assert state["active"] == str(main.resolve())
+    assert [item["path"] for item in state["recent"][:2]] == [
+        str(main.resolve()),
+        str(reserve.resolve()),
+    ]
+    assert state["recent"][0]["used_at"], "у пути должна быть дата ввода"
 
 
 async def test_equal_book_paths_are_rejected(books):

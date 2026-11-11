@@ -14,9 +14,11 @@ from app.core.config import settings
 from app.schemas.dashboard import (
     DashboardResponse,
     ExcelBooksRequest,
+    ExcelBooksState,
     ExcelFileSelectRequest,
     FileStatus,
     MatchedUnloadEvent,
+    RecentBookPath,
 )
 from app.schemas.profile import ProfileInfo
 from app.services.book_rows import get_book_rows
@@ -164,7 +166,7 @@ def _standby_fields() -> dict:
         "role": excel_service.current_role,
         "main_file_path": _display_path(excel_service.main_path),
         "reserve_file_path": _display_path(excel_service.reserve_path),
-        "main_last_growth": standby_book.main_last_growth(),
+        **standby_book.status(),
     }
 
 
@@ -352,6 +354,24 @@ async def select_excel_file(request: ExcelFileSelectRequest):
     except Exception as e:
         logger.error(f"[DASHBOARD API] Failed to select Excel file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/excel/books", response_model=ExcelBooksState)
+async def get_excel_books():
+    """Текущие книги и история введённых путей.
+
+    История живёт на сервере, а не в браузере: киоск меняется, профиль
+    чистится, а «какие книги были раньше» должно остаться.
+    """
+    return ExcelBooksState(
+        main=_display_path(excel_service.main_path),
+        reserve=_display_path(excel_service.reserve_path),
+        active=_display_path(excel_service.current_path),
+        recent=[
+            RecentBookPath(path=item["path"], used_at=item["used_at"] or None)
+            for item in excel_service.recent_files
+        ],
+    )
 
 
 @router.post("/excel/books")

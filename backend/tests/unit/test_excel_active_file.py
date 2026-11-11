@@ -144,11 +144,12 @@ def test_selection_file_name_comes_from_settings(tmp_path, monkeypatch, file_nam
     ExcelService().set_active_file("/app/excel/Учет КПЗ 2026.xlsm")
 
     written = static_dir / expected
-    assert json.loads(written.read_text(encoding="utf-8")) == {
-        "active_file": "/app/excel/Учет КПЗ 2026.xlsm",
-        "main_file": None,
-        "reserve_file": None,
-    }
+    saved = json.loads(written.read_text(encoding="utf-8"))
+    assert saved["active_file"] == "/app/excel/Учет КПЗ 2026.xlsm"
+    assert saved["main_file"] is None
+    assert saved["reserve_file"] is None
+    # Автоматическое переключение историю путей не пополняет.
+    assert saved["recent_files"] == []
     # Единственный файл в каталоге — целевой: общий выбор dev не создан.
     assert [p.name for p in static_dir.iterdir()] == [expected]
 
@@ -183,11 +184,11 @@ def test_roles_are_saved_in_one_selection_record(role_files):
 
     ExcelService().set_book_roles(str(main), str(reserve))
 
-    assert json.loads(record.read_text(encoding="utf-8")) == {
-        "active_file": str(main),
-        "main_file": str(main),
-        "reserve_file": str(reserve),
-    }
+    saved = json.loads(record.read_text(encoding="utf-8"))
+    assert saved["active_file"] == str(main)
+    assert saved["main_file"] == str(main)
+    assert saved["reserve_file"] == str(reserve)
+    assert [item["path"] for item in saved["recent_files"]] == [str(main), str(reserve)]
 
 
 def test_old_selection_without_roles_reads_active_as_main(role_files):

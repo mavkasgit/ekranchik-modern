@@ -2,6 +2,7 @@ import { api } from "./client";
 import type {
   DashboardResponse,
   ExcelBooksResponse,
+  ExcelBooksState,
   FileStatus,
   ExcelSelectResponse,
 } from "@/types/dashboard";
@@ -58,6 +59,12 @@ export const dashboardApi = {
       main_path: mainPath,
       reserve_path: reservePath,
     });
+    return data;
+  },
+
+  /** Текущие книги и история введённых путей (живёт на сервере). */
+  getBookPaths: async (): Promise<ExcelBooksState> => {
+    const { data } = await api.get<ExcelBooksState>("/dashboard/excel/books");
     return data;
   },
 };
