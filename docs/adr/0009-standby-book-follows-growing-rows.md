@@ -1,5 +1,12 @@
 # Дашборд сам выбирает книгу, в которой растут строки
 
+Спека: [0001](../specs/0001-standby-book.md). Тикеты:
+[0008](../tickets/0008-standby-book-roles-api.md),
+[0009](../tickets/0009-standby-book-rule.md),
+[0010](../tickets/0010-standby-book-ui.md),
+[0011](../tickets/0011-standby-book-docs.md),
+[0012](../tickets/0012-standby-book-acceptance.md).
+
 ## Контекст
 
 Книгу могут открыть на другом компьютере и заблокировать сохранение с машины
