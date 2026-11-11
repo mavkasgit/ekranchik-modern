@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRecentPaths, RECENT_PATHS_LIMIT, rememberRecentPath } from "./recentPaths";
+import { parseRecentPaths, pathHint, RECENT_PATHS_LIMIT, rememberRecentPath } from "./recentPaths";
 
 describe("rememberRecentPath", () => {
   it("новый путь встаёт первым", () => {
@@ -27,6 +27,15 @@ describe("rememberRecentPath", () => {
 
   it("пустой путь память не меняет", () => {
     expect(rememberRecentPath(["a", "b"], "   ")).toEqual(["a", "b"]);
+  });
+});
+
+describe("pathHint", () => {
+  it("показывает последние два сегмента: имена книг совпадают, папки разные", () => {
+    expect(pathHint("\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm")).toBe(
+      "Оператор\\Учет КПЗ 2026.xlsm",
+    );
+    expect(pathHint("C:\\testdata\\Учет КПЗ 2026.xlsm")).toBe("testdata\\Учет КПЗ 2026.xlsm");
   });
 });
 

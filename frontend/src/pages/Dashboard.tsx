@@ -13,6 +13,9 @@ import {
   AlertTriangle,
   Inbox,
   Clock,
+  Pencil,
+  Plus,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ClickableBookPath } from "@/components/ClickableBookPath";
 import {
   Table,
   TableBody,
@@ -58,7 +62,13 @@ import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
 import { emptyRun, waitingRows } from "@/lib/domain/testRun";
 import { photoUrl } from "@/lib/domain/photo";
 import { profileText } from "@/lib/domain/profile";
-import { parseRecentPaths, rememberRecentPath } from "@/lib/domain/recentPaths";
+import { parseRecentPaths, pathHint, rememberRecentPath } from "@/lib/domain/recentPaths";
+import {
+  assignBookRole,
+  buildBookRows,
+  renameBookPath,
+  type BookRow,
+} from "@/lib/domain/bookRoles";
 import type { Profile } from "@/types/profile";
 import { formatClock, formatLocalized } from "@/lib/domain/time";
 import { BathForecast } from "@/components/BathForecastTable";
@@ -132,6 +142,20 @@ function saveRecentPath(path: string): string[] {
     /* ignore */
   }
   return next;
+}
+
+const BOOK_ROLE_LABELS: Record<BookRow["role"], string> = {
+  main: "Основная",
+  reserve: "Запасная",
+  none: "—",
+};
+
+function bookRoleButtonClass(active: boolean, role: BookRow["role"]): string {
+  if (!active)
+    return "border-border text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800";
+  if (role === "main") return "border-emerald-600 bg-emerald-600 text-white";
+  if (role === "reserve") return "border-amber-500 bg-amber-500 text-white";
+  return "border-slate-400 bg-slate-200 text-slate-700";
 }
 
 // Format date with year 2026 (DD.MM.YY -> DD.MM.2026). null — строка книги
@@ -533,13 +557,7 @@ function ProfilePhoto({
   );
 }
 
-function StatusBar({
-  onOpenPathModal,
-  isFetching,
-}: {
-  onOpenPathModal: () => void;
-  isFetching: boolean;
-}) {
+function StatusBar({ onOpenPathModal }: { onOpenPathModal: () => void }) {
   const { data: fileStatus } = useFileStatus();
   const { data: opcuaStatus } = useOPCUAStatus();
   const { isConnected, lastMessage } = useRealtimeConnection();
@@ -555,18 +573,16 @@ function StatusBar({
   // видно, что сервер читает действительно тот файл и с сетевого диска.
   const filePath = fileStatus?.file_path;
 
-  // Метка роли: при выключенном режиме (запасной книги нет) метки тоже нет —
-  // «основная» без альтернативы ничего оператору не сообщает. Роль сервер
-  // отдаёт и без запасной книги, поэтому смотрим на её наличие.
+  // Роль книги. Режим выключен — на пилюле так и написано: «основная» без
+  // альтернативы ничего не сообщает, а оператор не узнает, что режим есть.
   const role = fileStatus?.role ?? null;
   const standbyEnabled = Boolean(fileStatus?.reserve_file_path);
-  const roleLabel = standbyEnabled
-    ? role === "reserve"
-      ? "ЗАПАСНАЯ"
-      : role === "main"
-        ? "основная"
-        : null
-    : null;
+  const activeName = fileStatus?.file_name || "—";
+  const pillTone = !standbyEnabled
+    ? "border-dashed border-amber-500 text-amber-800 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-500/10"
+    : role === "reserve"
+      ? "border-amber-500 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/20"
+      : "border-border bg-background text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800";
 
   return (
     <Card>
@@ -577,45 +593,47 @@ function StatusBar({
               <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
               <div className={`w-2 h-2 rounded-full ${statusColor}`} />
               <span className="font-medium">{fileStatus?.status_text || "—"}</span>
-              <span className="text-foreground font-medium truncate max-w-[250px] text-xs">
-                {fileStatus?.file_name || "—"}
-              </span>
-              {roleLabel && (
-                <Badge
-                  variant="outline"
-                  className={
-                    role === "reserve"
-                      ? "border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-300 font-bold tracking-wide"
-                      : "border-border bg-muted text-muted-foreground font-normal"
-                  }
+
+              {/* Путь — кнопка: нажатие в любом месте открывает список книг. */}
+              {filePath && (
+                <button
+                  type="button"
+                  onClick={onOpenPathModal}
+                  title="Изменить книги учёта"
+                  className="group flex min-w-0 max-w-[380px] items-center gap-1 text-muted-foreground hover:text-foreground"
                 >
-                  {roleLabel}
-                </Badge>
+                  <span className="truncate font-mono text-xs">{filePath}</span>
+                  <Pencil className="w-3 h-3 shrink-0 opacity-40 group-hover:opacity-100" />
+                </button>
               )}
+
+              <button
+                type="button"
+                onClick={onOpenPathModal}
+                title="Изменить книги учёта"
+                className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors ${pillTone}`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span className="font-semibold">
+                  {!standbyEnabled
+                    ? "Запасная не настроена"
+                    : role === "reserve"
+                      ? "ЗАПАСНАЯ"
+                      : "Основная"}
+                </span>
+                {standbyEnabled && (
+                  <span className="max-w-[180px] truncate font-mono text-[11px] opacity-70">
+                    {activeName}
+                  </span>
+                )}
+                <Pencil className="w-3 h-3 opacity-50" />
+              </button>
+
               {fileStatus?.last_modified && (
                 <span className="text-muted-foreground text-xs">
                   ({new Date(fileStatus.last_modified).toLocaleString("ru")})
                 </span>
               )}
-              {filePath && (
-                <span
-                  className="text-muted-foreground text-xs font-mono truncate max-w-[420px]"
-                  title={filePath}
-                >
-                  {filePath}
-                </span>
-              )}
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onOpenPathModal}
-                disabled={isFetching}
-                className="h-8 text-xs px-3 border border-slate-300 bg-transparent hover:bg-slate-100 text-slate-900 hover:text-black ml-1.5 font-normal"
-                title="Указать прямой путь к файлу на сервере"
-              >
-                Ввести путь
-              </Button>
             </div>
 
             <div className="w-px h-4 bg-border" />
@@ -1329,13 +1347,12 @@ export default function Dashboard() {
   const { isFullscreen, setIsFullscreen } = useFullscreen();
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null);
   const [isPathModalOpen, setIsPathModalOpen] = useState(false);
-  // Две книги задаются ролями: какую читать сейчас, решает сервер по росту
-  // строк (ADR 0009), поэтому ручного выбора «читай эту» здесь нет.
-  const [mainPathInput, setMainPathInput] = useState("");
-  const [reservePathInput, setReservePathInput] = useState("");
+  // Черновик списка книг: строки путей и их роли. Какую книгу читать сейчас,
+  // решает сервер по росту строк (ADR 0009), поэтому ручного выбора источника
+  // здесь нет — только роли.
+  const [bookRows, setBookRows] = useState<BookRow[]>([]);
+  const [newBookPath, setNewBookPath] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
-  // Последние введённые пути: их подставляем в поле, чтобы править, а не набирать.
-  const [recentPaths, setRecentPaths] = useState<string[]>(loadRecentPaths);
   const [hasNewRows, setHasNewRows] = useState(false);
   const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false);
   const lastModifiedRef = useRef<string | null>(null);
@@ -1402,16 +1419,47 @@ export default function Dashboard() {
     }
   };
 
-  // Открытие диалога: поля заполнены текущими книгами, иначе последним
-  // введённым путём. Оператор правит их на месте.
+  // Открытие диалога: список книг — текущие роли плюс последние введённые
+  // пути. Путь в строке правится на месте (ClickableBookPath).
   const openPathModal = () => {
     const remembered = loadRecentPaths();
-    setRecentPaths(remembered);
-    setMainPathInput(fileStatus?.main_file_path || fileStatus?.file_path || remembered[0] || "");
-    setReservePathInput(fileStatus?.reserve_file_path || "");
+    setBookRows(
+      buildBookRows(fileStatus?.main_file_path, fileStatus?.reserve_file_path, remembered),
+    );
+    setNewBookPath("");
     setPathError(null);
     setIsPathModalOpen(true);
   };
+
+  // Сохранить роли: основная обязательна, запасная — по желанию.
+  const applyBookRows = async () => {
+    const mainRow = bookRows.find((row) => row.role === "main");
+    if (!mainRow) return;
+    const reserveRow = bookRows.find((row) => row.role === "reserve");
+    const accepted = await handleSaveBookRoles(mainRow.path, reserveRow?.path ?? null);
+    if (!accepted) return;
+
+    // Память путей: запасная сохраняется раньше, основная — последней,
+    // поэтому в списке она окажется первой.
+    if (reserveRow) saveRecentPath(reserveRow.path);
+    saveRecentPath(mainRow.path);
+
+    setIsPathModalOpen(false);
+    setBookRows([]);
+    setNewBookPath("");
+  };
+
+  const addBookPath = () => {
+    const path = newBookPath.trim();
+    if (!path) return;
+    setBookRows((rows) =>
+      rows.some((row) => row.path === path) ? rows : [...rows, { path, role: "none" }],
+    );
+    setNewBookPath("");
+  };
+
+  const draftReserveRow = bookRows.find((row) => row.role === "reserve");
+  const hasDraftMain = bookRows.some((row) => row.role === "main");
 
   const [now, setNow] = useState(new Date());
 
@@ -1891,7 +1939,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!isFullscreen && <StatusBar onOpenPathModal={openPathModal} isFetching={isFetching} />}
+      {!isFullscreen && <StatusBar onOpenPathModal={openPathModal} />}
 
       {renderStandbyBanner()}
 
@@ -2026,146 +2074,159 @@ export default function Dashboard() {
         onOpenChange={(open) => {
           if (!open) {
             setIsPathModalOpen(false);
-            setMainPathInput("");
-            setReservePathInput("");
+            setBookRows([]);
+            setNewBookPath("");
             setPathError(null);
           }
         }}
       >
-        <DialogContent className="max-w-xl bg-background border-border text-foreground p-6 rounded-lg shadow-2xl flex flex-col gap-4">
-          <DialogHeader className="space-y-1.5">
-            <DialogTitle className="text-xl font-bold flex items-center gap-2 text-emerald-600">
-              <FileSpreadsheet className="w-5 h-5" />
+        <DialogContent className="max-w-2xl gap-0 overflow-hidden border-border bg-background p-0 text-foreground shadow-2xl">
+          <DialogHeader className="space-y-1.5 px-6 pb-3 pt-6">
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold text-emerald-600">
+              <FileSpreadsheet className="h-5 w-5" />
               Книги учёта
             </DialogTitle>
-            <DialogDescription className="text-muted-foreground text-xs">
-              Укажите пути к книгам на сервере. Какую читать сейчас, система решает сама — ту, в
-              которой прибавляются строки.
+            <DialogDescription className="text-xs text-muted-foreground">
+              Отметьте одну основную и, если нужно, одну запасную. Нажмите на путь, чтобы изменить
+              его на месте.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="main-path-input" className="text-xs text-slate-700 font-medium">
-              Основная книга:
-            </label>
-            <Input
-              id="main-path-input"
-              type="text"
-              placeholder="Например: C:\testdata\Учет КПЗ 2026.xlsm"
-              value={mainPathInput}
-              onChange={(e) => setMainPathInput(e.target.value)}
-              className="h-8 text-xs bg-background border-input text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Текущая основная книга уже подставлена — путь можно поправить на месте.
-            </p>
+          <div className="px-6">
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-[11px]">
+              <span className="text-muted-foreground">Читается сейчас: </span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">
+                {fileStatus?.role === "reserve"
+                  ? `запасная — основная не пополняется${
+                      growthClock(fileStatus?.main_last_growth)
+                        ? ` с ${growthClock(fileStatus?.main_last_growth)}`
+                        : ""
+                    }`
+                  : fileStatus?.role === "main"
+                    ? "основная — строки растут"
+                    : "режим запасной выключен"}
+              </span>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="reserve-path-input" className="text-xs text-slate-700 font-medium">
-              Запасная книга (необязательно):
-            </label>
-            <Input
-              id="reserve-path-input"
-              type="text"
-              placeholder="Например: C:\testdata\Учет КПЗ 2026 запасная.xlsm"
-              value={reservePathInput}
-              onChange={(e) => setReservePathInput(e.target.value)}
-              className="h-8 text-xs bg-background border-input text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Пустое поле выключает режим запасной книги: читается только основная.
-            </p>
-          </div>
+          <div className="max-h-[52vh] space-y-2 overflow-y-auto px-6 py-4">
+            {bookRows.map((row) => (
+              <div
+                key={row.path}
+                className={`rounded-lg border p-3 ${
+                  row.role === "main"
+                    ? "border-emerald-500/60 bg-emerald-50/40 dark:bg-emerald-500/10"
+                    : row.role === "reserve"
+                      ? "border-amber-500/60 bg-amber-50/40 dark:bg-amber-500/10"
+                      : "border-border"
+                }`}
+              >
+                <div
+                  className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200"
+                  title={row.path}
+                >
+                  {pathHint(row.path)}
+                </div>
+                <div className="mt-1.5">
+                  <ClickableBookPath
+                    value={row.path}
+                    onChange={(next) => setBookRows((rows) => renameBookPath(rows, row.path, next))}
+                    tone={
+                      row.role === "main" ? "main" : row.role === "reserve" ? "reserve" : "neutral"
+                    }
+                  />
+                </div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  {(["main", "reserve", "none"] as const).map((candidate) => (
+                    <button
+                      key={candidate}
+                      type="button"
+                      onClick={() =>
+                        setBookRows((rows) => assignBookRole(rows, row.path, candidate))
+                      }
+                      aria-pressed={row.role === candidate}
+                      className={`rounded border px-2 py-0.5 text-[10px] font-medium transition-colors ${bookRoleButtonClass(
+                        row.role === candidate,
+                        candidate,
+                      )}`}
+                    >
+                      {BOOK_ROLE_LABELS[candidate]}
+                    </button>
+                  ))}
+                  {row.role !== "none" && (
+                    <Check className="ml-auto h-3.5 w-3.5 text-emerald-600" />
+                  )}
+                </div>
+              </div>
+            ))}
 
-          {recentPaths.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs text-slate-700 font-medium">Последние пути:</span>
-              <div className="flex flex-col gap-1">
-                {recentPaths.map((path) => {
-                  const isMain = path === mainPathInput.trim();
-                  const isReserve = path === reservePathInput.trim();
-                  return (
-                    <div key={path} className="flex items-center gap-1.5">
-                      <span
-                        className="flex-1 min-w-0 text-[11px] font-mono truncate text-slate-700"
-                        title={path}
-                      >
-                        {path}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setMainPathInput(path)}
-                        aria-pressed={isMain}
-                        className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                          isMain
-                            ? "border-emerald-500 bg-emerald-500 text-white font-semibold"
-                            : "border-border text-slate-600 hover:bg-slate-100"
-                        }`}
-                      >
-                        Основная
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setReservePathInput(path)}
-                        aria-pressed={isReserve}
-                        className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                          isReserve
-                            ? "border-amber-500 bg-amber-500 text-white font-semibold"
-                            : "border-border text-slate-600 hover:bg-slate-100"
-                        }`}
-                      >
-                        Запасная
-                      </button>
-                    </div>
-                  );
-                })}
+            <div className="pt-1">
+              <div className="mb-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                Добавить путь
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={newBookPath}
+                  onChange={(event) => setNewBookPath(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addBookPath();
+                    }
+                  }}
+                  placeholder="Полный путь к книге на сервере"
+                  className="h-8 font-mono text-xs"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!newBookPath.trim()}
+                  onClick={addBookPath}
+                  aria-label="Добавить путь"
+                  className="h-8 w-8 shrink-0 p-0"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
               </div>
             </div>
-          )}
+          </div>
 
           {pathError && (
-            <div className="flex items-start gap-2 rounded border border-red-300 bg-red-50 px-2 py-1.5 text-[11px] text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <div className="mx-6 flex items-start gap-2 rounded border border-red-300 bg-red-50 px-2 py-1.5 text-[11px] text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span className="break-all">{pathError}</span>
             </div>
           )}
 
-          <div className="flex justify-end gap-3 mt-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsPathModalOpen(false);
-                setMainPathInput("");
-                setReservePathInput("");
-                setPathError(null);
-              }}
-              className="h-8 text-xs font-medium px-4"
-            >
-              Отмена
-            </Button>
-            <Button
-              onClick={async () => {
-                const main = mainPathInput.trim();
-                if (!main) return;
-                const reserve = reservePathInput.trim();
-                const accepted = await handleSaveBookRoles(main, reserve || null);
-                // Неудачные роли не запоминаем и диалог не закрываем: оператор
-                // поправит путь здесь же, не начиная набор заново.
-                if (accepted) {
-                  let next = saveRecentPath(main);
-                  if (reserve) next = saveRecentPath(reserve);
-                  setRecentPaths(next);
+          <div className="mt-3 flex items-center justify-between gap-3 border-t px-6 py-3">
+            <span className="truncate text-[11px] text-muted-foreground">
+              {draftReserveRow
+                ? `запасная: ${pathHint(draftReserveRow.path)}`
+                : "режим запасной выключен"}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
                   setIsPathModalOpen(false);
-                  setMainPathInput("");
-                  setReservePathInput("");
-                }
-              }}
-              className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4"
-              disabled={isFetching || !mainPathInput.trim()}
-            >
-              Применить
-            </Button>
+                  setBookRows([]);
+                  setNewBookPath("");
+                  setPathError(null);
+                }}
+                className="h-9 text-xs"
+              >
+                <X className="mr-1 h-4 w-4" /> Отмена
+              </Button>
+              <Button
+                onClick={applyBookRows}
+                disabled={isFetching || !hasDraftMain}
+                className="h-9 bg-emerald-600 px-5 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                Сохранить
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

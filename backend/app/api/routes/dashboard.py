@@ -261,23 +261,23 @@ def _resolve_book_file(raw_path: str) -> Path:
     Оператор набирает сетевую книгу так, как её видит его машина
     (``\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm`` или ``Z:\\…``), а сервер — как
     каталог смонтированной шары: в контейнере такой путь не разрешается.
-    Поэтому хвост такого пути ищется в каталоге книги, и только потом путь
-    разрешается как есть (на Windows сервер читает шару сам).
+
+    Существующий на этой машине путь важнее подстановки в каталог книги:
+    Windows-сервер читает шару сам. Иначе устаревшая запись выбора
+    (``active_excel.json`` от другой среды или тестов) уводила бы реальный
+    путь внутрь своего каталога — ровно так книга из pytest-времянки
+    подменяла рабочую.
     """
     book_dir = excel_service.directory
     path = Path(raw_path)
 
     tail = share_tail(raw_path)
     if tail and book_dir is not None:
-        mapped = book_dir.joinpath(*tail)
-        if path_exists(mapped):
-            return mapped.resolve()
-        # На Windows сервер читает шару сам, и путь мог указывать в другую её
-        # папку; в контейнере такой путь не разрешается, и в ошибке должно
-        # стоять то место, где сервер искал файл.
         if path.is_absolute() and path_exists(path):
             return path.resolve()
-        return mapped.resolve()
+        # В контейнере путь оператора не разрешается: хвост ищется в каталоге
+        # книги. Если и там нет — в ошибке должно стоять место поиска.
+        return book_dir.joinpath(*tail).resolve()
 
     if not path.is_absolute() and not path.root:
         if book_dir is None:

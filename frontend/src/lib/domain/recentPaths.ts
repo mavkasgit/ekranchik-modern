@@ -25,6 +25,13 @@ export function rememberRecentPath(
   return result;
 }
 
+/** Последние два сегмента пути: у двух книг часто одинаковое имя файла, и в
+ *  списке «Учет КПЗ 2026.xlsm» из разных папок выглядит как один и тот же путь. */
+export function pathHint(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.slice(-2).join("\\");
+}
+
 /** Разбор того, что лежит в localStorage: мусор и дубли наружу не отдаём. */
 export function parseRecentPaths(raw: string | null, limit: number = RECENT_PATHS_LIMIT): string[] {
   if (!raw) return [];
