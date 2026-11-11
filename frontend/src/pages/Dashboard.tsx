@@ -2183,7 +2183,7 @@ export default function Dashboard() {
                 placeholder="Нажмите, чтобы указать основную книгу"
               />
               <RecentPathChips
-                paths={recentBookPaths}
+                paths={recentBookPaths.filter((item) => item.path !== reservePathInput.trim())}
                 active={mainPathInput}
                 tone="main"
                 onPick={setMainPathInput}
@@ -2205,7 +2205,7 @@ export default function Dashboard() {
                 placeholder="Пусто — режим выключен"
               />
               <RecentPathChips
-                paths={recentBookPaths}
+                paths={recentBookPaths.filter((item) => item.path !== mainPathInput.trim())}
                 active={reservePathInput}
                 tone="reserve"
                 onPick={setReservePathInput}
