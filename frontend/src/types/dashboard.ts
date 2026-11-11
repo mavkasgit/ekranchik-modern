@@ -46,6 +46,9 @@ export interface DashboardResponse {
   error?: string;
 }
 
+/** Роль книги учёта: какую читают по умолчанию и какую — при блокировке основной. */
+export type BookRole = "main" | "reserve";
+
 export interface FileStatus {
   is_open: boolean;
   last_modified?: string;
@@ -54,6 +57,26 @@ export interface FileStatus {
   status_text: string;
   error?: string;
   seconds_since_modified?: number;
+  /** Роль читаемой книги; null — режим запасной книги выключен. */
+  role?: BookRole | null;
+  main_file_path?: string | null;
+  reserve_file_path?: string | null;
+  /** Когда в основной книге последний раз прибавлялись строки. */
+  main_last_growth?: string | null;
+}
+
+/** Роли книг: какая основная, какая запасная (пустая запасная — режим выключен). */
+export interface ExcelBooksRequest {
+  main_path: string;
+  reserve_path: string | null;
+}
+
+export interface ExcelBooksResponse {
+  success: boolean;
+  main: string;
+  reserve: string | null;
+  /** Книга, которую читают сейчас: после сохранения ролей это основная. */
+  active: string;
 }
 
 export interface WebSocketMessage {

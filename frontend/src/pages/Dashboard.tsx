@@ -555,6 +555,11 @@ function StatusBar({
   // видно, что сервер читает действительно тот файл и с сетевого диска.
   const filePath = fileStatus?.file_path;
 
+  // Метка роли: при выключенном режиме (запасной книги нет) метки тоже нет —
+  // «основная» без альтернативы ничего оператору не сообщает.
+  const role = fileStatus?.role ?? null;
+  const roleLabel = role === "reserve" ? "ЗАПАСНАЯ" : role === "main" ? "основная" : null;
+
   return (
     <Card>
       <CardContent className="py-3">
@@ -567,6 +572,18 @@ function StatusBar({
               <span className="text-foreground font-medium truncate max-w-[250px] text-xs">
                 {fileStatus?.file_name || "—"}
               </span>
+              {roleLabel && (
+                <Badge
+                  variant="outline"
+                  className={
+                    role === "reserve"
+                      ? "border-amber-500 bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-300 font-bold tracking-wide"
+                      : "border-border bg-muted text-muted-foreground font-normal"
+                  }
+                >
+                  {roleLabel}
+                </Badge>
+              )}
               {fileStatus?.last_modified && (
                 <span className="text-muted-foreground text-xs">
                   ({new Date(fileStatus.last_modified).toLocaleString("ru")})
@@ -1289,13 +1306,26 @@ function apiErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+// Время последнего роста основной книги для баннера: оператору нужны часы и
+// минуты, а formatLocalized отдаёт HH:MM:SS.
+function growthClock(value?: string | null): string | null {
+  const localized = formatLocalized(value);
+  if (localized === "—") return null;
+  const [hours, minutes] = localized.split(":");
+  return hours && minutes ? `${hours}:${minutes}` : localized;
+}
+
 // Main
 export default function Dashboard() {
   const [filters, setFilters] = useState<Filters>(loadFilters);
   const { isFullscreen, setIsFullscreen } = useFullscreen();
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null);
   const [isPathModalOpen, setIsPathModalOpen] = useState(false);
-  const [customPathInput, setCustomPathInput] = useState("");
+  // Две книги задаются ролями: какую читать сейчас, решает сервер по росту
+  // строк (ADR 0009), поэтому ручного выбора «читай эту» здесь нет.
+  const [mainPathInput, setMainPathInput] = useState("");
+  const [reservePathInput, setReservePathInput] = useState("");
+  const [pathError, setPathError] = useState<string | null>(null);
   // Последние введённые пути: их подставляем в поле, чтобы править, а не набирать.
   const [recentPaths, setRecentPaths] = useState<string[]>(loadRecentPaths);
   const [hasNewRows, setHasNewRows] = useState(false);
@@ -1341,29 +1371,37 @@ export default function Dashboard() {
   const { data: fileStatus } = useFileStatus();
   const { data: matchedEvents } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit);
 
-  // Выбор книги учёта — только вводом пути: файл лежит на сетевом диске,
-  // который видит сервер, а не браузер, и каталог книги на проде read-only.
-  const handleSelectExcelFile = async (filePath: string): Promise<boolean> => {
+  // Роли книг — единственное, что задаёт оператор: какую книгу читать сейчас,
+  // решает правило `standby_book` по росту строк.
+  const handleSaveBookRoles = async (
+    mainPath: string,
+    reservePath: string | null,
+  ): Promise<boolean> => {
     try {
-      const res = await dashboardApi.selectExcelFile(filePath);
+      setPathError(null);
+      const res = await dashboardApi.saveBookRoles(mainPath, reservePath);
       if (res.success) {
         // Строка статуса берёт имя книги из /status/file: тот же префикс ключа.
         queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY });
       }
       return res.success;
     } catch (err: unknown) {
-      console.error("Ошибка выбора Excel-файла:", err);
-      alert(apiErrorMessage(err, "Ошибка выбора файла"));
+      console.error("Ошибка сохранения ролей книг:", err);
+      // Диалог не закрываем: оператор поправит путь здесь же. Ошибку держим
+      // в диалоге, потому что alert поверх киоска оператор часто не читает.
+      setPathError(apiErrorMessage(err, "Ошибка сохранения ролей книг"));
       return false;
     }
   };
 
-  // Открытие диалога: поле сразу заполнено — сперва путь, который сервер
-  // открывает сейчас, иначе последний введённый. Оператор правит его на месте.
+  // Открытие диалога: поля заполнены текущими книгами, иначе последним
+  // введённым путём. Оператор правит их на месте.
   const openPathModal = () => {
     const remembered = loadRecentPaths();
     setRecentPaths(remembered);
-    setCustomPathInput(fileStatus?.file_path || remembered[0] || "");
+    setMainPathInput(fileStatus?.main_file_path || fileStatus?.file_path || remembered[0] || "");
+    setReservePathInput(fileStatus?.reserve_file_path || "");
+    setPathError(null);
     setIsPathModalOpen(true);
   };
 
@@ -1406,6 +1444,33 @@ export default function Dashboard() {
           быть неверными! (Последнее сохранение: {formatLastModified(fileStatus?.last_modified)}).
           Настройте сохранение файла либо выберите другую книгу учёта.
         </div>
+      </div>
+    );
+  };
+
+  // Баннер режима запасной книги (ADR 0009). Отдельно от предупреждения об
+  // устаревании файла: то про mtime, это про наполненность основной книги.
+  const renderStandbyBanner = () => {
+    if (fileStatus?.role !== "reserve") return null;
+    const growth = growthClock(fileStatus.main_last_growth);
+
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-amber-500/60 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <span className="font-semibold">Читается запасная книга.</span>
+        <span>
+          {growth
+            ? `Основная не пополняется с ${growth}.`
+            : "Основная не пополняется: нет данных о росте."}
+        </span>
+        {fileStatus.main_file_path && (
+          <span
+            className="font-mono text-xs text-amber-800/90 dark:text-amber-300/80 truncate max-w-[520px]"
+            title={fileStatus.main_file_path}
+          >
+            {fileStatus.main_file_path}
+          </span>
+        )}
       </div>
     );
   };
@@ -1820,6 +1885,8 @@ export default function Dashboard() {
 
       {!isFullscreen && <StatusBar onOpenPathModal={openPathModal} isFetching={isFetching} />}
 
+      {renderStandbyBanner()}
+
       {!isFullscreen && (
         <FiltersPanel
           filters={filters}
@@ -1951,7 +2018,9 @@ export default function Dashboard() {
         onOpenChange={(open) => {
           if (!open) {
             setIsPathModalOpen(false);
-            setCustomPathInput("");
+            setMainPathInput("");
+            setReservePathInput("");
+            setPathError(null);
           }
         }}
       >
@@ -1959,27 +2028,45 @@ export default function Dashboard() {
           <DialogHeader className="space-y-1.5">
             <DialogTitle className="text-xl font-bold flex items-center gap-2 text-emerald-600">
               <FileSpreadsheet className="w-5 h-5" />
-              Ввод пути к Excel файлу
+              Книги учёта
             </DialogTitle>
             <DialogDescription className="text-muted-foreground text-xs">
-              Укажите полный путь к книге учёта на сервере — по этому пути сервер её открывает.
+              Укажите пути к книгам на сервере. Какую читать сейчас, система решает сама — ту, в
+              которой прибавляются строки.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="custom-path-input" className="text-xs text-slate-700 font-medium">
-              Путь к файлу:
+            <label htmlFor="main-path-input" className="text-xs text-slate-700 font-medium">
+              Основная книга:
             </label>
             <Input
-              id="custom-path-input"
+              id="main-path-input"
               type="text"
               placeholder="Например: C:\testdata\Учет КПЗ 2026.xlsm"
-              value={customPathInput}
-              onChange={(e) => setCustomPathInput(e.target.value)}
+              value={mainPathInput}
+              onChange={(e) => setMainPathInput(e.target.value)}
               className="h-8 text-xs bg-background border-input text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
             />
             <p className="text-[11px] text-muted-foreground">
-              Прошлый путь уже подставлен в поле — его можно поправить на месте.
+              Текущая основная книга уже подставлена — путь можно поправить на месте.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="reserve-path-input" className="text-xs text-slate-700 font-medium">
+              Запасная книга (необязательно):
+            </label>
+            <Input
+              id="reserve-path-input"
+              type="text"
+              placeholder="Например: C:\testdata\Учет КПЗ 2026 запасная.xlsm"
+              value={reservePathInput}
+              onChange={(e) => setReservePathInput(e.target.value)}
+              className="h-8 text-xs bg-background border-input text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Пустое поле выключает режим запасной книги: читается только основная.
             </p>
           </div>
 
@@ -1987,22 +2074,52 @@ export default function Dashboard() {
             <div className="flex flex-col gap-1.5">
               <span className="text-xs text-slate-700 font-medium">Последние пути:</span>
               <div className="flex flex-col gap-1">
-                {recentPaths.map((path) => (
-                  <button
-                    key={path}
-                    type="button"
-                    onClick={() => setCustomPathInput(path)}
-                    title={path}
-                    className={`text-left text-[11px] font-mono truncate px-2 py-1 rounded border transition-colors ${
-                      path === customPathInput
-                        ? "border-emerald-500 bg-emerald-50 text-emerald-800"
-                        : "border-border text-slate-700 hover:bg-slate-100"
-                    }`}
-                  >
-                    {path}
-                  </button>
-                ))}
+                {recentPaths.map((path) => {
+                  const isMain = path === mainPathInput.trim();
+                  const isReserve = path === reservePathInput.trim();
+                  return (
+                    <div key={path} className="flex items-center gap-1.5">
+                      <span
+                        className="flex-1 min-w-0 text-[11px] font-mono truncate text-slate-700"
+                        title={path}
+                      >
+                        {path}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setMainPathInput(path)}
+                        aria-pressed={isMain}
+                        className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                          isMain
+                            ? "border-emerald-500 bg-emerald-500 text-white font-semibold"
+                            : "border-border text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        Основная
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReservePathInput(path)}
+                        aria-pressed={isReserve}
+                        className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                          isReserve
+                            ? "border-amber-500 bg-amber-500 text-white font-semibold"
+                            : "border-border text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        Запасная
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
+            </div>
+          )}
+
+          {pathError && (
+            <div className="flex items-start gap-2 rounded border border-red-300 bg-red-50 px-2 py-1.5 text-[11px] text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span className="break-all">{pathError}</span>
             </div>
           )}
 
@@ -2011,7 +2128,9 @@ export default function Dashboard() {
               variant="outline"
               onClick={() => {
                 setIsPathModalOpen(false);
-                setCustomPathInput("");
+                setMainPathInput("");
+                setReservePathInput("");
+                setPathError(null);
               }}
               className="h-8 text-xs font-medium px-4"
             >
@@ -2019,19 +2138,23 @@ export default function Dashboard() {
             </Button>
             <Button
               onClick={async () => {
-                const cleaned = customPathInput.trim();
-                if (!cleaned) return;
-                const accepted = await handleSelectExcelFile(cleaned);
-                // Неудачный путь не запоминаем и диалог не закрываем: оператор
-                // поправит его здесь же, не начиная набор заново.
+                const main = mainPathInput.trim();
+                if (!main) return;
+                const reserve = reservePathInput.trim();
+                const accepted = await handleSaveBookRoles(main, reserve || null);
+                // Неудачные роли не запоминаем и диалог не закрываем: оператор
+                // поправит путь здесь же, не начиная набор заново.
                 if (accepted) {
-                  setRecentPaths(saveRecentPath(cleaned));
+                  let next = saveRecentPath(main);
+                  if (reserve) next = saveRecentPath(reserve);
+                  setRecentPaths(next);
                   setIsPathModalOpen(false);
-                  setCustomPathInput("");
+                  setMainPathInput("");
+                  setReservePathInput("");
                 }
               }}
               className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4"
-              disabled={isFetching || !customPathInput.trim()}
+              disabled={isFetching || !mainPathInput.trim()}
             >
               Применить
             </Button>

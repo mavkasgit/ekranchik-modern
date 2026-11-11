@@ -13,6 +13,7 @@ import {
 import { LineVisualization } from "@/components/LineVisualization";
 import { HangerTracking } from "@/components/HangerTracking";
 import { formatLocalized } from "@/lib/domain/time";
+import type { BookRole, FileStatus } from "@/types/dashboard";
 
 interface PLCData {
   status: string;
@@ -37,7 +38,11 @@ interface OPCUAStatus {
 
 interface SettingsState {
   simulation_enabled: boolean;
+  /** Книга, которую читают сейчас (активная). */
   excel_path: string;
+  /** Запасная книга; пустая строка — режим выключен. */
+  excel_reserve_path: string;
+  excel_role: BookRole | null;
   opcua_endpoint: string;
 }
 
@@ -45,6 +50,7 @@ export function OPCUAPage() {
   const [data, setData] = useState<PLCData | null>(null);
   const [status, setStatus] = useState<OPCUAStatus | null>(null);
   const [settings, setSettings] = useState<SettingsState | null>(null);
+  const [fileStatus, setFileStatus] = useState<FileStatus | null>(null);
   const [updatingSettings, setUpdatingSettings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,10 +58,11 @@ export function OPCUAPage() {
 
   const fetchData = async () => {
     try {
-      const [dataRes, statusRes, settingsRes] = await Promise.all([
+      const [dataRes, statusRes, settingsRes, fileStatusRes] = await Promise.all([
         fetch("/api/opcua/data"),
         fetch("/api/opcua/status"),
         fetch("/api/dashboard/settings"),
+        fetch("/api/dashboard/status/file"),
       ]);
 
       if (dataRes.ok) {
@@ -71,6 +78,11 @@ export function OPCUAPage() {
       if (settingsRes.ok) {
         const settingsData = await settingsRes.json();
         setSettings(settingsData);
+      }
+
+      if (fileStatusRes.ok) {
+        const fileStatusData = await fileStatusRes.json();
+        setFileStatus(fileStatusData);
       }
 
       setError(null);
@@ -313,14 +325,43 @@ export function OPCUAPage() {
                 </div>
               </div>
 
-              {/* Путь к книге учёта (то, что реально видит сервер) */}
+              {/* Книги учёта: роли задаются на дашборде, здесь видно, что читается (ADR 0009). */}
               <div>
                 <h3 className="text-sm font-medium text-gray-700 mb-3">Книга учёта</h3>
-                <div className="bg-gray-50 rounded-lg p-4">
+                <div className="bg-gray-50 rounded-lg p-4 space-y-2">
                   <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
-                    <span className="text-gray-600 shrink-0">Путь на сервере:</span>
+                    <span className="text-gray-600 shrink-0">Основная книга:</span>
                     <span className="font-mono text-sm text-gray-900 text-right break-all">
-                      {settings?.excel_path || "не задан"}
+                      {fileStatus?.main_file_path || "не задана"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                    <span className="text-gray-600 shrink-0">Запасная книга:</span>
+                    <span className="font-mono text-sm text-gray-900 text-right break-all">
+                      {settings?.excel_reserve_path || "не задана"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                    <span className="text-gray-600 shrink-0">Читается сейчас:</span>
+                    <span className="text-right break-all">
+                      <span
+                        className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                          settings?.excel_role === "reserve"
+                            ? "border-amber-300 bg-amber-100 text-amber-800"
+                            : settings?.excel_role === "main"
+                              ? "border-gray-300 bg-white text-gray-600"
+                              : "border-gray-200 bg-gray-100 text-gray-500"
+                        }`}
+                      >
+                        {settings?.excel_role === "reserve"
+                          ? "Запасная"
+                          : settings?.excel_role === "main"
+                            ? "Основная"
+                            : "Режим выключен"}
+                      </span>
+                      <span className="block font-mono text-sm text-gray-900">
+                        {settings?.excel_path || "не задана"}
+                      </span>
                     </span>
                   </div>
                 </div>

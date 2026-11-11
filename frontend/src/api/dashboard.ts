@@ -1,5 +1,10 @@
 import { api } from "./client";
-import type { DashboardResponse, FileStatus, ExcelSelectResponse } from "@/types/dashboard";
+import type {
+  DashboardResponse,
+  ExcelBooksResponse,
+  FileStatus,
+  ExcelSelectResponse,
+} from "@/types/dashboard";
 
 export const dashboardApi = {
   getData: async (
@@ -40,6 +45,18 @@ export const dashboardApi = {
   selectExcelFile: async (filePath: string): Promise<ExcelSelectResponse> => {
     const { data } = await api.post<ExcelSelectResponse>("/dashboard/excel/select", {
       file_path: filePath,
+    });
+    return data;
+  },
+
+  /** Задать роли книг: какую читать по умолчанию и какую — при блокировке. */
+  saveBookRoles: async (
+    mainPath: string,
+    reservePath: string | null,
+  ): Promise<ExcelBooksResponse> => {
+    const { data } = await api.post<ExcelBooksResponse>("/dashboard/excel/books", {
+      main_path: mainPath,
+      reserve_path: reservePath,
     });
     return data;
   },
