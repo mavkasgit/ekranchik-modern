@@ -236,7 +236,7 @@ class StandbyBook:
             "main_present": self._present[Role.MAIN],
             "reserve_present": self._present[Role.RESERVE],
             "observed_since": self._observed_wall,
-            "reason": self.reason(now),
+            "standby_reason": self.reason(now),
         }
 
     def _observe(self, role: Role, sample: BookSample, now: float) -> bool:

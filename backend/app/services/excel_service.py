@@ -125,11 +125,16 @@ class ExcelService:
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
                 active = data.get("active_file") or None
+                recent_files = self._parse_recent_files(data.get("recent_files"))
+                if not recent_files and active:
+                    # Старая установка: история ещё не писалась. Текущая книга
+                    # — точно один из путей, которые оператор вводил.
+                    recent_files = [{"path": active, "used_at": ""}]
                 return {
                     "active_file": active,
                     "main_file": data.get("main_file") or active,
                     "reserve_file": data.get("reserve_file") or None,
-                    "recent_files": self._parse_recent_files(data.get("recent_files")),
+                    "recent_files": recent_files,
                 }
         except Exception as e:
             logger.error(f"Failed to load active file from persistence: {e}")

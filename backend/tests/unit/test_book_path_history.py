@@ -86,3 +86,13 @@ def test_history_survives_reload(service):
     assert [item["path"] for item in reloaded.recent_files] == ["a", "b"]
     assert reloaded.main_file_name == "a"
     assert reloaded.reserve_file_name == "b"
+
+
+def test_old_selection_seeds_history_with_the_current_book(service):
+    """Старая запись без истории: текущая книга попадает в список."""
+    _excel_service, record = service
+    record.write_text('{"active_file": "/app/excel/book.xlsm"}', encoding="utf-8")
+
+    reloaded = ExcelService()
+
+    assert [item["path"] for item in reloaded.recent_files] == ["/app/excel/book.xlsm"]
