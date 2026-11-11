@@ -247,6 +247,24 @@ def test_writer_persists_a_pass_without_any_http_request(writer, monkeypatch):
     assert page.items[0]["profile"] == "10104"
 
 
+def test_record_names_the_book_the_verdict_came_from(writer, monkeypatch):
+    """Запись журнала называет книгу-источник: путей чтения теперь два.
+
+    Вердикт сопоставления без источника необъясним: по журналу не понять,
+    из какой книги взята строка и почему она не сошлась с линией.
+    """
+    from app.services.excel_service import excel_service
+
+    book = Path("/share/Учет КПЗ 2026 запасная.xlsm")
+    monkeypatch.setattr(type(excel_service), "current_path", property(lambda self: book))
+
+    assert asyncio.run(writer.flush(line_monitor=_monitor_with([_cycle()]))) == 1
+
+    record = writer.store.query(limit=1).items[0]
+    assert record["book_name"] == "Учет КПЗ 2026 запасная.xlsm"
+    assert record["book_path"] == str(book.resolve())
+
+
 def test_writer_records_each_pass_once(writer):
     """Один проход в журнал попадает один раз: опрос монитора повторяется."""
     monitor = _monitor_with([_cycle()])

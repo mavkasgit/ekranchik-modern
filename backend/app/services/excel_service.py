@@ -137,11 +137,6 @@ class ExcelService:
         except Exception as e:
             logger.error(f"Failed to save active file to persistence: {e}")
 
-    def _save_persisted_active_file(self, file_name: str) -> None:
-        """Сохранить выбор активной книги, не трогая роли."""
-        self._active_file_name = file_name
-        self._save_persisted_books()
-
     def __init__(self):
         self._cache: pd.DataFrame | None = None
         self._cache_mtime: float | None = None

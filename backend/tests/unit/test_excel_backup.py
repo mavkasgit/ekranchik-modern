@@ -411,6 +411,71 @@ def test_prune_keeps_foreign_files(tmp_path):
     assert not stale.exists()
 
 
+# --- автобэкап следует за активной книгой (спека 0001, ADR 0009) -----------
+
+
+@pytest.fixture
+def two_books(tmp_path, monkeypatch):
+    """Основная и запасная книги в одной «шаре» и общий корень копий."""
+    from app.core.config import settings
+    from app.services.excel_service import excel_service
+
+    root = tmp_path / "backups"
+    share = tmp_path / "share"
+    share.mkdir()
+    main = share / BOOK_NAME
+    main.write_bytes(b"main")
+    reserve = share / "Учет КПЗ 2026 запасная.xlsm"
+    reserve.write_bytes(b"reserve")
+
+    monkeypatch.setattr(settings, "EXCEL_BACKUP_ROOT", str(root))
+    monkeypatch.setattr(settings, "SIMULATION_ENABLED", False)
+    monkeypatch.setattr(settings, "EXCEL_REAL_FILE_PATH", str(main))
+    # Роли и выбор пишутся в файл на диске: тесту он не нужен.
+    monkeypatch.setattr(excel_service, "_save_persisted_books", lambda: None)
+    monkeypatch.setattr(excel_service, "_active_file_name", None)
+    monkeypatch.setattr(excel_service, "_main_file_name", None)
+    monkeypatch.setattr(excel_service, "_reserve_file_name", None)
+    monkeypatch.setattr(excel_backup, "SETTLE_SECONDS", 0)
+    monkeypatch.setattr(excel_backup, "COPY_RETRY_DELAY_SECONDS", 0)
+    return main, reserve, root
+
+
+def test_reserve_book_backup_goes_to_its_own_folder_in_the_same_root(two_books):
+    """Читаем запасную — копия ложится в ``<запасная>_backup``, а не в основную."""
+    from app.services.excel_service import excel_service
+
+    main, reserve, root = two_books
+    excel_service.set_book_roles(str(main), str(reserve))
+    excel_service.set_active_file(str(reserve))
+
+    assert backup_dir_for(reserve) == root / "Учет КПЗ 2026 запасная_backup"
+    assert backup_once(now=NOW) == BackupStatus.CREATED
+
+    reserve_folder = root / "Учет КПЗ 2026 запасная_backup"
+    assert own_files(reserve_folder) == ["2026-11-07_14-00_Учет КПЗ 2026 запасная.xlsm"]
+    assert (reserve_folder / "2026-11-07_14-00_Учет КПЗ 2026 запасная.xlsm").read_bytes() == b"reserve"
+    # Папки книг не смешиваются: копий основной в этом проходе не появилось.
+    assert not (root / "Учет КПЗ 2026_backup").exists()
+
+
+def test_switching_back_to_main_returns_copies_to_the_main_folder(two_books):
+    """Возврат на основную — копии снова в её папке; ротация чужих не касается."""
+    from app.services.excel_service import excel_service
+
+    main, reserve, root = two_books
+    excel_service.set_book_roles(str(main), str(reserve))
+    excel_service.set_active_file(str(reserve))
+    backup_once(now=NOW)
+
+    excel_service.set_active_file(str(main))
+    assert backup_once(now=NOW) == BackupStatus.CREATED
+
+    assert own_files(root / "Учет КПЗ 2026_backup") == ["2026-11-07_14-00_Учет КПЗ 2026.xlsm"]
+    # Копия запасной осталась на месте: у каждой книги своя ротация.
+    assert own_files(root / "Учет КПЗ 2026 запасная_backup") == ["2026-11-07_14-00_Учет КПЗ 2026 запасная.xlsm"]
+
+
 # --- run_forever -----------------------------------------------------------
 
 

@@ -151,3 +151,95 @@ def test_selection_file_name_comes_from_settings(tmp_path, monkeypatch, file_nam
     }
     # Единственный файл в каталоге — целевой: общий выбор dev не создан.
     assert [p.name for p in static_dir.iterdir()] == [expected]
+
+
+# --- Роли книг в файле выбора (тикет 0008) ----------------------------------
+
+
+@pytest.fixture
+def role_files(tmp_path, monkeypatch):
+    """Две книги и свой файл выбора; роли сохраняются в ``tmp_path/static``."""
+    from app.core.config import settings
+
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    excel_dir = tmp_path / "excel"
+    excel_dir.mkdir()
+    main = excel_dir / "Учет КПЗ 2026.xlsm"
+    main.write_bytes(b"xlsm")
+    reserve = excel_dir / "Учет КПЗ 2026 запасная.xlsm"
+    reserve.write_bytes(b"xlsm")
+
+    monkeypatch.setattr(settings, "STATIC_DIR", str(static_dir))
+    monkeypatch.setattr(settings, "EXCEL_ACTIVE_FILE_NAME", "active_excel.json")
+    monkeypatch.setattr(settings, "SIMULATION_ENABLED", False)
+    monkeypatch.setattr(settings, "EXCEL_REAL_FILE_PATH", str(main))
+    return main, reserve, static_dir / "active_excel.json"
+
+
+def test_roles_are_saved_in_one_selection_record(role_files):
+    """Выбор и роли — одна запись: второго источника истины нет."""
+    main, reserve, record = role_files
+
+    ExcelService().set_book_roles(str(main), str(reserve))
+
+    assert json.loads(record.read_text(encoding="utf-8")) == {
+        "active_file": str(main),
+        "main_file": str(main),
+        "reserve_file": str(reserve),
+    }
+
+
+def test_old_selection_without_roles_reads_active_as_main(role_files):
+    """Старый формат (только ``active_file``): основная — она же, запасной нет."""
+    main, _, record = role_files
+    record.write_text(json.dumps({"active_file": str(main)}), encoding="utf-8")
+
+    service = ExcelService()
+
+    assert service.main_file_name == str(main)
+    assert service.main_path == main
+    assert service.reserve_path is None
+    assert service.current_path == main
+    assert service.current_role == "main"
+
+
+def test_saving_the_same_roles_keeps_the_reserve_reading(role_files):
+    """«Применить» с теми же ролями не отменяет переключение правила."""
+    main, reserve, _ = role_files
+    service = ExcelService()
+    service.set_book_roles(str(main), str(reserve))
+    service.set_active_file(str(reserve))
+
+    service.set_book_roles(str(main), str(reserve))
+
+    assert service.current_path == reserve
+    assert service.current_role == "reserve"
+
+
+def test_selection_outside_the_roles_falls_back_to_main(role_files):
+    """Убрали запасную, а читалась она — активной снова становится основная."""
+    main, reserve, _ = role_files
+    service = ExcelService()
+    service.set_book_roles(str(main), str(reserve))
+    service.set_active_file(str(reserve))
+
+    service.set_book_roles(str(main), None)
+
+    assert service.current_path == main
+    assert service.current_role == "main"
+
+
+def test_set_main_file_clears_the_reserve_that_matches(role_files):
+    """Книга не может быть сразу и основной, и запасной."""
+    main, reserve, _ = role_files
+    service = ExcelService()
+    service.set_book_roles(str(main), str(reserve))
+
+    service.set_main_file(str(reserve))
+
+    assert service.main_path == reserve
+    assert service.reserve_path is None
+    assert service.current_path == reserve
+    assert service.current_role == "main", "роль читаемой книги — основная"
+

@@ -31,8 +31,10 @@ def books(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "EXCEL_REAL_FILE_PATH", "excel/Учет КПЗ 2026.xlsm")
     # Выбор книги — через публичный вход сервиса, без записи в файл на диске.
     excel_service.use_file(None)
-    # Выбор пишется в файл на диске — в тесте это лишнее состояние.
-    monkeypatch.setattr(excel_service, "_save_persisted_active_file", lambda name: None)
+    monkeypatch.setattr(excel_service, "_main_file_name", None)
+    monkeypatch.setattr(excel_service, "_reserve_file_name", None)
+    # Выбор и роли пишутся в файл на диске — в тесте это лишнее состояние.
+    monkeypatch.setattr(excel_service, "_save_persisted_books", lambda: None)
     return first, second
 
 

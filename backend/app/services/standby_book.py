@@ -90,9 +90,17 @@ def decide(
 ) -> Role | None:
     """На какую книгу перейти: ответ правила, без чтения файлов.
 
-    ``None`` — остаёмся на текущей. Время роста передаётся монотонным
-    (``time.monotonic``), а не календарным: перевод часов не должен
-    превращать «полчаса» в «сутки».
+    ``None`` — остаёмся на текущей. Порядок проверок — это таблица спеки
+    0001: пропавшая запасная выключает режим, рост основной при чтении
+    запасной возвращает на неё, пропавшая основная уводит сразу, нечитаемая
+    книга — повод ждать, а не уезжать. Переключение на запасную требует
+    заморозки основной и того, что запасная росла и обошла её по строкам.
+
+    Время роста передаётся монотонным (``time.monotonic``), а не календарным:
+    перевод часов не должен превращать «полчаса» в «сутки».
+    ``main_grown_at`` — последний рост основной (для не росшей при нас книги —
+    начало наблюдения), ``reserve_grown_at`` — её рост либо ``None``, если она
+    ещё ни разу не росла при нас.
     """
     # Запасная пропала: режим выключается, читаем основную — но только если
     # она действительно читается. Иначе остаёмся где есть.
@@ -109,8 +117,9 @@ def decide(
     if not main.present:
         return Role.RESERVE if reserve.available else None
 
-    # Основная есть, но прямо сейчас не читается (сохраняется): не повод
-    # уезжать — через секунду она снова доступна со старым числом строк.
+    # Книга есть, но прямо сейчас не читается (сохраняется), либо не читается
+    # запасная: уезжать некуда и незачем — через секунду книга снова доступна
+    # со старым числом строк, и решение принимать рано.
     if not main.available or not reserve.available:
         return None
 
@@ -134,12 +143,19 @@ class StandbyBook:
 
     def __init__(self) -> None:
         self._rows: dict[Role, int | None] = {Role.MAIN: None, Role.RESERVE: None}
+        # Начало наблюдения за книгой. От него считается «основная не растёт N
+        # минут» у книги, которая ещё ни разу не росла при нас: иначе после
+        # рестарта отсчёт пошёл бы от вечности и переключение случилось бы на
+        # первом же замере.
+        self._first_seen: dict[Role, float] = {}
+        # Момент настоящего роста: только он делает запасную «растущей».
         self._grown_at: dict[Role, float] = {}
         self._grown_wall: dict[Role, datetime | None] = {Role.MAIN: None, Role.RESERVE: None}
 
     def reset(self) -> None:
         """Забыть замеры: сменились роли или книга подменена в тестах."""
         self._rows = {Role.MAIN: None, Role.RESERVE: None}
+        self._first_seen = {}
         self._grown_at = {}
         self._grown_wall = {Role.MAIN: None, Role.RESERVE: None}
 
@@ -159,9 +175,10 @@ class StandbyBook:
         previous = self._rows[role]
         if previous is None:
             self._rows[role] = sample.rows
-            # Точку отсчёта ставим сейчас: «не растёт 30 минут» считается от
-            # начала наблюдения, а не от вечности.
-            self._grown_at.setdefault(role, now)
+            # Первый замер — начало наблюдения, а не рост. Считать его ростом
+            # значило бы, что запасная «росла» просто потому, что её впервые
+            # увидели, и через полчаса она забрала бы чтение без работы в ней.
+            self._first_seen.setdefault(role, now)
             return False
 
         if sample.rows > previous:
@@ -209,7 +226,7 @@ class StandbyBook:
             main,
             reserve,
             main_grew=main_grew,
-            main_grown_at=self._grown_at.get(Role.MAIN, now),
+            main_grown_at=self._grown_at.get(Role.MAIN, self._first_seen.get(Role.MAIN, now)),
             reserve_grown_at=self._grown_at.get(Role.RESERVE),
             now=now,
         )

@@ -160,8 +160,6 @@ def _display_path(path: Path | None) -> str | None:
 
 def _standby_fields() -> dict:
     """Поля режима запасной книги для строки статуса (ADR 0009)."""
-    from app.services.standby_book import standby_book
-
     return {
         "role": excel_service.current_role,
         "main_file_path": _display_path(excel_service.main_path),
@@ -364,7 +362,7 @@ async def set_excel_books(request: ExcelBooksRequest):
     ``standby_book`` по наполненности. Пустая запасная выключает режим.
     """
     try:
-        main_raw = normalize_path_input(request.main_path)
+        main_raw = normalize_path_input(request.main_path or "")
         if not main_raw:
             raise HTTPException(status_code=400, detail="Не указан путь к основной книге (main_path)")
         main_file = _validate_book_file(_resolve_book_file(main_raw))

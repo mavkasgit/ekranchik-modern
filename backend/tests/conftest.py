@@ -32,6 +32,21 @@ def _disable_excel_backup(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _disable_standby_book(monkeypatch):
+    """Не мерить боевую книгу из фоновой задачи правила в тестах.
+
+    ``lifespan`` поднимает ``standby_book.run_forever``, а один замер — это
+    ``stat`` и разбор книги на сетевой шаре. На машине разработчика шара
+    существует, поэтому тест, открывший ``TestClient`` через ``with``, читал
+    бы настоящую книгу. Само правило проверяется на своём ``StandbyBook`` и
+    подменённых путях (``tests/unit/test_standby_book.py``).
+    """
+    from app.services.standby_book import standby_book
+
+    monkeypatch.setattr(standby_book, "tick", lambda now=None: None)
+
+
+@pytest.fixture(autouse=True)
 def _stop_excel_watcher():
     """Останавливать наблюдатель книги после каждого теста.
 

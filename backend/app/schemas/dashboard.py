@@ -99,8 +99,10 @@ class ExcelFileSelectRequest(BaseModel):
 class ExcelBooksRequest(BaseModel):
     """Роли книг: какая основная, какая запасная.
 
+    Пустая основная — это 400 «не указан путь», а не 422 от схемы: ошибку
+    оператор читает на экране, и она должна объяснять, что не так с путём.
     Запасная не задана — режим выключен, читается только основная.
     """
 
-    main_path: str
+    main_path: str | None = None
     reserve_path: str | None = None
