@@ -30,17 +30,27 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
+from app.core.config import settings
 from app.services.excel_service import excel_service, path_exists
 
 logger = logging.getLogger(__name__)
 
 # Как часто сравниваем книги. 30 секунд — тот же ритм, что у автобэкапа:
 # решение не срочное (порог — полчаса), а чтение шары лишними опросами не
-# поощряется.
-CHECK_SECONDS = 30
+# поощряется. Меньше — только на стенде (STANDBY_CHECK_SECONDS).
+CHECK_SECONDS = settings.STANDBY_CHECK_SECONDS
 # Сколько основная книга должна не пополняться, прежде чем поверить запасной.
 # Совпадает с предупреждением дашборда «файл не сохранялся более 30 минут».
-FROZEN_SECONDS = 30 * 60
+FROZEN_SECONDS = settings.STANDBY_FROZEN_MINUTES * 60
+
+
+def _minutes_ru(minutes: int) -> str:
+    """«1 минуту», «3 минуты», «30 минут» — для текста на экране."""
+    if minutes % 10 == 1 and minutes % 100 != 11:
+        return f"{minutes} минуту"
+    if 2 <= minutes % 10 <= 4 and not 12 <= minutes % 100 <= 14:
+        return f"{minutes} минуты"
+    return f"{minutes} минут"
 
 
 class Role(StrEnum):
@@ -208,7 +218,11 @@ class StandbyBook:
             return "запасная книга ещё не прочитана"
         if active is Role.RESERVE:
             minutes = self._minutes_without_growth(Role.MAIN, now)
-            suffix = f" {minutes} мин" if minutes is not None else " уже 30+ мин"
+            suffix = (
+                f" {_minutes_ru(minutes)}"
+                if minutes is not None
+                else f" уже {int(FROZEN_SECONDS / 60)}+ мин"
+            )
             return f"работа идёт в запасной: основная не пополняется{suffix}"
 
         main_grown = self._grown_at.get(Role.MAIN)
@@ -319,7 +333,7 @@ class StandbyBook:
 
         excel_service.set_active_file(str(path))
         reason = (
-            f"основная книга не пополняется {int(FROZEN_SECONDS / 60)} минут, "
+            f"основная книга не пополняется {_minutes_ru(int(FROZEN_SECONDS / 60))}, "
             f"в запасной {self._rows[Role.RESERVE]} строк"
             if target is Role.RESERVE
             else "в основной книге снова растут строки"

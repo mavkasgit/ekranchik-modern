@@ -25,6 +25,7 @@ from app.services.standby_book import (
     BookSample,
     Role,
     StandbyBook,
+    _minutes_ru,
     decide,
 )
 
@@ -410,6 +411,22 @@ def test_count_book_rows_is_none_when_the_book_is_unreadable(tmp_path):
 
 
 # --- Статистика для экрана: почему читается именно эта книга -----------------
+
+
+@pytest.mark.parametrize(
+    ("minutes", "text"),
+    [
+        (1, "1 минуту"),
+        (2, "2 минуты"),
+        (5, "5 минут"),
+        (11, "11 минут"),
+        (21, "21 минуту"),
+        (30, "30 минут"),
+    ],
+)
+def test_threshold_text_is_russian(minutes, text):
+    """Порог настраивается, поэтому текст склоняется, а не «1 минут»."""
+    assert _minutes_ru(minutes) == text
 
 
 def test_status_explains_disabled_reserve(monkeypatch):

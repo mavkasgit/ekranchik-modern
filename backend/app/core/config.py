@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     # папку. Контейнер получает свой корень через environment в compose.
     EXCEL_BACKUP_ROOT: str | None = None
 
+    # Запасная книга учёта (ADR 0009): как часто сравнивать книги и сколько
+    # основная должна не пополняться, чтобы уйти на запасную. Боевые значения
+    # — 30 секунд и 30 минут; уменьшают их только на стенде, чтобы проверить
+    # правило за пару минут, а не за полчаса.
+    STANDBY_CHECK_SECONDS: int = 30
+    STANDBY_FROZEN_MINUTES: int = 30
+
     # Static files
     STATIC_DIR: str = "../static"  # Relative to backend folder
     IMAGES_DIR: str = "../static/images"

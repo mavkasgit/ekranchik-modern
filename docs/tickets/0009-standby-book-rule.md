@@ -24,7 +24,8 @@
   - `tick()` — замер обеих книг, решение, `excel_service.set_active_file`;
   - `run_forever()` — цикл с `CHECK_SECONDS`, рассылка WS при переключении;
   - выбор вне ролей приводится к основной (миграция старой записи).
-- Константы модуля: `CHECK_SECONDS = 30`, `FROZEN_SECONDS = 30 * 60`.
+- Константы модуля: `CHECK_SECONDS` и `FROZEN_SECONDS` — из настроек
+  (`STANDBY_CHECK_SECONDS`, `STANDBY_FROZEN_MINUTES`); по умолчанию 30 с и 30 мин.
 
 ### `backend/app/main.py`
 

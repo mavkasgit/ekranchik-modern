@@ -1548,7 +1548,10 @@ export default function Dashboard() {
         <span>
           {growth
             ? `Основная не пополняется с ${growth}.`
-            : "Основная не пополняется: нет данных о росте."}
+            : `${
+                fileStatus.standby_reason?.replace("работа идёт в запасной: ", "") ??
+                "Основная не пополняется."
+              }`}
         </span>
         {fileStatus.main_file_path && (
           <span
