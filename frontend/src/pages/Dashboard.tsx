@@ -58,6 +58,7 @@ import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
 import { emptyRun, waitingRows } from "@/lib/domain/testRun";
 import { photoUrl } from "@/lib/domain/photo";
 import { profileText } from "@/lib/domain/profile";
+import { parseRecentPaths, rememberRecentPath } from "@/lib/domain/recentPaths";
 import type { Profile } from "@/types/profile";
 import { formatClock, formatLocalized } from "@/lib/domain/time";
 import { BathForecast } from "@/components/BathForecastTable";
@@ -66,6 +67,7 @@ import type { HangerData, ProfileInfo } from "@/types/dashboard";
 import { useFullscreen } from "@/App";
 
 const FILTERS_KEY = "ekranchik_filters";
+const RECENT_PATHS_KEY = "ekranchik_excel_paths";
 
 /** Рамка тестового режима: баннер убрали, подставные строки помечает заливка. */
 const TEST_FRAME = "border-purple-500/40 bg-purple-500/5";
@@ -111,6 +113,25 @@ function loadFilters(): Filters {
 
 function saveFilters(filters: Filters) {
   localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
+}
+
+function loadRecentPaths(): string[] {
+  try {
+    return parseRecentPaths(localStorage.getItem(RECENT_PATHS_KEY));
+  } catch {
+    // localStorage недоступен (приватный режим) — памяти просто не будет.
+    return [];
+  }
+}
+
+function saveRecentPath(path: string): string[] {
+  const next = rememberRecentPath(loadRecentPaths(), path);
+  try {
+    localStorage.setItem(RECENT_PATHS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+  return next;
 }
 
 // Format date with year 2026 (DD.MM.YY -> DD.MM.2026). null — строка книги
@@ -1275,6 +1296,8 @@ export default function Dashboard() {
   const [photoModal, setPhotoModal] = useState<{ url: string; name: string } | null>(null);
   const [isPathModalOpen, setIsPathModalOpen] = useState(false);
   const [customPathInput, setCustomPathInput] = useState("");
+  // Последние введённые пути: их подставляем в поле, чтобы править, а не набирать.
+  const [recentPaths, setRecentPaths] = useState<string[]>(loadRecentPaths);
   const [hasNewRows, setHasNewRows] = useState(false);
   const [hasNewUnloadEvents, setHasNewUnloadEvents] = useState(false);
   const lastModifiedRef = useRef<string | null>(null);
@@ -1320,17 +1343,28 @@ export default function Dashboard() {
 
   // Выбор книги учёта — только вводом пути: файл лежит на сетевом диске,
   // который видит сервер, а не браузер, и каталог книги на проде read-only.
-  const handleSelectExcelFile = async (filePath: string) => {
+  const handleSelectExcelFile = async (filePath: string): Promise<boolean> => {
     try {
       const res = await dashboardApi.selectExcelFile(filePath);
       if (res.success) {
         // Строка статуса берёт имя книги из /status/file: тот же префикс ключа.
         queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY });
       }
+      return res.success;
     } catch (err: unknown) {
       console.error("Ошибка выбора Excel-файла:", err);
       alert(apiErrorMessage(err, "Ошибка выбора файла"));
+      return false;
     }
+  };
+
+  // Открытие диалога: поле сразу заполнено — сперва путь, который сервер
+  // открывает сейчас, иначе последний введённый. Оператор правит его на месте.
+  const openPathModal = () => {
+    const remembered = loadRecentPaths();
+    setRecentPaths(remembered);
+    setCustomPathInput(fileStatus?.file_path || remembered[0] || "");
+    setIsPathModalOpen(true);
   };
 
   const [now, setNow] = useState(new Date());
@@ -1784,9 +1818,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {!isFullscreen && (
-        <StatusBar onOpenPathModal={() => setIsPathModalOpen(true)} isFetching={isFetching} />
-      )}
+      {!isFullscreen && <StatusBar onOpenPathModal={openPathModal} isFetching={isFetching} />}
 
       {!isFullscreen && (
         <FiltersPanel
@@ -1946,7 +1978,33 @@ export default function Dashboard() {
               onChange={(e) => setCustomPathInput(e.target.value)}
               className="h-8 text-xs bg-background border-input text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
             />
+            <p className="text-[11px] text-muted-foreground">
+              Прошлый путь уже подставлен в поле — его можно поправить на месте.
+            </p>
           </div>
+
+          {recentPaths.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-slate-700 font-medium">Последние пути:</span>
+              <div className="flex flex-col gap-1">
+                {recentPaths.map((path) => (
+                  <button
+                    key={path}
+                    type="button"
+                    onClick={() => setCustomPathInput(path)}
+                    title={path}
+                    className={`text-left text-[11px] font-mono truncate px-2 py-1 rounded border transition-colors ${
+                      path === customPathInput
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                        : "border-border text-slate-700 hover:bg-slate-100"
+                    }`}
+                  >
+                    {path}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 mt-2">
             <Button
@@ -1962,8 +2020,12 @@ export default function Dashboard() {
             <Button
               onClick={async () => {
                 const cleaned = customPathInput.trim();
-                if (cleaned) {
-                  await handleSelectExcelFile(cleaned);
+                if (!cleaned) return;
+                const accepted = await handleSelectExcelFile(cleaned);
+                // Неудачный путь не запоминаем и диалог не закрываем: оператор
+                // поправит его здесь же, не начиная набор заново.
+                if (accepted) {
+                  setRecentPaths(saveRecentPath(cleaned));
                   setIsPathModalOpen(false);
                   setCustomPathInput("");
                 }
