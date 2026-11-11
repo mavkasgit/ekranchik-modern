@@ -41,6 +41,7 @@ from app.services.excel_watcher import excel_watcher
 from app.services.journal_writer import journal_writer
 from app.services.line_monitor import line_monitor
 from app.services.opcua_service import opcua_service
+from app.services.standby_book import CHECK_SECONDS, standby_book
 from app.services.websocket_manager import websocket_manager
 
 # Configure logging
@@ -145,6 +146,15 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("[STARTUP] Excel backup disabled (EXCEL_BACKUP_ENABLED=false)")
 
+    # Запасная книга учёта (ADR 0009): фоновая задача сравнивает наполненность
+    # основной и запасной книг и сама переключает чтение. Задача, а не роут:
+    # на боевой машине дашборд закрыт почти всегда, а работа оператора идёт.
+    standby_task = asyncio.create_task(standby_book.run_forever())
+    logger.info(
+        f"[STARTUP] Standby book check started: every {CHECK_SECONDS}s, "
+        f"reserve={'set' if excel_service.reserve_path else 'off'}"
+    )
+
     yield
 
     # Shutdown
@@ -160,6 +170,9 @@ async def lifespan(app: FastAPI):
         excel_backup_task.cancel()
         with suppress(asyncio.CancelledError):
             await excel_backup_task
+    standby_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await standby_task
     if line_monitor.is_running:
         await line_monitor.stop()
     if opcua_service.is_connected:

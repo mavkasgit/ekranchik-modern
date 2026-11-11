@@ -101,29 +101,46 @@ class ExcelService:
         # чтобы пережил обновление (раньше падал в CWD рядом с кодом).
         return settings.data_dir_path / filename
 
-    def _load_persisted_active_file(self) -> str | None:
-        """Load the active file name from persistent JSON file"""
+    def _load_persisted_books(self) -> dict[str, str | None]:
+        """Выбор и роли книг из файла выбора.
+
+        Старый формат — только ``active_file``. Тогда основная книга — это
+        она же: у оператора ещё нет запасной, и режим выключен.
+        """
         try:
             path = self._persistence_path
             if path.exists():
                 with open(path, encoding="utf-8") as f:
                     data = json.load(f)
-                    val = data.get("active_file")
-                    if val:
-                        return val
+                active = data.get("active_file") or None
+                return {
+                    "active_file": active,
+                    "main_file": data.get("main_file") or active,
+                    "reserve_file": data.get("reserve_file") or None,
+                }
         except Exception as e:
             logger.error(f"Failed to load active file from persistence: {e}")
-        return None
+        return {"active_file": None, "main_file": None, "reserve_file": None}
 
-    def _save_persisted_active_file(self, file_name: str) -> None:
-        """Save the active file name to persistent JSON file"""
+    def _save_persisted_books(self) -> None:
+        """Записать выбор и роли одной записью: читаются они из одного файла."""
         try:
             path = self._persistence_path
             path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "active_file": self._active_file_name,
+                "main_file": self._main_file_name,
+                "reserve_file": self._reserve_file_name,
+            }
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({"active_file": file_name}, f, ensure_ascii=False, indent=2)
+                json.dump(payload, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"Failed to save active file to persistence: {e}")
+
+    def _save_persisted_active_file(self, file_name: str) -> None:
+        """Сохранить выбор активной книги, не трогая роли."""
+        self._active_file_name = file_name
+        self._save_persisted_books()
 
     def __init__(self):
         self._cache: pd.DataFrame | None = None
@@ -133,13 +150,23 @@ class ExcelService:
         # запрос видел бы половину обновления другого, а ждущий запрос не мог
         # бы убедиться, что книгу уже перечитали.
         self._lock = Lock()
-        self._active_file_name: str | None = self._load_persisted_active_file()
+        persisted = self._load_persisted_books()
+        self._active_file_name: str | None = persisted["active_file"]
+        # Роли книг: какая книга основная, какая запасная. Владелец решения
+        # «какую читать» — по-прежнему этот сервис (ADR 0003); роли лишь
+        # задают, между чем выбирает правило (app.services.standby_book).
+        self._main_file_name: str | None = persisted["main_file"]
+        self._reserve_file_name: str | None = persisted["reserve_file"]
+        # Кэш числа строк по каждой книге: фоновая задача сравнивает две книги
+        # каждые 30 секунд, и общий кэш разбора перечитывал бы обе попеременно.
+        self._row_count_cache: dict[str, tuple[int, int, int]] = {}
+        self._row_count_lock = Lock()
         # О каком выборе уже сказали в лог: свойство спрашивают на каждый
         # запрос статуса, повторять одно предупреждение незачем.
         self._warned_about: str | None = None
 
-    def _resolved_active(self) -> Path | None:
-        """Выбор из интерфейса → путь: имя достраивается до каталога книги.
+    def _resolve_name(self, file_name: str | None) -> Path | None:
+        """Записанное имя/путь → путь: имя достраивается до каталога книги.
 
         Имя без пути — старый формат записи (``Учет КПЗ 2026.xlsm``), его
         достраивают каталогом книги. Путь с корнем (``/app/excel/…``,
@@ -148,14 +175,18 @@ class ExcelService:
         ``\\\\host\\share\\app\\excel\\…``, которого нет. Путь к сетевой шаре
         распознаётся и на Linux, где он не абсолютный: там он тоже чужой.
         """
-        if not self._active_file_name:
+        if not file_name:
             return None
-        path = Path(self._active_file_name)
-        if path.is_absolute() or path.root or share_tail(self._active_file_name):
+        path = Path(file_name)
+        if path.is_absolute() or path.root or share_tail(file_name):
             return path
         if not settings.configured_excel_path:
             return None
         return settings.configured_excel_path.parent / path
+
+    def _resolved_active(self) -> Path | None:
+        """Выбор из интерфейса → путь (см. ``_resolve_name``)."""
+        return self._resolve_name(self._active_file_name)
 
     @property
     def current_path(self) -> Path | None:
@@ -196,10 +227,9 @@ class ExcelService:
                 return candidate.parent
         return None
 
-    def set_active_file(self, file_path: str) -> None:
-        """Set active Excel file path/name and invalidate cache"""
-        self._active_file_name = file_path
-        self._save_persisted_active_file(file_path)
+    def _persist_and_watch(self) -> None:
+        """Записать выбор в файл, сбросить кэш и перевести watcher на книгу."""
+        self._save_persisted_books()
         self.invalidate_cache()
 
         # Restart watcher for new directory if it is running
@@ -213,6 +243,119 @@ class ExcelService:
                 excel_watcher.start(watch_path=active_p)
         except Exception as e:
             logger.warning(f"Could not restart ExcelWatcher for new path: {e}")
+
+    def set_active_file(self, file_path: str) -> None:
+        """Set active Excel file path/name and invalidate cache"""
+        self._active_file_name = file_path
+        self._persist_and_watch()
+
+    @property
+    def main_file_name(self) -> str | None:
+        """Книга, которую правило считает основной."""
+        return self._main_file_name
+
+    @property
+    def reserve_file_name(self) -> str | None:
+        """Запасная книга либо ``None`` — режим выключен."""
+        return self._reserve_file_name
+
+    @property
+    def main_path(self) -> Path | None:
+        """Путь основной книги без подмены конфигурацией."""
+        return self._resolve_name(self._main_file_name)
+
+    @property
+    def reserve_path(self) -> Path | None:
+        """Путь запасной книги; ``None`` — режим выключен."""
+        return self._resolve_name(self._reserve_file_name)
+
+    @property
+    def current_role(self) -> str | None:
+        """Роль активной книги: ``main``, ``reserve`` либо ``None``.
+
+        Сравниваем итоговый путь (``current_path``), а не записанный выбор:
+        если выбранная книга исчезла, сервер уже читает книгу из конфигурации,
+        и статус обязан называть то, что реально читается.
+        """
+        current = self.current_path
+        if current is None:
+            return None
+        for role, candidate in (("main", self.main_path), ("reserve", self.reserve_path)):
+            if candidate is None:
+                continue
+            try:
+                if current.resolve() == candidate.resolve():
+                    return role
+            except OSError:
+                if current == candidate:
+                    return role
+        return None
+
+    def set_book_roles(self, main_file: str | None, reserve_file: str | None) -> None:
+        """Задать роли книг и привести активную книгу к ним.
+
+        Оператор задаёт только роли (ADR 0009): какую книгу читать, решает
+        правило. Активную книгу сбрасываем на основную, лишь когда прежний
+        выбор выпал из ролей — иначе переключение на запасную потерялось бы
+        при каждом сохранении ролей.
+        """
+        self._main_file_name = main_file
+        self._reserve_file_name = reserve_file
+        if self._active_file_name not in (main_file, reserve_file):
+            self._active_file_name = main_file
+        self._persist_and_watch()
+
+    def set_main_file(self, file_path: str) -> None:
+        """Сделать книгу основной и читать её сейчас.
+
+        Используется старым входом выбора пути: оператор указал книгу — она
+        заведомо основная. Запасная, совпавшая с новой основной, сбрасывается:
+        две роли на одном файле смысла не имеют.
+        """
+        reserve = self._reserve_file_name if self._reserve_file_name != file_path else None
+        self._main_file_name = file_path
+        self._reserve_file_name = reserve
+        self._active_file_name = file_path
+        self._persist_and_watch()
+
+    def count_book_rows(self, file_path: Path | None) -> int | None:
+        """Строк с реальными данными в книге либо ``None``, если не прочитать.
+
+        Число считается по тому же листу и тому же признаку, что и данные
+        дашборда: непустая строка с датой или номером подвеса. Свой кэш, а не
+        общий разбор: замер идёт по двум книгам попеременно, и общий кэш
+        перечитывал бы обе каждые 30 секунд.
+
+        ``None`` — книга недоступна или ещё записывается. Это не то же самое,
+        что «в книге ничего не пишется», поэтому вызывающий обязан различать
+        эти случаи по ``path_exists``.
+        """
+        if file_path is None:
+            return None
+        try:
+            stat = file_path.stat()
+        except OSError:
+            return None
+
+        key = str(file_path)
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        with self._row_count_lock:
+            cached = self._row_count_cache.get(key)
+        if cached is not None and cached[:2] == stamp:
+            return cached[2]
+
+        try:
+            df = self._read_dataframe_by_header(file_path, "Подвесы")
+            df = df.dropna(how="all")
+            df = df[(pd.notna(df["date"])) | (pd.notna(df["number"]))]
+            rows = int(len(df))
+        except Exception as e:
+            logger.warning(f"[Excel] Не удалось посчитать строки книги {file_path}: {e}")
+            return None
+
+        with self._row_count_lock:
+            self._row_count_cache[key] = (stamp[0], stamp[1], rows)
+        return rows
 
     @property
     def cache_mtime(self) -> float | None:
@@ -644,7 +787,10 @@ class ExcelService:
 
     def update_simulation_mode(self) -> None:
         """Обновляет активный файл и сбрасывает кэш при смене режима симуляции."""
-        self._active_file_name = self._load_persisted_active_file()
+        persisted = self._load_persisted_books()
+        self._active_file_name = persisted["active_file"]
+        self._main_file_name = persisted["main_file"]
+        self._reserve_file_name = persisted["reserve_file"]
         self.invalidate_cache()
 
         # Restart watcher for new directory if it is running

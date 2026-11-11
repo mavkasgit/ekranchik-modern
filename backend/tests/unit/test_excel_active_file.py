@@ -144,6 +144,10 @@ def test_selection_file_name_comes_from_settings(tmp_path, monkeypatch, file_nam
     ExcelService().set_active_file("/app/excel/Учет КПЗ 2026.xlsm")
 
     written = static_dir / expected
-    assert json.loads(written.read_text(encoding="utf-8")) == {"active_file": "/app/excel/Учет КПЗ 2026.xlsm"}
+    assert json.loads(written.read_text(encoding="utf-8")) == {
+        "active_file": "/app/excel/Учет КПЗ 2026.xlsm",
+        "main_file": None,
+        "reserve_file": None,
+    }
     # Единственный файл в каталоге — целевой: общий выбор dev не создан.
     assert [p.name for p in static_dir.iterdir()] == [expected]

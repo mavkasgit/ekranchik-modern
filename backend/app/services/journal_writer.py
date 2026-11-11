@@ -212,6 +212,23 @@ def _event_key(cycle: dict[str, Any]) -> tuple:
     return ("event", cycle.get("hanger"), exit_at)
 
 
+def _book_source() -> dict[str, str | None]:
+    """Книга, из которой взята строка: название и путь (ADR 0009).
+
+    После появления запасной книги журнал обязан называть источник: иначе по
+    нему нельзя понять, из какой книги взят вердикт сопоставления.
+    """
+    from app.services.excel_service import excel_service
+
+    path = excel_service.current_path
+    if path is None:
+        return {"book_name": None, "book_path": None}
+    try:
+        return {"book_name": path.name, "book_path": str(path.resolve())}
+    except OSError:
+        return {"book_name": path.name, "book_path": str(path)}
+
+
 class JournalWriter:
     """Пишет новые проходы в журнал и поднимает их в лог контейнера.
 
@@ -347,12 +364,15 @@ class JournalWriter:
                     return 0
 
                 written = 0
+                book_source = _book_source()
                 for match in match_cycles_to_rows(pending, rows_by_hanger):
                     key = _event_key(match.cycle)
                     if key in self._written:
                         continue
                     try:
-                        self.store.append(record_from_match(match))
+                        record = record_from_match(match)
+                        record.update(book_source)
+                        self.store.append(record)
                     except OSError as error:
                         logger.error(f"[Journal] Could not write pass {key}: {error}")
                         continue

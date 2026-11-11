@@ -50,7 +50,7 @@ def book(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(excel_service, "_active_file_name", None)
 
     selected: list[str] = []
-    monkeypatch.setattr(excel_service, "set_active_file", selected.append)
+    monkeypatch.setattr(excel_service, "set_main_file", selected.append)
     return book, selected
 
 

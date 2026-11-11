@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.schemas.dashboard import (
     DashboardResponse,
+    ExcelBooksRequest,
     ExcelFileSelectRequest,
     FileStatus,
     MatchedUnloadEvent,
@@ -36,6 +37,7 @@ from app.services.matching import (
     product_entry_seconds,
 )
 from app.services.profile_name import split_profiles
+from app.services.standby_book import standby_book
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +148,28 @@ async def get_file_status():
     return await asyncio.to_thread(_file_status)
 
 
+def _display_path(path: Path | None) -> str | None:
+    """Путь для ответа API; ``resolve`` на недоступной шаре не должен ронять статус."""
+    if path is None:
+        return None
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
+def _standby_fields() -> dict:
+    """Поля режима запасной книги для строки статуса (ADR 0009)."""
+    from app.services.standby_book import standby_book
+
+    return {
+        "role": excel_service.current_role,
+        "main_file_path": _display_path(excel_service.main_path),
+        "reserve_file_path": _display_path(excel_service.reserve_path),
+        "main_last_growth": standby_book.main_last_growth(),
+    }
+
+
 def _file_status() -> FileStatus:
     """``stat`` книги и чтение docProps/core.xml — синхронные, для потока."""
     import time
@@ -155,7 +179,12 @@ def _file_status() -> FileStatus:
 
         # Check if path is configured
         if not path:
-            return FileStatus(is_open=False, status_text="Путь не настроен", error="EXCEL_FILE_PATH не указан в .env")
+            return FileStatus(
+                is_open=False,
+                status_text="Путь не настроен",
+                error="EXCEL_FILE_PATH не указан в .env",
+                **_standby_fields(),
+            )
 
         # Тот же текст, что в /settings и в ответе выбора: иначе относительный
         # путь из конфигурации (``../testdata/…``) уходил бы в статус как есть,
@@ -170,6 +199,7 @@ def _file_status() -> FileStatus:
                 file_path=str(path),
                 status_text="Файл не найден",
                 error=f"Файл не найден: {path}",
+                **_standby_fields(),
             )
 
         stat = path.stat()
@@ -199,6 +229,7 @@ def _file_status() -> FileStatus:
             file_path=str(path),
             status_text=status_text,
             seconds_since_modified=seconds_since_modified,
+            **_standby_fields(),
         )
     except Exception as e:
         return FileStatus(status_text="Ошибка", error=str(e))
@@ -260,10 +291,36 @@ def _resolve_book_file(raw_path: str) -> Path:
     return path.resolve()
 
 
+def _validate_book_file(target_file: Path) -> Path:
+    """Книга существует, является файлом и имеет расширение Excel."""
+    if not path_exists(target_file):
+        raise HTTPException(status_code=404, detail=_not_found_detail(target_file))
+    if not target_file.is_file():
+        raise HTTPException(status_code=400, detail=f"Указанный путь не является файлом: {target_file}")
+    if target_file.suffix.lower() not in (".xlsx", ".xls", ".xlsm"):
+        raise HTTPException(status_code=400, detail=f"Недопустимое расширение файла: {target_file.suffix}")
+    return target_file
+
+
+async def _announce_book_change(payload: dict, message: str) -> None:
+    """Разослать открытым экранам, что читается другая книга."""
+    try:
+        from app.schemas.websocket import WebSocketMessage
+        from app.services.websocket_manager import websocket_manager
+
+        await websocket_manager.broadcast(
+            WebSocketMessage(type="data_update", payload={**payload, "message": message}, timestamp=datetime.now())
+        )
+    except Exception as ws_err:
+        logger.warning(f"Could not broadcast websocket update for file switch: {ws_err}")
+
+
 @router.post("/excel/select")
 async def select_excel_file(request: ExcelFileSelectRequest):
-    """
-    Select active Excel file.
+    """Выбрать основную книгу и читать её.
+
+    Прежний вход «Ввести путь»: оператор указал книгу — она заведомо основная.
+    Роли запасной книги задаются отдельно (``/excel/books``).
     """
     try:
         # Support both file_path (for custom paths) and file_name (for backward compatibility)
@@ -280,44 +337,76 @@ async def select_excel_file(request: ExcelFileSelectRequest):
         else:
             raise HTTPException(status_code=400, detail="Не указан путь к файлу (file_path) или его имя (file_name)")
 
-        target_file = _resolve_book_file(file_path)
+        target_file = _validate_book_file(_resolve_book_file(file_path))
 
-        if not path_exists(target_file):
-            raise HTTPException(status_code=404, detail=_not_found_detail(target_file))
-
-        if not target_file.is_file():
-            raise HTTPException(status_code=400, detail=f"Указанный путь не является файлом: {target_file}")
-
-        if target_file.suffix.lower() not in (".xlsx", ".xls", ".xlsm"):
-            raise HTTPException(status_code=400, detail=f"Недопустимое расширение файла: {target_file.suffix}")
-
-        await asyncio.to_thread(excel_service.set_active_file, str(target_file))
+        await asyncio.to_thread(excel_service.set_main_file, str(target_file))
+        standby_book.reset()
         logger.info(f"[DASHBOARD API] Switched active Excel file to: {target_file}")
 
-        # Invalidate watcher cache if running
-        try:
-            from app.schemas.websocket import WebSocketMessage
-            from app.services.websocket_manager import websocket_manager
-
-            message = WebSocketMessage(
-                type="data_update",
-                payload={
-                    "source": "excel",
-                    "file": target_file.name,
-                    "file_path": str(target_file),
-                    "message": f"Активный файл Excel изменен на {target_file.name}",
-                },
-                timestamp=datetime.now(),
-            )
-            await websocket_manager.broadcast(message)
-        except Exception as ws_err:
-            logger.warning(f"Could not broadcast websocket update for file switch: {ws_err}")
+        await _announce_book_change(
+            {"source": "excel", "file": target_file.name, "file_path": str(target_file)},
+            f"Активный файл Excel изменен на {target_file.name}",
+        )
 
         return {"success": True, "active": str(target_file)}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[DASHBOARD API] Failed to select Excel file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/excel/books")
+async def set_excel_books(request: ExcelBooksRequest):
+    """Задать роли книг: основную и запасную (ADR 0009).
+
+    Диалог ввода пути задаёт только роли — какую книгу читать, решает правило
+    ``standby_book`` по наполненности. Пустая запасная выключает режим.
+    """
+    try:
+        main_raw = normalize_path_input(request.main_path)
+        if not main_raw:
+            raise HTTPException(status_code=400, detail="Не указан путь к основной книге (main_path)")
+        main_file = _validate_book_file(_resolve_book_file(main_raw))
+
+        reserve_raw = normalize_path_input(request.reserve_path) if request.reserve_path else ""
+        reserve_file: Path | None = None
+        if reserve_raw:
+            reserve_file = _validate_book_file(_resolve_book_file(reserve_raw))
+            if reserve_file == main_file:
+                raise HTTPException(status_code=400, detail="Запасная книга совпадает с основной")
+
+        await asyncio.to_thread(
+            excel_service.set_book_roles,
+            str(main_file),
+            str(reserve_file) if reserve_file is not None else None,
+        )
+        # Новые роли — новые книги: прежние замеры к ним не относятся, иначе
+        # правило сравнило бы строки разных файлов.
+        standby_book.reset()
+
+        active = _display_path(excel_service.current_path)
+        await _announce_book_change(
+            {
+                "source": "excel",
+                "file": main_file.name,
+                "file_path": active,
+                "role": excel_service.current_role,
+            },
+            f"Книга учёта: основная — {main_file.name}"
+            + (f", запасная — {reserve_file.name}" if reserve_file is not None else ", запасной нет"),
+        )
+
+        return {
+            "success": True,
+            "main": str(main_file),
+            "reserve": str(reserve_file) if reserve_file is not None else None,
+            "active": active,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DASHBOARD API] Failed to set Excel book roles: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -461,6 +550,8 @@ def _warning_for(m: CycleMatch):
 class SettingsResponse(BaseModel):
     simulation_enabled: bool
     excel_path: str
+    excel_reserve_path: str
+    excel_role: str | None
     opcua_endpoint: str
 
 
@@ -468,16 +559,23 @@ class SettingsUpdateRequest(BaseModel):
     simulation_enabled: bool
 
 
-@router.get("/settings", response_model=SettingsResponse)
-async def get_settings():
-    """Get current simulation settings."""
+def _settings_response() -> SettingsResponse:
+    """Настройки с книгой: активная, запасная и роль читаемой сейчас."""
     from app.services.opcua_service import opcua_service
 
     return SettingsResponse(
         simulation_enabled=settings.SIMULATION_ENABLED,
-        excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
+        excel_path=_display_path(excel_service.current_path) or "",
+        excel_reserve_path=_display_path(excel_service.reserve_path) or "",
+        excel_role=excel_service.current_role,
         opcua_endpoint=opcua_service.endpoint,
     )
+
+
+@router.get("/settings", response_model=SettingsResponse)
+async def get_settings():
+    """Get current simulation settings."""
+    return _settings_response()
 
 
 @router.post("/settings", response_model=SettingsResponse)
@@ -522,7 +620,9 @@ async def update_settings(request: SettingsUpdateRequest):
 
         return SettingsResponse(
             simulation_enabled=settings.SIMULATION_ENABLED,
-            excel_path=str(excel_service.current_path.resolve()) if excel_service.current_path else "",
+            excel_path=_display_path(excel_service.current_path) or "",
+            excel_reserve_path=_display_path(excel_service.reserve_path) or "",
+            excel_role=excel_service.current_role,
             opcua_endpoint=opcua_service.endpoint,
         )
     except Exception as e:

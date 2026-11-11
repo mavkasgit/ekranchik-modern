@@ -79,6 +79,14 @@ class FileStatus(BaseModel):
     status_text: str = "Неизвестно"
     error: str | None = None
     seconds_since_modified: float | None = None
+    # Роль читаемой книги: main / reserve. None — режим запасной книги не
+    # настроен либо активная книга вне ролей (старая запись выбора).
+    role: str | None = None
+    main_file_path: str | None = None
+    reserve_file_path: str | None = None
+    # Когда у основной книги последний раз прибавлялись строки: из этого
+    # времени собирается текст «основная не пополняется с …».
+    main_last_growth: datetime | None = None
 
 
 class ExcelFileSelectRequest(BaseModel):
@@ -86,3 +94,13 @@ class ExcelFileSelectRequest(BaseModel):
 
     file_path: str | None = None
     file_name: str | None = None
+
+
+class ExcelBooksRequest(BaseModel):
+    """Роли книг: какая основная, какая запасная.
+
+    Запасная не задана — режим выключен, читается только основная.
+    """
+
+    main_path: str
+    reserve_path: str | None = None
