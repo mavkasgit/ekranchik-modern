@@ -188,7 +188,7 @@ class StandbyBook:
         """
         now = time.monotonic() if now is None else now
         if excel_service.reserve_path is None:
-            return "запасная не задана — читается только основная"
+            return "запасная не задана — переключение невозможно"
         if self._observed_wall is None:
             return "первый замер ещё не выполнен"
 

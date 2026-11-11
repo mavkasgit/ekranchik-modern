@@ -177,7 +177,7 @@ function BookStat({
     <div className="flex items-baseline gap-1.5 min-w-0">
       <span className="shrink-0 font-medium text-slate-700 dark:text-slate-200">{label}:</span>
       <span className="truncate">
-        {rows === null || rows === undefined ? "нет данных" : `строк: ${rows.toLocaleString("ru")}`}
+        {rows === null || rows === undefined ? "нет данных" : `${rows.toLocaleString("ru")} стр.`}
         {growth ? ` · рост ${growthClock(growth)}` : ""}
       </span>
       {present === false && (
@@ -2126,10 +2126,10 @@ export default function Dashboard() {
                         ? "основная"
                         : "не определена"}
                 </span>
-                {fileStatus?.standby_reason && (
-                  <span className="text-muted-foreground"> — {fileStatus.standby_reason}</span>
-                )}
               </div>
+              {fileStatus?.standby_reason && (
+                <div className="text-muted-foreground">Почему: {fileStatus.standby_reason}</div>
+              )}
               <div className="grid gap-1 pt-0.5 sm:grid-cols-2">
                 <BookStat
                   label="Основная"
@@ -2137,12 +2137,21 @@ export default function Dashboard() {
                   growth={fileStatus?.main_last_growth}
                   present={fileStatus?.main_present}
                 />
-                <BookStat
-                  label="Запасная"
-                  rows={fileStatus?.reserve_rows}
-                  growth={fileStatus?.reserve_last_growth}
-                  present={fileStatus?.reserve_present}
-                />
+                {fileStatus?.reserve_file_path ? (
+                  <BookStat
+                    label="Запасная"
+                    rows={fileStatus?.reserve_rows}
+                    growth={fileStatus?.reserve_last_growth}
+                    present={fileStatus?.reserve_present}
+                  />
+                ) : (
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-medium text-slate-700 dark:text-slate-200">
+                      Запасная:
+                    </span>
+                    <span className="text-muted-foreground">не задана</span>
+                  </div>
+                )}
               </div>
               {fileStatus?.observed_since && (
                 <div className="text-muted-foreground">

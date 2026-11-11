@@ -437,4 +437,4 @@ def test_status_reports_rows_presence_and_observation_time(monkeypatch):
     assert status["main_rows"] == 100
     assert status["main_present"] is True
     assert status["observed_since"] is not None
-    assert status["standby_reason"] == "запасная не задана — читается только основная"
+    assert status["standby_reason"] == "запасная не задана — переключение невозможно"
