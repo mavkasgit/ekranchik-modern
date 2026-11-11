@@ -346,18 +346,20 @@ export function OPCUAPage() {
                     <span className="text-right break-all">
                       <span
                         className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                          settings?.excel_role === "reserve"
+                          fileStatus?.reserve_file_path && settings?.excel_role === "reserve"
                             ? "border-amber-300 bg-amber-100 text-amber-800"
-                            : settings?.excel_role === "main"
+                            : fileStatus?.reserve_file_path && settings?.excel_role === "main"
                               ? "border-gray-300 bg-white text-gray-600"
                               : "border-gray-200 bg-gray-100 text-gray-500"
                         }`}
                       >
-                        {settings?.excel_role === "reserve"
-                          ? "Запасная"
-                          : settings?.excel_role === "main"
-                            ? "Основная"
-                            : "Режим выключен"}
+                        {!fileStatus?.reserve_file_path
+                          ? "Режим выключен"
+                          : settings?.excel_role === "reserve"
+                            ? "Запасная"
+                            : settings?.excel_role === "main"
+                              ? "Основная"
+                              : "Режим выключен"}
                       </span>
                       <span className="block font-mono text-sm text-gray-900">
                         {settings?.excel_path || "не задана"}

@@ -556,9 +556,17 @@ function StatusBar({
   const filePath = fileStatus?.file_path;
 
   // Метка роли: при выключенном режиме (запасной книги нет) метки тоже нет —
-  // «основная» без альтернативы ничего оператору не сообщает.
+  // «основная» без альтернативы ничего оператору не сообщает. Роль сервер
+  // отдаёт и без запасной книги, поэтому смотрим на её наличие.
   const role = fileStatus?.role ?? null;
-  const roleLabel = role === "reserve" ? "ЗАПАСНАЯ" : role === "main" ? "основная" : null;
+  const standbyEnabled = Boolean(fileStatus?.reserve_file_path);
+  const roleLabel = standbyEnabled
+    ? role === "reserve"
+      ? "ЗАПАСНАЯ"
+      : role === "main"
+        ? "основная"
+        : null
+    : null;
 
   return (
     <Card>
