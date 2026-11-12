@@ -42,6 +42,8 @@ static/app_settings.json
 # *.sqlite3
 # static/*.db
 static/ekranchik_backup_*.db
+# Снимок перед синком каталога (scripts/sync-ekranchik.py в ktm2000)
+static/ekranchik.db.bak-*
 
 # Журнал подвесов: пишется приложением, в git не попадает
 static/journal/
