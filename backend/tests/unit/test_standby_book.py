@@ -14,6 +14,7 @@
 трогать активную книгу, когда роста нет.
 """
 
+from datetime import datetime
 from pathlib import Path
 
 import openpyxl
@@ -32,14 +33,20 @@ from app.services.standby_book import (
 MAIN_PATH = Path("//host/share/Учет КПЗ 2026.xlsm")
 RESERVE_PATH = Path("//host/share/Учет КПЗ 2026 запасная.xlsm")
 NOW = 10_000.0
+# Моменты проходов для сравнения «кто новее»: это календарное время, а не
+# монотонное, поэтому значения условные.
+PASS_OLD = datetime(2026, 11, 12, 8, 20)
+PASS_NEW = datetime(2026, 11, 12, 10, 52)
 
 
-def _main(rows: int | None, *, present: bool = True) -> BookSample:
-    return BookSample(path=MAIN_PATH, present=present, rows=rows)
+def _main(rows: int | None, *, present: bool = True, last_pass: datetime | None = None) -> BookSample:
+    return BookSample(path=MAIN_PATH, present=present, rows=rows, last_pass=last_pass)
 
 
-def _reserve(rows: int | None, *, present: bool = True) -> BookSample:
-    return BookSample(path=RESERVE_PATH, present=present, rows=rows)
+def _reserve(
+    rows: int | None, *, present: bool = True, last_pass: datetime | None = None
+) -> BookSample:
+    return BookSample(path=RESERVE_PATH, present=present, rows=rows, last_pass=last_pass)
 
 
 def _decide(
@@ -100,13 +107,13 @@ def test_main_frozen_for_less_than_half_an_hour_keeps_main():
     )
 
 
-def test_frozen_main_gives_way_to_growing_reserve():
-    """Строка «основная не растёт 30 мин, запасная росла и обошла»."""
+def test_frozen_main_gives_way_to_a_newer_reserve_pass():
+    """Строка «основная не пополняется, в запасной проход новее»."""
     assert (
         _decide(
             Role.MAIN,
-            _main(100),
-            _reserve(120),
+            _main(100, last_pass=PASS_OLD),
+            _reserve(120, last_pass=PASS_NEW),
             main_grown_at=NOW - FROZEN_SECONDS,
             reserve_grown_at=NOW - 60,
         )
@@ -114,13 +121,13 @@ def test_frozen_main_gives_way_to_growing_reserve():
     )
 
 
-def test_frozen_main_with_frozen_reserve_keeps_main():
-    """Строка «обе не растут»: обычное предупреждение, переключения нет."""
+def test_frozen_main_with_an_older_reserve_pass_keeps_main():
+    """Строка «обе не пополняются»: обычное предупреждение, переключения нет."""
     assert (
         _decide(
             Role.MAIN,
-            _main(100),
-            _reserve(200),
+            _main(100, last_pass=PASS_NEW),
+            _reserve(200, last_pass=PASS_OLD),
             main_grown_at=NOW - FROZEN_SECONDS,
             reserve_grown_at=NOW - FROZEN_SECONDS - 1,
         )
@@ -128,17 +135,16 @@ def test_frozen_main_with_frozen_reserve_keeps_main():
     )
 
 
-def test_reserve_never_grown_does_not_take_over():
-    """Запасная не росла при нас — она не «работающая», даже если полнее.
+def test_reserve_without_passes_does_not_take_over():
+    """Запасная без записанных проходов — не «работающая», даже если полнее.
 
-    Разница с предыдущей строкой принципиальная: после рестарта запасная
-    может быть полнее основной, но это не повод читать её — работать в ней
-    начали не сейчас.
+    Разница с основной принципиальная: после рестарта запасная может быть
+    полнее основной, но это не повод читать её — проходов в ней нет.
     """
     assert (
         _decide(
             Role.MAIN,
-            _main(100),
+            _main(100, last_pass=PASS_OLD),
             _reserve(200),
             main_grown_at=NOW - FROZEN_SECONDS,
             reserve_grown_at=None,
@@ -147,14 +153,13 @@ def test_reserve_never_grown_does_not_take_over():
     )
 
 
-@pytest.mark.parametrize("reserve_rows", [100, 99], ids=["same", "fewer"])
-def test_growing_reserve_that_is_not_fuller_does_not_take_over(reserve_rows):
-    """Строка «запасная растёт, но строк не больше»: обойти надо строго."""
+def test_equal_last_passes_keep_main():
+    """Одинаковый последний проход (копия книги) — повода уходить нет."""
     assert (
         _decide(
             Role.MAIN,
-            _main(100),
-            _reserve(reserve_rows),
+            _main(100, last_pass=PASS_NEW),
+            _reserve(100, last_pass=PASS_NEW),
             main_grown_at=NOW - FROZEN_SECONDS,
             reserve_grown_at=NOW - 60,
         )
@@ -277,7 +282,8 @@ def books(tmp_path, monkeypatch):
     state = {
         "main": main,
         "reserve": reserve,
-        "rows": {str(main): 100, str(reserve): 50},
+        "passes": {str(main): 100, str(reserve): 50},
+        "last_pass": {str(main): PASS_OLD, str(reserve): PASS_NEW},
         "role": "main",
     }
     switched: list[str] = []
@@ -289,7 +295,14 @@ def books(tmp_path, monkeypatch):
     monkeypatch.setattr(ExcelService, "main_path", property(lambda self: state["main"]))
     monkeypatch.setattr(ExcelService, "reserve_path", property(lambda self: state["reserve"]))
     monkeypatch.setattr(ExcelService, "current_role", property(lambda self: state["role"]))
-    monkeypatch.setattr(ExcelService, "count_book_rows", lambda self, path: state["rows"].get(str(path)))
+    monkeypatch.setattr(
+        ExcelService,
+        "book_progress",
+        lambda self, path: (
+            state["passes"].get(str(path)),
+            state["last_pass"].get(str(path)),
+        ),
+    )
     monkeypatch.setattr(ExcelService, "set_active_file", set_active)
 
     book = StandbyBook()
@@ -297,14 +310,14 @@ def books(tmp_path, monkeypatch):
 
 
 def test_tick_switches_to_the_reserve_book(books):
-    """Рост запасной при замершей основной — переключение ровно на её путь."""
+    """В запасной проход новее, основная замерла — переключение на её путь."""
     state, switched, book = books
 
     assert book.tick(now=0) is None, "первый замер ничего не решает"
     assert book.tick(now=FROZEN_SECONDS - 60) is None, "основная ещё не замерла"
 
-    state["rows"][str(state["reserve"])] = 120
-    assert book.tick(now=FROZEN_SECONDS - 30) is None, "30 минут ещё не прошло"
+    state["passes"][str(state["reserve"])] = 120
+    assert book.tick(now=FROZEN_SECONDS - 30) is None, "порог ещё не прошёл"
 
     switch = book.tick(now=FROZEN_SECONDS)
 
@@ -314,10 +327,11 @@ def test_tick_switches_to_the_reserve_book(books):
     assert excel_service.current_role == "reserve"
 
 
-def test_tick_without_growth_does_not_switch(books):
-    """Запасная полнее, но не растёт — чтение остаётся на основной."""
+def test_tick_without_a_newer_reserve_pass_does_not_switch(books):
+    """Запасная полнее, но проход в ней старее — чтение остаётся на основной."""
     state, switched, book = books
-    state["rows"][str(state["reserve"])] = 500
+    state["passes"][str(state["reserve"])] = 500
+    state["last_pass"][str(state["reserve"])] = PASS_OLD
 
     assert book.tick(now=0) is None
     assert book.tick(now=FROZEN_SECONDS - 1) is None
@@ -345,7 +359,7 @@ def test_main_last_growth_is_the_moment_rows_appeared(books):
     assert book.tick(now=0) is None
     assert book.main_last_growth() is None, "первый замер — не рост"
 
-    state["rows"][str(state["main"])] = 101
+    state["passes"][str(state["main"])] = 101
     assert book.tick(now=60) is None
 
     grown_at = book.main_last_growth()
@@ -355,8 +369,14 @@ def test_main_last_growth_is_the_moment_rows_appeared(books):
 # --- Вход правила: число строк с реальными данными --------------------------
 
 
-def _book_with_rows(tmp_path: Path, rows: list[tuple[str | None, int | None]]) -> Path:
-    """Книга с боевой шапкой: две строки инструкций и строка заголовков."""
+def _book_with_rows(
+    tmp_path: Path,
+    rows: list[tuple[str | None, int | None, str | None]],
+) -> Path:
+    """Книга с боевой шапкой: две строки инструкций и строка заголовков.
+
+    ``time=None`` — пустая строка шаблона: дата и номер стоят, прохода нет.
+    """
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Подвесы"
@@ -376,28 +396,54 @@ def _book_with_rows(tmp_path: Path, rows: list[tuple[str | None, int | None]]) -
     }
     for column, title in headers.items():
         ws.cell(row=3, column=column, value=title)
-    for index, (date, number) in enumerate(rows, start=4):
+    for index, (date, number, time) in enumerate(rows, start=4):
         ws.cell(row=index, column=4, value=date)
         ws.cell(row=index, column=5, value=number)
-        ws.cell(row=index, column=6, value="08:00")
+        ws.cell(row=index, column=6, value=time)
     path = tmp_path / "book.xlsx"
     wb.save(path)
     return path
 
 
-def test_count_book_rows_counts_rows_with_date_or_number(tmp_path):
-    """Наполненность — строки с датой ИЛИ номером подвеса, как на дашборде."""
+def test_count_book_rows_counts_passes_not_the_empty_template(tmp_path):
+    """Проход — строка со временем; дата и номер внизу книги стоят и без него.
+
+    Регрессия боевой книги: шаблон смены (дата и номер подвеса уже
+    проставлены) давал неизменное «число строк», и правило не видело, что
+    книга пополняется.
+    """
     path = _book_with_rows(
         tmp_path,
         [
-            ("2026-09-29", 5),
-            (None, 6),
-            ("2026-09-30", None),
-            (None, None),
+            ("2026-09-29", 5, "08:00"),
+            ("2026-09-29", 6, "09:15"),
+            (None, 7, "10:00"),
+            ("2026-09-30", 8, None),
+            ("2026-09-30", 9, None),
+            (None, None, None),
         ],
     )
 
     assert ExcelService().count_book_rows(path) == 3
+
+
+def test_count_book_rows_counts_a_template_row_once_time_appears(tmp_path):
+    """Заполнение шаблонной строки — это новый проход, счётчик растёт."""
+    path = _book_with_rows(
+        tmp_path,
+        [
+            ("2026-09-29", 5, "08:00"),
+            ("2026-09-29", 6, None),
+        ],
+    )
+    assert ExcelService().count_book_rows(path) == 1
+
+    wb = openpyxl.load_workbook(path)
+    wb["Подвесы"].cell(row=5, column=6, value="09:40")
+    wb.save(path)
+
+    # Новый экземпляр — свой кэш: считаем, как после реального сохранения книги.
+    assert ExcelService().count_book_rows(path) == 2
 
 
 def test_count_book_rows_is_none_when_the_book_is_unreadable(tmp_path):
@@ -445,7 +491,9 @@ def test_status_reports_rows_presence_and_observation_time(monkeypatch):
     monkeypatch.setattr(type(excel_service), "main_path", property(lambda self: MAIN_PATH))
     monkeypatch.setattr(type(excel_service), "reserve_path", property(lambda self: None))
     monkeypatch.setattr(type(excel_service), "current_role", property(lambda self: "main"))
-    monkeypatch.setattr(excel_service, "count_book_rows", lambda path: 100)
+    monkeypatch.setattr(
+        excel_service, "book_progress", lambda path: (100, datetime(2026, 11, 12, 10, 52))
+    )
     monkeypatch.setattr(module, "path_exists", lambda path: True)
 
     service.tick(now=NOW)

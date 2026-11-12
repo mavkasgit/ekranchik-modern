@@ -9,17 +9,20 @@
 
 Правило (ADR 0009):
 
-* читаем основную, пока в ней растут строки с реальными данными;
-* переходим на запасную, когда основная не растёт 30 минут, а запасная за это
-  время росла и обошла её по числу строк;
-* возвращаемся на основную на первом же росте её строк: основная книга
+* читаем основную, пока в ней появляются новые проходы;
+* переходим на запасную, когда основная не пополняется N минут, а последний
+  проход в запасной записан позже, чем в основной: значит, работа идёт там;
+* возвращаемся на основную на первом же новом проходе в ней: основная книга
   первична, и «ложный» возврат чинится следующим переключением;
 * основная пропала/не читается — переходим сразу, это отказ, а не заморозка.
 
-Решение принимается по числу непустых строк с датой или номером подвеса —
-тех же строк, что видны на дашборде. Размер файла в решении не участвует:
-сохранение переписывает файл целиком и меняет размер, даже когда новых строк
-в книге нет.
+Решение принимается по записанным проходам — строкам, где есть время и номер
+подвеса. Пустой шаблон смены внизу книги (дата и номер стоят, времени нет) в
+счёт не идёт: иначе «рост» появлялся бы от заполнения шаблона, а не от нового
+прохода. Сравнивается не число строк, а момент последнего прохода: счётчик
+копится с прошлых смен и не говорит, куда пишут сейчас. Размер файла в
+решении не участвует: сохранение переписывает файл целиком и меняет размер,
+даже когда новых строк в книге нет.
 """
 
 import asyncio
@@ -62,17 +65,22 @@ class Role(StrEnum):
 
 @dataclass(frozen=True)
 class BookSample:
-    """Замер книги: дошла ли она до нас и сколько в ней строк с данными.
+    """Замер книги: дошла ли она до нас, сколько проходов и когда последний.
 
-    ``present`` — файл существует. ``rows`` — число строк либо ``None``, если
-    прочитать не удалось (книга ещё записывается). Это разные вещи: пропавшая
-    книга — отказ, нечитаемая на секунду — повод подождать, а не уезжать на
-    запасную и тут же возвращаться.
+    ``present`` — файл существует. ``rows`` — число записанных проходов либо
+    ``None``, если прочитать не удалось (книга ещё записывается). Это разные
+    вещи: пропавшая книга — отказ, нечитаемая на секунду — повод подождать,
+    а не уезжать на запасную и тут же возвращаться.
+
+    ``last_pass`` — момент последнего записанного прохода. По нему видно, в
+    какую книгу пишут сейчас: у рабочей он новее, и сравнение не зависит от
+    того, что книг накопила больше строк за прошлые смены.
     """
 
     path: Path | None
     present: bool
     rows: int | None
+    last_pass: datetime | None = None
 
     @property
     def available(self) -> bool:
@@ -110,7 +118,8 @@ def decide(
     перевод часов не должен превращать «полчаса» в «сутки».
     ``main_grown_at`` — последний рост основной (для не росшей при нас книги —
     начало наблюдения), ``reserve_grown_at`` — её рост либо ``None``, если она
-    ещё ни разу не росла при нас.
+    ещё ни разу не росла при нас (история правила; решение принимает
+    ``last_pass``).
     """
     # Запасная пропала: режим выключается, читаем основную — но только если
     # она действительно читается. Иначе остаёмся где есть.
@@ -133,11 +142,13 @@ def decide(
     if not main.available or not reserve.available:
         return None
 
-    # Основная не пополняется полчаса, запасная за это время росла и обошла
-    # её по строкам: работа идёт в запасной.
+    # Основная не пополняется, а в запасной записан более новый проход:
+    # значит, работа идёт там. Сравниваем момент прохода, а не число строк:
+    # счётчик строк врёт шаблоном смены и копится с прошлых смен.
     frozen = now - main_grown_at >= frozen_seconds
-    reserve_recent = reserve_grown_at is not None and now - reserve_grown_at <= frozen_seconds
-    if frozen and reserve_recent and reserve.rows > main.rows:
+    if frozen and reserve.last_pass is not None and (
+        main.last_pass is None or reserve.last_pass > main.last_pass
+    ):
         return Role.RESERVE
     return None
 
@@ -145,14 +156,17 @@ def decide(
 class StandbyBook:
     """Фоновая задача: замерять обе книги и переключать активную.
 
-    Память между замерами живёт здесь: когда книга последний раз прибавляла
-    строки. Перезапуск сервера её обнуляет, поэтому после рестарта правило
-    снова ждёт 30 минут наблюдения — так лучше, чем принять решение по
-    догадке о том, что было до перезапуска.
+    Память между замерами живёт здесь: момент последнего прохода и число
+    проходов по каждой книге. Перезапуск сервера её обнуляет, поэтому после
+    рестарта правило снова выжидает ``STANDBY_FROZEN_MINUTES`` — так лучше,
+    чем принять решение по догадке о том, что было до перезапуска.
     """
 
     def __init__(self) -> None:
         self._rows: dict[Role, int | None] = {Role.MAIN: None, Role.RESERVE: None}
+        # Момент последнего записанного прохода по каждой книге. По нему
+        # решается, в какую книгу пишут сейчас.
+        self._last_pass: dict[Role, datetime | None] = {Role.MAIN: None, Role.RESERVE: None}
         # Дошла ли книга до нас на последнем замере: False — файла нет,
         # None — замера ещё не было.
         self._present: dict[Role, bool | None] = {Role.MAIN: None, Role.RESERVE: None}
@@ -171,6 +185,7 @@ class StandbyBook:
     def reset(self) -> None:
         """Забыть замеры: сменились роли или книга подменена в тестах."""
         self._rows = {Role.MAIN: None, Role.RESERVE: None}
+        self._last_pass = {Role.MAIN: None, Role.RESERVE: None}
         self._present = {Role.MAIN: None, Role.RESERVE: None}
         self._first_seen = {}
         self._grown_at = {}
@@ -233,12 +248,13 @@ class StandbyBook:
             return f"основная пополняется (последний рост {minutes or 0} мин назад) — читается она"
 
         reserve_grown = self._grown_at.get(Role.RESERVE)
-        reserve_recent = reserve_grown is not None and now - reserve_grown <= FROZEN_SECONDS
-        if not reserve_recent:
-            return f"основная не растёт {minutes} мин, запасная тоже — перехода нет"
-        if reserve_rows <= main_rows:
-            return "запасная растёт, но строк не больше — перехода нет"
-        return "запасная обошла основную — переход на следующем замере"
+        if reserve_grown is None:
+            return f"основная не растёт {minutes} мин, в запасной проходов не было — перехода нет"
+        reserve_pass = self._last_pass[Role.RESERVE]
+        main_pass = self._last_pass[Role.MAIN]
+        if reserve_pass is None or (main_pass is not None and reserve_pass <= main_pass):
+            return f"основная не растёт {minutes} мин, в запасной проход не новее — перехода нет"
+        return "в запасной проход новее — переход на следующем замере"
 
     def status(self, now: float | None = None) -> dict[str, object]:
         """Статистика обеих книг для строки статуса и модалки."""
@@ -285,7 +301,12 @@ class StandbyBook:
         if path is None:
             return BookSample(path=None, present=False, rows=None)
         present = path_exists(path)
-        return BookSample(path=path, present=present, rows=excel_service.count_book_rows(path) if present else None)
+        if not present:
+            return BookSample(path=path, present=False, rows=None)
+        progress = excel_service.book_progress(path)
+        if progress is None:
+            return BookSample(path=path, present=True, rows=None)
+        return BookSample(path=path, present=True, rows=progress[0], last_pass=progress[1])
 
     def _active_role(self) -> Role:
         role = excel_service.current_role
@@ -305,6 +326,8 @@ class StandbyBook:
             self._observed_wall = datetime.now().astimezone()
         self._present[Role.MAIN] = main.present
         self._present[Role.RESERVE] = reserve.present
+        self._last_pass[Role.MAIN] = main.last_pass
+        self._last_pass[Role.RESERVE] = reserve.last_pass
         main_grew = self._observe(Role.MAIN, main, now)
         self._observe(Role.RESERVE, reserve, now)
 

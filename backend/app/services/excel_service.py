@@ -6,7 +6,8 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from datetime import time as clock_time
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -57,6 +58,34 @@ def entered_path_text(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _pass_moment(date_value: object, time_value: object) -> datetime | None:
+    """Дата и время прохода из строки книги → момент; ``None`` — не собрать."""
+    day = None
+    if isinstance(date_value, datetime):
+        day = date_value.date()
+    elif isinstance(date_value, date):
+        day = date_value
+    elif isinstance(date_value, str):
+        text = date_value.strip()
+        parsed = pd.to_datetime(text, errors="coerce", dayfirst="." in text)
+        day = None if pd.isna(parsed) else parsed.date()
+    if day is None:
+        return None
+
+    if isinstance(time_value, datetime):
+        clock = time_value.time()
+    elif isinstance(time_value, clock_time):
+        clock = time_value
+    elif isinstance(time_value, str):
+        parsed_time = pd.to_datetime(time_value, errors="coerce")
+        if pd.isna(parsed_time):
+            return None
+        clock = parsed_time.time()
+    else:
+        return None
+    return datetime.combine(day, clock)
 
 
 def path_exists(path: Path) -> bool:
@@ -219,7 +248,7 @@ class ExcelService:
         self._recent_files: list[dict[str, str]] = persisted["recent_files"]
         # Кэш числа строк по каждой книге: фоновая задача сравнивает две книги
         # каждые 30 секунд, и общий кэш разбора перечитывал бы обе попеременно.
-        self._row_count_cache: dict[str, tuple[int, int, int]] = {}
+        self._row_count_cache: dict[str, tuple[int, int, tuple[int, datetime | None]]] = {}
         self._row_count_lock = Lock()
         # О каком выборе уже сказали в лог: свойство спрашивают на каждый
         # запрос статуса, повторять одно предупреждение незачем.
@@ -431,13 +460,14 @@ class ExcelService:
         self._remember_paths([entered or file_path])
         self._persist_and_watch()
 
-    def count_book_rows(self, file_path: Path | None) -> int | None:
-        """Строк с реальными данными в книге либо ``None``, если не прочитать.
+    def book_progress(self, file_path: Path | None) -> tuple[int, datetime | None] | None:
+        """Проходы книги: сколько записано и когда последний.
 
-        Число считается по тому же листу и тому же признаку, что и данные
-        дашборда: непустая строка с датой или номером подвеса. Свой кэш, а не
-        общий разбор: замер идёт по двум книгам попеременно, и общий кэш
-        перечитывал бы обе каждые 30 секунд.
+        Проход — строка с временем и номером подвеса. Даты и номера мало:
+        внизу книга держит пустой шаблон смены (дата и номер уже стоят,
+        времени нет), и подсчёт по ним показывал «рост» от заполнения
+        шаблона, а не от нового прохода. По моменту последнего прохода видно,
+        в какую книгу пишут сейчас: у рабочей он новее.
 
         ``None`` — книга недоступна или ещё записывается. Это не то же самое,
         что «в книге ничего не пишется», поэтому вызывающий обязан различать
@@ -460,15 +490,31 @@ class ExcelService:
         try:
             df = self._read_dataframe_by_header(file_path, "Подвесы")
             df = df.dropna(how="all")
-            df = df[(pd.notna(df["date"])) | (pd.notna(df["number"]))]
-            rows = int(len(df))
+            # Время — признак записанного прохода: пустой шаблон внизу книги
+            # (дата и номер уже стоят) не должен считаться наполнением.
+            df = df[df["time"].notna() & df["number"].notna()]
+            passes = int(len(df))
+            last_pass = None
+            if passes:
+                row = df.iloc[-1]
+                last_pass = _pass_moment(row.get("date"), row.get("time"))
         except Exception as e:
             logger.warning(f"[Excel] Не удалось посчитать строки книги {file_path}: {e}")
             return None
 
+        progress = (passes, last_pass)
         with self._row_count_lock:
-            self._row_count_cache[key] = (stamp[0], stamp[1], rows)
-        return rows
+            self._row_count_cache[key] = (stamp[0], stamp[1], progress)
+        return progress
+
+    def count_book_rows(self, file_path: Path | None) -> int | None:
+        """Сколько проходов записано в книге либо ``None``, если не прочитать.
+
+        Счётчик — часть ``book_progress``: правило выбирает книгу по моменту
+        последнего прохода, а число нужно строке статуса и модалке.
+        """
+        progress = self.book_progress(file_path)
+        return None if progress is None else progress[0]
 
     @property
     def cache_mtime(self) -> float | None:
