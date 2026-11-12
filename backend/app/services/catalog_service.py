@@ -20,6 +20,7 @@ from app.core.text_utils import normalize_text
 from app.db.models import Profile
 from app.db.session import get_session
 from app.schemas.profile import ProfileCreate, ProfileResponse, ProfileSearchResult, ProfileUpdate
+from app.services.photo_version import photo_file_versions
 from app.services.profile_name import parse_profile
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,27 @@ def _save_thumbnail(thumb_path: Path, thumbnail_data: bytes) -> None:
         raise ValueError(f"Failed to process thumbnail: {e}") from e
 
 
+async def _responses_with_photo_versions(profiles: list[Profile]) -> list[ProfileResponse]:
+    """Ответы каталога с версиями файлов фото.
+
+    ``stat`` файлов — блокирующий вызов, поэтому версии считаются в потоке
+    одним пакетом на весь ответ, а не по два ``stat`` в event loop на каждый
+    профиль. Версия уходит в ``?v=`` URL: замена файла мимо API (синк
+    каталога, ручное копирование) тоже должна сбрасывать кэш ``/static/``.
+    """
+    if not profiles:
+        return []
+
+    versions = await asyncio.to_thread(
+        photo_file_versions, [(profile.photo_thumb, profile.photo_full) for profile in profiles]
+    )
+    responses = [ProfileResponse.model_validate(profile) for profile in profiles]
+    for response, version in zip(responses, versions, strict=True):
+        response.photo_thumb_version = version.thumb
+        response.photo_full_version = version.full
+    return responses
+
+
 class CatalogService:
     """
     Service for managing the profile catalog.
@@ -247,10 +269,17 @@ class CatalogService:
             matches.sort(key=lambda x: (x[1], -x[0].usage_count))
 
             # Convert to response schema with metadata
+            selected = matches[:limit]
+            versions = await asyncio.to_thread(
+                photo_file_versions,
+                [(profile.photo_thumb, profile.photo_full) for profile, _ in selected],
+            )
             results = []
-            for profile, priority in matches[:limit]:
+            for (profile, priority), version in zip(selected, versions, strict=True):
                 result = ProfileSearchResult.model_validate(profile)
                 result.match_priority = priority
+                result.photo_thumb_version = version.thumb
+                result.photo_full_version = version.full
                 results.append(result)
 
             return results
@@ -316,7 +345,7 @@ class CatalogService:
             result = await sess.execute(stmt)
             profile = result.scalar_one_or_none()
             if profile:
-                return ProfileResponse.model_validate(profile)
+                return (await _responses_with_photo_versions([profile]))[0]
             return None
 
         if session:
@@ -356,7 +385,7 @@ class CatalogService:
 
             await sess.flush()
             await sess.refresh(profile)
-            return ProfileResponse.model_validate(profile)
+            return (await _responses_with_photo_versions([profile]))[0]
 
         if session:
             return await _create_or_update(session)
@@ -410,7 +439,7 @@ class CatalogService:
 
             await sess.flush()
             await sess.refresh(profile)
-            return ProfileResponse.model_validate(profile)
+            return (await _responses_with_photo_versions([profile]))[0]
 
         if session:
             return await _update(session)
@@ -500,7 +529,7 @@ class CatalogService:
             stmt = select(Profile).order_by(Profile.name).limit(limit)
             result = await sess.execute(stmt)
             profiles = result.scalars().all()
-            return [ProfileResponse.model_validate(p) for p in profiles]
+            return await _responses_with_photo_versions(list(profiles))
 
         if session:
             return await _get(session)
@@ -865,11 +894,18 @@ class CatalogService:
                 if digits:
                     all_digits_count[digits] = all_digits_count.get(digits, 0) + 1
 
-            for profile in profiles_with_photos:
+            versions = await asyncio.to_thread(
+                photo_file_versions,
+                [(profile.photo_thumb, profile.photo_full) for profile in profiles_with_photos],
+            )
+
+            for profile, version in zip(profiles_with_photos, versions, strict=True):
                 photo_info = {
                     "thumb": profile.photo_thumb,
                     "full": profile.photo_full,
                     "name": profile.name,
+                    "photo_thumb_version": version.thumb,
+                    "photo_full_version": version.full,
                     "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
                 }
 

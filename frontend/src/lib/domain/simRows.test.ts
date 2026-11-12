@@ -15,6 +15,8 @@ function catalogProfile(
     notes: null,
     photo_thumb: photo,
     photo_full: photo ? photo.replace("-thumb", "") : null,
+    photo_thumb_version: photo ? `v-${index}` : null,
+    photo_full_version: photo ? `v-${index}` : null,
     usage_count: 0,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",

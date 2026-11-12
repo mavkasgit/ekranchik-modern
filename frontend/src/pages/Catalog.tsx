@@ -96,7 +96,7 @@ function ProfileCard({
   onDelete: (profile: Profile) => void;
   isMobile: boolean;
 }) {
-  const photoSrc = photoUrl(profile.photo_thumb, profile.updated_at);
+  const photoSrc = photoUrl(profile.photo_thumb, profile.photo_thumb_version);
 
   if (isMobile) {
     // Mobile layout - image on full height
@@ -247,8 +247,8 @@ function ProfileDialog({
         notes: profile.notes,
       });
       const previewSrc =
-        photoUrl(profile.photo_full, profile.updated_at) ||
-        photoUrl(profile.photo_thumb, profile.updated_at);
+        photoUrl(profile.photo_full, profile.photo_full_version) ||
+        photoUrl(profile.photo_thumb, profile.photo_thumb_version);
       setPreviewUrl(previewSrc);
     } else {
       setFormData({ name: "", quantity_per_hanger: null, length: null, notes: null });
@@ -1756,7 +1756,7 @@ export default function Catalog() {
                     <div className="w-10 h-10 bg-muted rounded flex items-center justify-center overflow-hidden">
                       {profile.photo_thumb ? (
                         <img
-                          src={photoUrl(profile.photo_thumb, profile.updated_at)!}
+                          src={photoUrl(profile.photo_thumb, profile.photo_thumb_version)!}
                           alt=""
                           className="w-full h-full object-cover"
                         />

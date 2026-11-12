@@ -511,7 +511,7 @@ function PhotoCell({
     </div>
   );
 
-  const thumbUrl = photoUrl(hanger.profile_photo_thumb);
+  const thumbUrl = photoUrl(hanger.profile_photo_thumb, hanger.profile_photo_thumb_version);
   if (thumbUrl) {
     return (
       <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: "800px" }}>
@@ -522,7 +522,12 @@ function PhotoCell({
             className="w-auto h-auto max-h-[40px] max-w-[90px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
             onClick={() =>
               onPhotoClick(
-                photoUrl(hanger.profile_photo_full || hanger.profile_photo_thumb) || "",
+                photoUrl(
+                  hanger.profile_photo_full || hanger.profile_photo_thumb,
+                  hanger.profile_photo_full
+                    ? hanger.profile_photo_full_version
+                    : hanger.profile_photo_thumb_version,
+                ) || "",
                 hanger.profile,
               )
             }
@@ -554,8 +559,10 @@ function ProfilePhoto({
   onPhotoClick: (url: string, name: string) => void;
   hideText?: boolean;
 }) {
-  const thumbUrl = photoUrl(profile.photo_thumb, profile.updated_at);
-  const fullUrl = photoUrl(profile.photo_full || profile.photo_thumb, profile.updated_at);
+  const thumbUrl = photoUrl(profile.photo_thumb, profile.photo_thumb_version);
+  const fullUrl = profile.photo_full
+    ? photoUrl(profile.photo_full, profile.photo_full_version)
+    : photoUrl(profile.photo_thumb, profile.photo_thumb_version);
   const hasPhoto = profile.has_photo && thumbUrl;
 
   return (

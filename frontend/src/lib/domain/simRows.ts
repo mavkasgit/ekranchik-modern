@@ -54,6 +54,8 @@ function toRow(profile: Profile, color: string, number: number, now: Date): Hang
     profiles_info: [],
     profile_photo_thumb: profile.photo_thumb ?? undefined,
     profile_photo_full: profile.photo_full ?? undefined,
+    profile_photo_thumb_version: profile.photo_thumb_version,
+    profile_photo_full_version: profile.photo_full_version,
     color,
     lamels_qty: profile.quantity_per_hanger ?? 0,
     kpz_number: NO_VALUE,

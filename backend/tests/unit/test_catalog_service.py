@@ -56,11 +56,13 @@ async def test_repeated_upload_keeps_the_new_photo(images_dir, db_session):
     assert full.read_bytes() == _jpeg((0, 160, 0))
 
 
-async def test_repeated_upload_refreshes_photo_version(images_dir, db_session):
-    """Повторная загрузка двигает updated_at — по нему сбрасывается кэш фото.
+async def test_repeated_upload_moves_updated_at_for_sorting(images_dir, db_session):
+    """Повторная загрузка двигает updated_at для сортировки «Изменён».
 
-    Путь к файлу при повторной загрузке тот же, поэтому без явной метки
-    SQLAlchemy не увидела бы изменений и браузер показал бы старое фото.
+    Кэш фото сбрасывается версией файла (mtime+size), а не этой датой, но
+    колонка «Изменён» в каталоге тоже должна замечать повторную загрузку:
+    путь к файлу при ней тот же, и без явной метки SQLAlchemy не увидела бы
+    изменений.
     """
     await catalog_service.upload_photo("1010", _jpeg(), "first.jpg", session=db_session)
     row = (await db_session.execute(select(Profile).where(Profile.name == "1010"))).scalar_one()
@@ -71,6 +73,30 @@ async def test_repeated_upload_refreshes_photo_version(images_dir, db_session):
     await db_session.refresh(row)
 
     assert row.updated_at.year >= 2026
+
+
+async def test_profile_response_version_follows_file_on_disk(images_dir, db_session):
+    """Версия в ответе каталога считается по файлу, а не по updated_at.
+
+    Файл могли заменить мимо API (синк каталога, ручное копирование): база
+    об этом не знает, а браузер и nginx держат `/static/` в долгом кэше.
+    Поэтому после замены файла версия в ответе обязана измениться.
+    """
+    await catalog_service.upload_photo("1010", _jpeg(), "first.jpg", session=db_session)
+    before = await catalog_service.get_profile("1010", session=db_session)
+    assert before is not None
+    assert before.photo_full_version is not None
+    assert before.photo_thumb_version is not None
+
+    full = images_dir / Path(before.photo_full).name
+    os.utime(full, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
+
+    after = await catalog_service.get_profile("1010", session=db_session)
+    assert after is not None
+    assert after.photo_full_version != before.photo_full_version
+
+    listed = await catalog_service.get_all_profiles(session=db_session)
+    assert listed[0].photo_full_version == after.photo_full_version
 
 
 async def test_separators_in_profile_name_do_not_escape_images_dir(images_dir, db_session, tmp_path):

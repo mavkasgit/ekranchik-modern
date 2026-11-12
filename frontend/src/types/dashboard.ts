@@ -5,6 +5,8 @@ export interface ProfileInfo {
   has_photo: boolean;
   photo_thumb?: string;
   photo_full?: string;
+  photo_thumb_version?: string | null;
+  photo_full_version?: string | null;
   updated_at?: string;
 }
 
@@ -18,6 +20,8 @@ export interface HangerData {
   profiles_info: ProfileInfo[];
   profile_photo_thumb?: string;
   profile_photo_full?: string;
+  profile_photo_thumb_version?: string | null;
+  profile_photo_full_version?: string | null;
   color: string;
   lamels_qty: number | string;
   kpz_number: string;

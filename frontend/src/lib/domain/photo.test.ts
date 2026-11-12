@@ -10,33 +10,47 @@ describe("photoUrl", () => {
     expect(photoUrl("/static/images/1010.jpg")).toBe("/static/images/1010.jpg");
   });
 
+  it("разделители Windows нормализуются", () => {
+    expect(photoUrl("images\\1010.jpg")).toBe("/static/images/1010.jpg");
+  });
+
   it("пустой путь — нет фото", () => {
     expect(photoUrl(null)).toBeNull();
     expect(photoUrl("")).toBeNull();
   });
 
-  it("версия берётся только из updated_at, а не из текущего времени", () => {
+  it("внешний URL не переписывается и не версионируется", () => {
+    expect(photoUrl("https://cdn.example.com/1010.jpg", "v1")).toBe(
+      "https://cdn.example.com/1010.jpg",
+    );
+  });
+
+  it("версия берётся только из файла, а не из текущего времени", () => {
     // Иначе каждый рендер даёт новый URL, и браузер заново качает превью:
     // киоск показывает дашборд круглосуточно, а файл при этом не менялся.
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-11-09T10:00:00Z"));
-      const first = photoUrl("images/1010.jpg", "2026-11-01T09:00:00");
+      const first = photoUrl("images/1010.jpg", "1a2b-3c4d");
 
       vi.setSystemTime(new Date("2026-11-09T10:05:00Z"));
-      const second = photoUrl("images/1010.jpg", "2026-11-01T09:00:00");
+      const second = photoUrl("images/1010.jpg", "1a2b-3c4d");
 
-      expect(first).toBe("/static/images/1010.jpg?v=2026-11-01T09:00:00");
+      expect(first).toBe("/static/images/1010.jpg?v=1a2b-3c4d");
       expect(second).toBe(first);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("новое updated_at даёт новый URL", () => {
-    const before = photoUrl("images/1010.jpg", "2026-11-01T09:00:00");
-    const after = photoUrl("images/1010.jpg", "2026-11-02T09:00:00");
+  it("новая версия файла даёт новый URL", () => {
+    const before = photoUrl("images/1010.jpg", "old-version");
+    const after = photoUrl("images/1010.jpg", "new-version");
 
     expect(after).not.toBe(before);
+  });
+
+  it("без версии URL остаётся стабильным", () => {
+    expect(photoUrl("images/1010.jpg", null)).toBe("/static/images/1010.jpg");
   });
 });

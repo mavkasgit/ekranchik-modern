@@ -40,6 +40,10 @@ class ProfileResponse(ProfileBase):
     id: int
     photo_thumb: str | None = None
     photo_full: str | None = None
+    # Версии файлов для `?v=` в URL: считаются из mtime и размера файла,
+    # поэтому замена фото мимо API тоже сбрасывает кэш.
+    photo_thumb_version: str | None = None
+    photo_full_version: str | None = None
     usage_count: int = 0
     created_at: datetime
     updated_at: datetime
@@ -61,6 +65,8 @@ class ProfileInfo(BaseModel):
     has_photo: bool = False
     photo_thumb: str | None = None
     photo_full: str | None = None
+    photo_thumb_version: str | None = None
+    photo_full_version: str | None = None
     updated_at: str | None = None
 
 

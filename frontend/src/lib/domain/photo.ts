@@ -1,14 +1,17 @@
 // Фото профиля: путь из БД → URL для <img>.
 // Пути в БД бывают как «/static/images/...», так и «images/...».
+// Версия файла приходит с бэкенда (mtime+size) и уходит в `?v=`: так замена
+// фото мимо API — синк каталога, ручное копирование — тоже сбрасывает кэш
+// `/static/`, который nginx отдаёт с долгим `immutable`.
 
-export function photoUrl(
-  path: string | null | undefined,
-  cacheBuster?: string | number,
-): string | null {
+export function photoUrl(path: string | null | undefined, version?: string | null): string | null {
   if (!path) return null;
-  const base = path.startsWith("/") ? path : `/static/${path}`;
-  // Сбрасываем кэш только при смене фото: updated_at меняется при загрузке и
-  // удалении. Date.now() здесь означал новый URL на каждый рендер — киоск
-  // заново скачивал все превью по кругу, хотя файлы не менялись.
-  return cacheBuster ? `${base}?v=${cacheBuster}` : base;
+  if (path.startsWith("http")) return path;
+
+  const normalized = path.replace(/\\/g, "/");
+  const base = normalized.startsWith("/") ? normalized : `/static/${normalized}`;
+  if (!version) return base;
+  // Не Date.now(): новый URL на каждый рендер заставлял киоск заново качать
+  // все превью по кругу, хотя файлы не менялись.
+  return `${base}?v=${encodeURIComponent(version)}`;
 }

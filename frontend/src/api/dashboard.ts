@@ -89,6 +89,8 @@ export interface MatchedUnloadEvent {
     has_photo: boolean;
     photo_thumb?: string;
     photo_full?: string;
+    photo_thumb_version?: string | null;
+    photo_full_version?: string | null;
     processing: string[];
   }>;
   color: string;
