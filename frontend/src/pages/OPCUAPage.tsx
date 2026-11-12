@@ -366,6 +366,16 @@ export function OPCUAPage() {
                       </span>
                     </span>
                   </div>
+                  {/* Почему читается запасная: на дашборде этого не показываем —
+                      киоск в полный экран не должен нести служебные пояснения. */}
+                  {fileStatus?.role === "reserve" && fileStatus.standby_reason && (
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                      <span className="text-gray-600 shrink-0">Причина перехода:</span>
+                      <span className="text-sm text-amber-800 text-right break-words">
+                        {fileStatus.standby_reason}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 

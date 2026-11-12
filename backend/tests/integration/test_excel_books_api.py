@@ -10,12 +10,26 @@
 """
 
 import json
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.services.excel_service import excel_service
 from app.services.standby_book import standby_book
+
+
+@pytest.fixture
+def no_share(monkeypatch):
+    """Сетевой шары для теста нет: UNC не уходит в сеть на Windows-хосте."""
+    real_exists = Path.exists
+
+    def exists(self):
+        if str(self).startswith("\\\\") or str(self).startswith("Z:"):
+            return False
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", exists)
 
 
 @pytest.fixture
@@ -40,6 +54,10 @@ def books(tmp_path, monkeypatch):
     monkeypatch.setattr(excel_service, "_active_file_name", None)
     monkeypatch.setattr(excel_service, "_main_file_name", None)
     monkeypatch.setattr(excel_service, "_reserve_file_name", None)
+    # Путь оператора для показа хранится рядом с ролью: чужой тест не должен
+    # оставлять его следующему.
+    monkeypatch.setattr(excel_service, "_main_entered", None)
+    monkeypatch.setattr(excel_service, "_reserve_entered", None)
     monkeypatch.setattr(excel_service, "_recent_files", [])
     standby_book.reset()
 
@@ -128,6 +146,38 @@ async def test_status_names_the_reserve_book_that_is_being_read(books):
 
     settings_response = await _get("/api/dashboard/settings")
     assert settings_response["excel_role"] == "reserve"
+
+
+async def test_typed_share_path_is_shown_while_the_server_reads_its_own(books, no_share):
+    """Оператор видит свой путь, сервер читает свой.
+
+    ``\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm`` в контейнере не разрешается, и
+    книга находится в смонтированном каталоге. Показывать вместо ввода
+    ``/app/excel/…`` нельзя: такого пути на машине оператора нет.
+    """
+    main, _, record = books
+    typed = "\\\\ktm-disk\\Оператор\\" + main.name
+
+    status_code, saved = await _post("/api/dashboard/excel/books", {"main_path": typed})
+
+    assert status_code == 200, saved
+    assert saved["main"] == typed
+    assert saved["active"] == typed
+
+    # В файле выбора — путь, по которому сервер реально читает книгу, и ввод
+    # оператора отдельно: он нужен строке статуса и диалогу книг.
+    stored = json.loads(record.read_text(encoding="utf-8"))
+    assert stored["main_file"] == str(main.resolve())
+    assert stored["main_entered"] == typed
+
+    state = await _get("/api/dashboard/excel/books")
+    assert state["main"] == typed
+    assert state["active"] == typed
+    assert state["recent"][0]["path"] == typed, "история помнит ввод, а не путь сервера"
+
+    status = await _get("/api/dashboard/status/file")
+    assert status["main_file_path"] == typed
+    assert status["file_path"] == typed
 
 
 async def test_books_endpoint_returns_path_history(books):

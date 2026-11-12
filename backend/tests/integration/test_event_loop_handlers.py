@@ -317,7 +317,11 @@ async def test_excel_file_switch_goes_off_the_event_loop_thread(tmp_path, monkey
     loop_thread = threading.get_ident()
     seen: list[int] = []
 
-    monkeypatch.setattr(excel_service, "set_main_file", lambda path: seen.append(threading.get_ident()))
+    monkeypatch.setattr(
+        excel_service,
+        "set_main_file",
+        lambda path, entered=None: seen.append(threading.get_ident()),
+    )
 
     async with _client() as client:
         response = await client.post("/api/dashboard/excel/select", json={"file_path": str(book)})

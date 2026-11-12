@@ -56,6 +56,8 @@ def test_excel_service_update_simulation_mode():
         "active_file": "test.xlsm",
         "main_file": "test.xlsm",
         "reserve_file": None,
+        "main_entered": None,
+        "reserve_entered": None,
         "recent_files": [],
     }
     with patch.object(excel_service, "_load_persisted_books", return_value=persisted):

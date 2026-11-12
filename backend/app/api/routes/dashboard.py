@@ -150,22 +150,46 @@ async def get_file_status():
     return await asyncio.to_thread(_file_status)
 
 
-def _display_path(path: Path | None) -> str | None:
-    """Путь для ответа API; ``resolve`` на недоступной шаре не должен ронять статус."""
+def _display_path(path: Path | None, entered: str | None = None) -> str | None:
+    """Путь для ответа API: набранный оператором, если сервер нашёл книгу иначе.
+
+    Оператор опознаёт книгу по своему пути (``\\\\ktm-disk\\Оператор\\…``), а
+    сервер читает её из смонтированного каталога (``/app/excel/…``). Второго
+    пути на машине оператора нет, поэтому показывается первый. Если набранное
+    открывается здесь как есть, показывается разрешённый путь: относительное
+    имя и короткое имя Windows должны выглядеть тем же файлом, что на диске.
+    ``resolve`` на недоступной шаре не должен ронять статус.
+    """
     if path is None:
         return None
+    if entered:
+        return entered
     try:
         return str(path.resolve())
     except OSError:
         return str(path)
 
 
+def _active_display_path() -> str | None:
+    """Путь читаемой сейчас книги для показа (ввод оператора, если он известен)."""
+    role = excel_service.current_role
+    if role == "main":
+        entered = excel_service.main_entered_path
+    elif role == "reserve":
+        entered = excel_service.reserve_entered_path
+    else:
+        entered = None
+    return _display_path(excel_service.current_path, entered)
+
+
 def _standby_fields() -> dict:
     """Поля режима запасной книги для строки статуса (ADR 0009)."""
     return {
         "role": excel_service.current_role,
-        "main_file_path": _display_path(excel_service.main_path),
-        "reserve_file_path": _display_path(excel_service.reserve_path),
+        "main_file_path": _display_path(excel_service.main_path, excel_service.main_entered_path),
+        "reserve_file_path": _display_path(
+            excel_service.reserve_path, excel_service.reserve_entered_path
+        ),
         **standby_book.status(),
     }
 
@@ -196,7 +220,7 @@ def _file_status() -> FileStatus:
             return FileStatus(
                 is_open=False,
                 file_name=path.name,
-                file_path=str(path),
+                file_path=_active_display_path(),
                 status_text="Файл не найден",
                 error=f"Файл не найден: {path}",
                 **_standby_fields(),
@@ -226,7 +250,7 @@ def _file_status() -> FileStatus:
             is_open=is_open,
             last_modified=mtime_dt,
             file_name=path.name,
-            file_path=str(path),
+            file_path=_active_display_path(),
             status_text=status_text,
             seconds_since_modified=seconds_since_modified,
             **_standby_fields(),
@@ -257,8 +281,8 @@ def _not_found_detail(target: Path) -> str:
     return detail
 
 
-def _resolve_book_file(raw_path: str) -> Path:
-    """Путь, набранный оператором, → путь, который видит сервер.
+def _resolve_book_input(raw_path: str) -> tuple[Path, str | None]:
+    """Путь оператора → путь сервера и ввод для показа (``None`` — он же).
 
     Оператор набирает сетевую книгу так, как её видит его машина
     (``\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm`` или ``Z:\\…``), а сервер — как
@@ -269,6 +293,11 @@ def _resolve_book_file(raw_path: str) -> Path:
     (``active_excel.json`` от другой среды или тестов) уводила бы реальный
     путь внутрь своего каталога — ровно так книга из pytest-времянки
     подменяла рабочую.
+
+    Второй элемент — набранный путь, если сервер нашёл книгу только после
+    перевода: ``/app/excel/…`` оператору ничего не говорит, а его собственный
+    путь говорит. ``None`` — показывается путь сервера: это тот же файл, что
+    и набранный (относительное имя, короткое имя Windows, ``..``).
     """
     book_dir = excel_service.directory
     path = Path(raw_path)
@@ -276,10 +305,10 @@ def _resolve_book_file(raw_path: str) -> Path:
     tail = share_tail(raw_path)
     if tail and book_dir is not None:
         if path.is_absolute() and path_exists(path):
-            return path.resolve()
+            return path.resolve(), None
         # В контейнере путь оператора не разрешается: хвост ищется в каталоге
         # книги. Если и там нет — в ошибке должно стоять место поиска.
-        return book_dir.joinpath(*tail).resolve()
+        return book_dir.joinpath(*tail).resolve(), raw_path
 
     if not path.is_absolute() and not path.root:
         if book_dir is None:
@@ -288,7 +317,7 @@ def _resolve_book_file(raw_path: str) -> Path:
                 detail="Невозможно разрешить относительный путь: каталог книги неизвестен",
             )
         path = book_dir / path
-    return path.resolve()
+    return path.resolve(), None
 
 
 def _validate_book_file(target_file: Path) -> Path:
@@ -337,18 +366,22 @@ async def select_excel_file(request: ExcelFileSelectRequest):
         else:
             raise HTTPException(status_code=400, detail="Не указан путь к файлу (file_path) или его имя (file_name)")
 
-        target_file = _validate_book_file(_resolve_book_file(file_path))
+        target_file, entered = _resolve_book_input(file_path)
+        _validate_book_file(target_file)
 
-        await asyncio.to_thread(excel_service.set_main_file, str(target_file))
+        # Показываем оператору его путь, если сервер нашёл книгу в своём
+        # каталоге: `/app/excel/…` на машине оператора не существует.
+        await asyncio.to_thread(excel_service.set_main_file, str(target_file), entered)
         standby_book.reset()
         logger.info(f"[DASHBOARD API] Switched active Excel file to: {target_file}")
 
+        active = _active_display_path()
         await _announce_book_change(
-            {"source": "excel", "file": target_file.name, "file_path": str(target_file)},
+            {"source": "excel", "file": target_file.name, "file_path": active},
             f"Активный файл Excel изменен на {target_file.name}",
         )
 
-        return {"success": True, "active": str(target_file)}
+        return {"success": True, "active": active}
     except HTTPException:
         raise
     except Exception as e:
@@ -364,9 +397,9 @@ async def get_excel_books():
     чистится, а «какие книги были раньше» должно остаться.
     """
     return ExcelBooksState(
-        main=_display_path(excel_service.main_path),
-        reserve=_display_path(excel_service.reserve_path),
-        active=_display_path(excel_service.current_path),
+        main=_display_path(excel_service.main_path, excel_service.main_entered_path),
+        reserve=_display_path(excel_service.reserve_path, excel_service.reserve_entered_path),
+        active=_active_display_path(),
         recent=[
             RecentBookPath(path=item["path"], used_at=item["used_at"] or None)
             for item in excel_service.recent_files
@@ -385,12 +418,15 @@ async def set_excel_books(request: ExcelBooksRequest):
         main_raw = normalize_path_input(request.main_path or "")
         if not main_raw:
             raise HTTPException(status_code=400, detail="Не указан путь к основной книге (main_path)")
-        main_file = _validate_book_file(_resolve_book_file(main_raw))
+        main_file, main_entered = _resolve_book_input(main_raw)
+        _validate_book_file(main_file)
 
         reserve_raw = normalize_path_input(request.reserve_path) if request.reserve_path else ""
         reserve_file: Path | None = None
+        reserve_entered: str | None = None
         if reserve_raw:
-            reserve_file = _validate_book_file(_resolve_book_file(reserve_raw))
+            reserve_file, reserve_entered = _resolve_book_input(reserve_raw)
+            _validate_book_file(reserve_file)
             if reserve_file == main_file:
                 raise HTTPException(status_code=400, detail="Запасная книга совпадает с основной")
 
@@ -398,12 +434,14 @@ async def set_excel_books(request: ExcelBooksRequest):
             excel_service.set_book_roles,
             str(main_file),
             str(reserve_file) if reserve_file is not None else None,
+            main_entered,
+            reserve_entered,
         )
         # Новые роли — новые книги: прежние замеры к ним не относятся, иначе
         # правило сравнило бы строки разных файлов.
         standby_book.reset()
 
-        active = _display_path(excel_service.current_path)
+        active = _active_display_path()
         await _announce_book_change(
             {
                 "source": "excel",
@@ -417,8 +455,10 @@ async def set_excel_books(request: ExcelBooksRequest):
 
         return {
             "success": True,
-            "main": str(main_file),
-            "reserve": str(reserve_file) if reserve_file is not None else None,
+            "main": _display_path(main_file, excel_service.main_entered_path),
+            "reserve": _display_path(reserve_file, excel_service.reserve_entered_path)
+            if reserve_file is not None
+            else None,
             "active": active,
         }
     except HTTPException:
@@ -583,8 +623,11 @@ def _settings_response() -> SettingsResponse:
 
     return SettingsResponse(
         simulation_enabled=settings.SIMULATION_ENABLED,
-        excel_path=_display_path(excel_service.current_path) or "",
-        excel_reserve_path=_display_path(excel_service.reserve_path) or "",
+        excel_path=_active_display_path() or "",
+        excel_reserve_path=_display_path(
+            excel_service.reserve_path, excel_service.reserve_entered_path
+        )
+        or "",
         excel_role=excel_service.current_role,
         opcua_endpoint=opcua_service.endpoint,
     )
@@ -638,8 +681,11 @@ async def update_settings(request: SettingsUpdateRequest):
 
         return SettingsResponse(
             simulation_enabled=settings.SIMULATION_ENABLED,
-            excel_path=_display_path(excel_service.current_path) or "",
-            excel_reserve_path=_display_path(excel_service.reserve_path) or "",
+            excel_path=_active_display_path() or "",
+            excel_reserve_path=_display_path(
+                excel_service.reserve_path, excel_service.reserve_entered_path
+            )
+            or "",
             excel_role=excel_service.current_role,
             opcua_endpoint=opcua_service.endpoint,
         )

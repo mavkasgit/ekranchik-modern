@@ -52,6 +52,13 @@ def normalize_path_input(path_text: str) -> str:
     return value
 
 
+def entered_path_text(value: object) -> str | None:
+    """Набранный оператором путь из файла выбора; мусор — ``None``."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 def path_exists(path: Path) -> bool:
     """``exists()`` по пути, который может быть чужим для этой машины.
 
@@ -117,6 +124,11 @@ class ExcelService:
             "active_file": None,
             "main_file": None,
             "reserve_file": None,
+            # Пути так, как их набрал оператор. Сервер ищет книгу по своему
+            # каталогу (``/app/excel/…``), а показывать обязан ввод оператора:
+            # пути сервера на его машине нет.
+            "main_entered": None,
+            "reserve_entered": None,
             "recent_files": [],
         }
         try:
@@ -134,6 +146,8 @@ class ExcelService:
                     "active_file": active,
                     "main_file": data.get("main_file") or active,
                     "reserve_file": data.get("reserve_file") or None,
+                    "main_entered": entered_path_text(data.get("main_entered")),
+                    "reserve_entered": entered_path_text(data.get("reserve_entered")),
                     "recent_files": recent_files,
                 }
         except Exception as e:
@@ -172,6 +186,8 @@ class ExcelService:
                 "active_file": self._active_file_name,
                 "main_file": self._main_file_name,
                 "reserve_file": self._reserve_file_name,
+                "main_entered": self._main_entered,
+                "reserve_entered": self._reserve_entered,
                 "recent_files": self._recent_files,
             }
             with open(path, "w", encoding="utf-8") as f:
@@ -194,6 +210,10 @@ class ExcelService:
         # задают, между чем выбирает правило (app.services.standby_book).
         self._main_file_name = persisted["main_file"]
         self._reserve_file_name = persisted["reserve_file"]
+        # Пути так, как их набрал оператор: по ним сервер нашёл книги в своём
+        # каталоге, и их же показывают строка статуса и диалог книг.
+        self._main_entered = persisted["main_entered"]
+        self._reserve_entered = persisted["reserve_entered"]
         # История введённых путей: её спрашивает диалог книг, чтобы оператор
         # видел, какие книги уже были, и не набирал путь заново.
         self._recent_files: list[dict[str, str]] = persisted["recent_files"]
@@ -310,6 +330,21 @@ class ExcelService:
         return self._resolve_name(self._reserve_file_name)
 
     @property
+    def main_entered_path(self) -> str | None:
+        """Основная книга так, как её набрал оператор; ``None`` — без перевода.
+
+        Путь сервера (``/app/excel/…``) оператор не узнаёт: на его машине книги
+        по нему нет. Поэтому интерфейс показывает ввод, а читает сервер по
+        ``main_path``.
+        """
+        return self._main_entered
+
+    @property
+    def reserve_entered_path(self) -> str | None:
+        """Запасная книга так, как её набрал оператор (см. ``main_entered_path``)."""
+        return self._reserve_entered
+
+    @property
     def current_role(self) -> str | None:
         """Роль активной книги: ``main``, ``reserve`` либо ``None``.
 
@@ -351,33 +386,49 @@ class ExcelService:
         remembered += [item for item in self._recent_files if item["path"] not in fresh]
         self._recent_files = remembered[:RECENT_FILES_LIMIT]
 
-    def set_book_roles(self, main_file: str | None, reserve_file: str | None) -> None:
+    def set_book_roles(
+        self,
+        main_file: str | None,
+        reserve_file: str | None,
+        main_entered: str | None = None,
+        reserve_entered: str | None = None,
+    ) -> None:
         """Задать роли книг и привести активную книгу к ним.
 
         Оператор задаёт только роли (ADR 0009): какую книгу читать, решает
         правило. Активную книгу сбрасываем на основную, лишь когда прежний
         выбор выпал из ролей — иначе переключение на запасную потерялось бы
         при каждом сохранении ролей.
+
+        ``*_entered`` — путь, как его набрал оператор, когда сервер нашёл книгу
+        в своём каталоге: его же показывают интерфейс и история путей.
         """
         self._main_file_name = main_file
         self._reserve_file_name = reserve_file
+        self._main_entered = main_entered or None
+        self._reserve_entered = reserve_entered or None
         if self._active_file_name not in (main_file, reserve_file):
             self._active_file_name = main_file
-        self._remember_paths([main_file, reserve_file])
+        self._remember_paths([main_entered or main_file, reserve_entered or reserve_file])
         self._persist_and_watch()
 
-    def set_main_file(self, file_path: str) -> None:
+    def set_main_file(self, file_path: str, entered: str | None = None) -> None:
         """Сделать книгу основной и читать её сейчас.
 
         Используется старым входом выбора пути: оператор указал книгу — она
         заведомо основная. Запасная, совпавшая с новой основной, сбрасывается:
         две роли на одном файле смысла не имеют.
+
+        ``entered`` — путь, как его набрал оператор (см. ``set_book_roles``).
         """
         reserve = self._reserve_file_name if self._reserve_file_name != file_path else None
         self._main_file_name = file_path
         self._reserve_file_name = reserve
         self._active_file_name = file_path
-        self._remember_paths([file_path])
+        self._main_entered = entered or None
+        if reserve is None:
+            self._reserve_entered = None
+        self._remember_paths([entered or file_path])
         self._persist_and_watch()
 
     def count_book_rows(self, file_path: Path | None) -> int | None:
@@ -853,6 +904,8 @@ class ExcelService:
         self._active_file_name = persisted["active_file"]
         self._main_file_name = persisted["main_file"]
         self._reserve_file_name = persisted["reserve_file"]
+        self._main_entered = persisted["main_entered"]
+        self._reserve_entered = persisted["reserve_entered"]
         self._recent_files = persisted["recent_files"]
         self.invalidate_cache()
 

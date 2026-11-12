@@ -35,7 +35,12 @@ def no_share(monkeypatch):
 
 @pytest.fixture
 def book(tmp_path: Path, monkeypatch):
-    """Каталог книги (смонтированная шара) и запись о выборе вместо записи на диск."""
+    """Каталог книги (смонтированная шара) без записи выбора на диск.
+
+    Выбор идёт через настоящий ``set_main_file``: ответ ввода пути обязан
+    называть ту же книгу, что и строка статуса, а это свойство сервиса, не
+    роута.
+    """
     from app.core.config import settings
     from app.services.excel_service import excel_service
 
@@ -48,10 +53,16 @@ def book(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(settings, "SIMULATION_ENABLED", False)
     monkeypatch.setattr(settings, "EXCEL_REAL_FILE_PATH", str(book))
     monkeypatch.setattr(excel_service, "_active_file_name", None)
-
-    selected: list[str] = []
-    monkeypatch.setattr(excel_service, "set_main_file", selected.append)
-    return book, selected
+    monkeypatch.setattr(excel_service, "_main_file_name", None)
+    monkeypatch.setattr(excel_service, "_reserve_file_name", None)
+    # Путь оператора для показа хранится рядом с ролью: чужой тест не должен
+    # оставлять его следующему.
+    monkeypatch.setattr(excel_service, "_main_entered", None)
+    monkeypatch.setattr(excel_service, "_reserve_entered", None)
+    monkeypatch.setattr(excel_service, "_recent_files", [])
+    # Запись выбора переживает перезапуск — в тесте это лишнее состояние.
+    monkeypatch.setattr(excel_service, "_save_persisted_books", lambda: None)
+    return book
 
 
 async def _select(path: str):
@@ -62,44 +73,49 @@ async def _select(path: str):
 
 
 async def test_unc_path_of_operator_resolves_inside_the_mount(book, no_share):
-    """``\\\\ktm-disk\\Оператор\\…`` — путь, который оператор видит у себя."""
-    book_path, selected = book
+    """``\\\\ktm-disk\\Оператор\\…`` — путь, который оператор видит у себя.
 
-    response = await _select("\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm")
+    Сервер находит книгу в смонтированном каталоге, но отвечает путём
+    оператора: ``/app/excel/…`` на его машине не существует.
+    """
+    from app.services.excel_service import excel_service
+
+    typed = "\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm"
+
+    response = await _select(typed)
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"success": True, "active": str(book_path.resolve())}
-    assert selected == [str(book_path.resolve())]
+    assert response.json() == {"success": True, "active": typed}
+    assert excel_service.main_path == book.resolve()
+    assert excel_service.main_entered_path == typed
 
 
 async def test_share_path_with_subfolder_keeps_the_tail(book, no_share):
-    book_path, _ = book
-    nested = book_path.parent / "excel" / "Учет КПЗ 2026.xlsm"
+    nested = book.parent / "excel" / "Учет КПЗ 2026.xlsm"
     nested.write_bytes(b"xlsm")
+    typed = "\\\\172.17.11.7\\Оператор\\excel\\Учет КПЗ 2026.xlsm"
 
-    response = await _select("\\\\172.17.11.7\\Оператор\\excel\\Учет КПЗ 2026.xlsm")
+    response = await _select(typed)
 
     assert response.status_code == 200, response.text
-    assert response.json()["active"] == str(nested.resolve())
+    assert response.json()["active"] == typed
 
 
 async def test_mapped_drive_path_resolves_inside_the_mount(book, no_share):
-    book_path, _ = book
+    typed = "Z:\\Учет КПЗ 2026.xlsm"
 
-    response = await _select("Z:\\Учет КПЗ 2026.xlsm")
+    response = await _select(typed)
 
     assert response.status_code == 200, response.text
-    assert response.json()["active"] == str(book_path.resolve())
+    assert response.json()["active"] == typed
 
 
 async def test_server_path_keeps_working(book):
     """Путь сервера (то, что показывает статус-строка) — как есть."""
-    book_path, _ = book
-
-    response = await _select(str(book_path))
+    response = await _select(str(book))
 
     assert response.status_code == 200, response.text
-    assert response.json()["active"] == str(book_path.resolve())
+    assert response.json()["active"] == str(book.resolve())
 
 
 @pytest.mark.parametrize(
@@ -116,13 +132,12 @@ async def test_server_path_keeps_working(book):
 )
 async def test_path_in_quotes_is_accepted(book, no_share, quoted):
     """Копия пути из проводника или письма: кавычки любого вида по краям."""
-    book_path, selected = book
+    typed = "\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm"
 
     response = await _select(quoted)
 
     assert response.status_code == 200, response.text
-    assert response.json()["active"] == str(book_path.resolve())
-    assert selected == [str(book_path.resolve())]
+    assert response.json()["active"] == typed
 
 
 async def test_missing_file_is_reported_with_the_path(book, no_share):

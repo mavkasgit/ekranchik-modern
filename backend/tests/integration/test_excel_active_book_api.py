@@ -33,6 +33,10 @@ def books(tmp_path, monkeypatch):
     excel_service.use_file(None)
     monkeypatch.setattr(excel_service, "_main_file_name", None)
     monkeypatch.setattr(excel_service, "_reserve_file_name", None)
+    # Путь оператора для показа — часть выбора: чужой тест не должен
+    # оставлять его следующему.
+    monkeypatch.setattr(excel_service, "_main_entered", None)
+    monkeypatch.setattr(excel_service, "_reserve_entered", None)
     # Выбор и роли пишутся в файл на диске — в тесте это лишнее состояние.
     monkeypatch.setattr(excel_service, "_save_persisted_books", lambda: None)
     return first, second

@@ -1535,36 +1535,6 @@ export default function Dashboard() {
     );
   };
 
-  // Баннер режима запасной книги (ADR 0009). Отдельно от предупреждения об
-  // устаревании файла: то про mtime, это про наполненность основной книги.
-  const renderStandbyBanner = () => {
-    if (fileStatus?.role !== "reserve") return null;
-    const growth = growthClock(fileStatus.main_last_growth);
-
-    return (
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-amber-500/60 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
-        <span className="font-semibold">Читается запасная книга.</span>
-        <span>
-          {growth
-            ? `Основная не пополняется с ${growth}.`
-            : `${
-                fileStatus.standby_reason?.replace("работа идёт в запасной: ", "") ??
-                "Основная не пополняется."
-              }`}
-        </span>
-        {fileStatus.main_file_path && (
-          <span
-            className="font-mono text-xs text-amber-800/90 dark:text-amber-300/80 truncate max-w-[520px]"
-            title={fileStatus.main_file_path}
-          >
-            {fileStatus.main_file_path}
-          </span>
-        )}
-      </div>
-    );
-  };
-
   const hangerMetaByNumber = useMemo(
     () => mergeHangerMeta(data?.products ?? [], matchedEvents ?? []),
     [data?.products, matchedEvents],
@@ -1975,8 +1945,6 @@ export default function Dashboard() {
 
       {!isFullscreen && <StatusBar onOpenPathModal={openPathModal} />}
 
-      {renderStandbyBanner()}
-
       {!isFullscreen && (
         <FiltersPanel
           filters={filters}
@@ -2114,8 +2082,8 @@ export default function Dashboard() {
           }
         }}
       >
-        <DialogContent className="max-w-2xl gap-0 overflow-hidden border-border bg-background p-0 text-foreground shadow-2xl">
-          <DialogHeader className="space-y-1.5 px-6 pb-3 pt-6">
+        <DialogContent className="max-h-[92dvh] max-w-2xl gap-0 overflow-x-hidden overflow-y-auto border-border bg-background p-0 text-foreground shadow-2xl">
+          <DialogHeader className="min-w-0 space-y-1.5 px-6 pb-3 pt-6">
             <DialogTitle className="flex items-center gap-2 text-xl font-bold text-emerald-600">
               <FileSpreadsheet className="h-5 w-5" />
               Книги учёта
@@ -2125,7 +2093,7 @@ export default function Dashboard() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="px-6">
+          <div className="min-w-0 px-6">
             <div className="space-y-1 rounded-md border bg-muted/40 px-3 py-2 text-[11px]">
               <div>
                 <span className="text-muted-foreground">Читается сейчас: </span>
@@ -2173,8 +2141,8 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="grid gap-3 px-6 py-4 md:grid-cols-2">
-            <section className="rounded-lg border border-emerald-500/50 p-3">
+          <div className="grid min-w-0 gap-3 px-6 py-4 md:grid-cols-2">
+            <section className="min-w-0 rounded-lg border border-emerald-500/50 p-3">
               <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 Основная книга
@@ -2196,7 +2164,7 @@ export default function Dashboard() {
               </p>
             </section>
 
-            <section className="rounded-lg border border-amber-500/50 p-3">
+            <section className="min-w-0 rounded-lg border border-amber-500/50 p-3">
               <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
                 <span className="h-2 w-2 rounded-full bg-amber-500" />
                 Запасная книга
@@ -2221,19 +2189,19 @@ export default function Dashboard() {
           </div>
 
           {pathError && (
-            <div className="mx-6 flex items-start gap-2 rounded border border-red-300 bg-red-50 px-2 py-1.5 text-[11px] text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
+            <div className="mx-6 flex min-w-0 items-start gap-2 rounded border border-red-300 bg-red-50 px-2 py-1.5 text-[11px] text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span className="break-all">{pathError}</span>
             </div>
           )}
 
-          <div className="mt-3 flex items-center justify-between gap-3 border-t px-6 py-3">
-            <span className="truncate text-[11px] text-muted-foreground">
+          <div className="mt-3 flex min-w-0 items-center justify-end gap-3 border-t px-6 py-3">
+            <span className="mr-auto min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
               {reservePathInput.trim()
                 ? `запасная: ${pathHint(reservePathInput.trim())}`
                 : "режим запасной выключен"}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"

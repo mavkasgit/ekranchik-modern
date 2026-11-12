@@ -25,10 +25,11 @@ def test_real_path_wins_over_a_stale_book_folder(tmp_path, monkeypatch):
         lambda path: True if str(path).startswith("\\\\172.17.11.7") else real_exists(path),
     )
 
-    resolved = routes._resolve_book_file(unc)
+    resolved, entered = routes._resolve_book_input(unc)
 
     assert str(resolved).startswith("\\\\172.17.11.7"), resolved
     assert str(resolved) != str(stale / "Учет КПЗ 2026.xlsm")
+    assert entered is None, "путь открылся как есть — показывать его же и нужно"
 
 
 def test_missing_operator_path_is_looked_up_inside_the_book_folder(tmp_path, monkeypatch):
@@ -46,4 +47,10 @@ def test_missing_operator_path_is_looked_up_inside_the_book_folder(tmp_path, mon
         routes, "path_exists", lambda path: False if str(path).startswith("\\\\") else Path(path).exists()
     )
 
-    assert routes._resolve_book_file("\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm") == mapped.resolve()
+    typed = "\\\\ktm-disk\\Оператор\\Учет КПЗ 2026.xlsm"
+    resolved, entered = routes._resolve_book_input(typed)
+
+    assert resolved == mapped.resolve()
+    # Книгу сервер нашёл в смонтированном каталоге: оператору показывается
+    # его путь, а не ``/app/excel/…``.
+    assert entered == typed
