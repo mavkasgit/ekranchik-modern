@@ -44,9 +44,8 @@ static/app_settings.json
 static/ekranchik_backup_*.db
 # Снимок перед синком каталога (scripts/sync-ekranchik.py в ktm2000)
 static/ekranchik.db.bak-*
-# Резервные копии фото и манифест синка — локальное состояние, не данные репозитория
+# Резервные копии фото — локальное состояние, не данные репозитория
 static/images.bak-*/
-static/images-sync.json
 
 # Журнал подвесов: пишется приложением, в git не попадает
 static/journal/
