@@ -154,11 +154,16 @@ export function PhotoViewer({
 
   // Колесо слушаем нативно: React вешает wheel пассивно, и preventDefault
   // в синтетическом обработчике не остановил бы прокрутку страницы.
+  //
+  // Слушатель висит на window, а не на contentRef: Radix монтирует содержимое
+  // диалога в портал, и на момент этого эффекта ref ещё может быть пустым.
+  // Цель проверяем в самом обработчике — тогда зум работает и после портала.
   useEffect(() => {
-    const content = contentRef.current;
-    if (!content) return;
-
     const handleWheel = (event: WheelEvent) => {
+      const content = contentRef.current;
+      if (!content) return;
+      if (!(event.target instanceof Node) || !content.contains(event.target)) return;
+
       event.preventDefault();
       const nextZoom = zoomFromWheel(event.deltaY, viewRef.current.zoom);
       if (nextZoom === viewRef.current.zoom) return;
@@ -166,8 +171,8 @@ export function PhotoViewer({
       commitView(zoomAroundPoint(viewRef.current, pointer, nextZoom));
     };
 
-    content.addEventListener("wheel", handleWheel, { passive: false });
-    return () => content.removeEventListener("wheel", handleWheel);
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => window.removeEventListener("wheel", handleWheel);
   }, [commitView]);
 
   useEffect(() => {
