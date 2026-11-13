@@ -12,15 +12,11 @@ export const catalogApi = {
     return data;
   },
 
-  getAll: async (limit = 500): Promise<Profile[]> => {
+  // Потолок витрины — 1000 артикулов: сервер больше и не отдаёт.
+  getAll: async (limit = 1000): Promise<Profile[]> => {
     const { data } = await api.get<Profile[]>("/catalog/all", {
       params: { limit },
     });
-    return data;
-  },
-
-  getProfile: async (name: string): Promise<Profile> => {
-    const { data } = await api.get<Profile>(`/catalog/${encodeURIComponent(name)}`);
     return data;
   },
 

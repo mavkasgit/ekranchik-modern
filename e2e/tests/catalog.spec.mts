@@ -32,22 +32,32 @@ async function leaveKioskMode(page: Page) {
 }
 
 /** Карточка с фото открывает карточку артикула, фото в ней — просмотрщик. */
-async function openViewer(page: Page): Promise<Locator> {
-  const cardPhoto = page.locator("div.grid img[alt]").first();
-  const hasPhoto = await cardPhoto
+async function openViewer(page: Page): Promise<{ viewer: Locator; articleDialog: Locator }> {
+  // Превью само открывает просмотрщик (спека 0002), поэтому карточку
+  // открываем по заголовку: сценарий проверяет фото именно из карточки.
+  const card = page
+    .getByTestId("profile-card")
+    .filter({ has: page.locator('button[title="Открыть фото"]') })
+    .first();
+  const hasPhoto = await card
     .waitFor({ state: "visible", timeout: 15000 })
     .then(() => true)
     .catch(() => false);
   test.skip(!hasPhoto, "В каталоге нет карточек с фото: нужен стенд с данными.");
 
-  await cardPhoto.click();
-  const openPhotoButton = page.locator('button[title="Открыть фото"]');
+  const article = (await card.getByRole("heading").innerText()).trim();
+  await card.getByRole("heading").click();
+
+  const articleDialog = page.getByRole("dialog", { name: article });
+  await expect(articleDialog).toBeVisible();
+
+  const openPhotoButton = articleDialog.locator('button[title="Открыть фото"]');
   await expect(openPhotoButton).toBeVisible();
   await openPhotoButton.click();
 
   const viewer = page.getByTestId("photo-viewer");
   await expect(viewer).toBeVisible();
-  return viewer;
+  return { viewer, articleDialog };
 }
 
 async function imageMetrics(viewer: Locator): Promise<ImageMetrics> {
@@ -86,7 +96,7 @@ test.describe("Каталог: просмотр фото", () => {
         await page.goto(`${BASE_URL}/catalog`);
         await leaveKioskMode(page);
 
-        const viewer = await openViewer(page);
+        const { viewer, articleDialog } = await openViewer(page);
         const image = viewer.locator("img");
         await expect
           .poll(async () => (await imageMetrics(viewer)).naturalWidth, { timeout: 10_000 })
@@ -131,10 +141,10 @@ test.describe("Каталог: просмотр фото", () => {
         // 4. Esc закрывает просмотрщик, карточка артикула остаётся.
         await page.keyboard.press("Escape");
         await expect(viewer).toBeHidden();
-        await expect(page.locator('button[title="Открыть фото"]')).toBeVisible();
+        await expect(articleDialog.locator('button[title="Открыть фото"]')).toBeVisible();
 
         // 5. Скачивание отдаёт файл.
-        await page.locator('button[title="Открыть фото"]').click();
+        await articleDialog.locator('button[title="Открыть фото"]').click();
         await expect(viewer).toBeVisible();
         await expect(image).toBeVisible();
 
@@ -147,5 +157,120 @@ test.describe("Каталог: просмотр фото", () => {
     }
 
     await page.setViewportSize({ width: 1366, height: 768 });
+  });
+});
+
+test.describe("Каталог: поиск, фильтр по длине и примечание", () => {
+  test("поиск сужает список, длина фильтрует таблицу, примечание переживает перезагрузку", async ({
+    connectedPage: page,
+  }) => {
+    test.setTimeout(120_000);
+
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto(`${BASE_URL}/catalog`);
+    // Прошлый прогон мог оставить фильтры и режим в localStorage.
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await leaveKioskMode(page);
+
+    const cards = page.getByTestId("profile-card");
+    await expect(cards.first()).toBeVisible({ timeout: 15_000 });
+    const total = await cards.count();
+    expect(total).toBeGreaterThan(0);
+
+    await test.step("превью открывает просмотрщик напрямую", async () => {
+      const thumb = cards.locator('button[title="Открыть фото"]').first();
+      if ((await thumb.count()) === 0) return;
+
+      await thumb.click();
+      const viewer = page.getByTestId("photo-viewer");
+      await expect(viewer).toBeVisible();
+      // Карточка артикула при этом не открывается.
+      await expect(page.getByLabel("Примечание")).toBeHidden();
+
+      await page.keyboard.press("Escape");
+      await expect(viewer).toBeHidden();
+    });
+
+    const search = page.getByPlaceholder("Поиск по артикулу, наименованию и примечанию...");
+
+    await test.step("поиск «033» сужает список", async () => {
+      await search.fill("033");
+      await expect.poll(() => cards.count(), { timeout: 5_000 }).toBeLessThan(total);
+      expect(await cards.count()).toBeGreaterThan(0);
+
+      await page.locator('button[title="Очистить поиск"]').click();
+      await expect.poll(() => cards.count(), { timeout: 5_000 }).toBe(total);
+    });
+
+    await test.step("фильтр по длине из заголовка таблицы", async () => {
+      await page.locator('button[title="Таблица"]').click();
+
+      const rows = page.locator("table tbody tr");
+      await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+      const before = await rows.count();
+
+      const lengthHeader = page.locator("th").filter({
+        has: page.getByRole("button", { name: "Длина", exact: true }),
+      });
+      await lengthHeader.locator('button[title="Фильтр"]').click();
+
+      const panel = page.getByRole("dialog", { name: "Фильтр колонки" });
+      await expect(panel).toBeVisible();
+      const checkbox = panel.getByRole("checkbox").first();
+      const lengthLabel = (await checkbox.locator("xpath=..").innerText()).trim();
+      await checkbox.click();
+      await panel.getByRole("button", { name: "Готово" }).click();
+
+      await expect.poll(() => rows.count(), { timeout: 5_000 }).toBeLessThan(before);
+      expect(await rows.count()).toBeGreaterThan(0);
+      await expect(page.getByText(`Длина: ${lengthLabel}`)).toBeVisible();
+      // Группа длин — одно условие: счётчик считает её один раз.
+      await expect(page.getByText("Фильтров: 1")).toBeVisible();
+    });
+
+    await test.step("примечание сохраняется по потере фокуса и переживает перезагрузку", async () => {
+      const rows = page.locator("table tbody tr");
+      const article = (await rows.first().locator("td").nth(1).innerText()).trim();
+      await rows.first().locator("td").nth(1).click();
+
+      const dialog = page.getByRole("dialog", { name: article });
+      await expect(dialog).toBeVisible();
+      const notes = dialog.getByLabel("Примечание");
+      const original = await notes.inputValue();
+      const saved = `e2e-${Date.now()}`;
+
+      const savedPatch = page.waitForResponse(
+        (response) => response.request().method() === "PATCH" && response.url().includes("/notes"),
+      );
+      await notes.fill(saved);
+      await notes.blur();
+      expect((await savedPatch).ok()).toBeTruthy();
+
+      // Фильтр длины и режим таблицы пережили перезагрузку; артикул ищем по имени.
+      await page.reload();
+      await leaveKioskMode(page);
+      await expect(page.locator("table tbody tr").first()).toBeVisible({ timeout: 15_000 });
+      await search.fill(article);
+
+      const row = page
+        .locator("table tbody tr")
+        .filter({ has: page.getByText(article, { exact: true }) })
+        .first();
+      await expect(row).toBeVisible({ timeout: 5_000 });
+      await row.locator("td").nth(1).click();
+
+      const reopened = page.getByRole("dialog", { name: article });
+      const reopenedNotes = reopened.getByLabel("Примечание");
+      await expect(reopenedNotes).toHaveValue(saved, { timeout: 10_000 });
+
+      // Вернуть примечание как было: тест не оставляет следов в каталоге.
+      const restorePatch = page.waitForResponse(
+        (response) => response.request().method() === "PATCH" && response.url().includes("/notes"),
+      );
+      await reopenedNotes.fill(original);
+      await reopenedNotes.blur();
+      expect((await restorePatch).ok()).toBeTruthy();
+    });
   });
 });

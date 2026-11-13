@@ -52,7 +52,8 @@ export const EMPTY_FILTERS: CatalogFilters = {
   updatedTo: null,
 };
 
-const SORT_FIELDS: SortField[] = [
+/** Порядок столбцов сортировки: меню в тулбаре и чтение `localStorage`. */
+export const SORT_FIELDS: readonly SortField[] = [
   "name",
   "description",
   "quantity_per_hanger",
@@ -62,9 +63,18 @@ const SORT_FIELDS: SortField[] = [
   "has_photo",
 ];
 
-/** Кириллица сравнивается азбукой, а не кодами символов. */
+/**
+ * Нормализация для сравнения «содержит»: убирает пробелы по краям и регистр.
+ * Алфавитный порядок кириллицы задаёт не она, а `sortProfiles` через
+ * `localeCompare(..., "ru")`.
+ */
 function normalize(value: string): string {
   return value.trim().toLocaleLowerCase("ru");
+}
+
+/** Фото есть, если каталог-источник отдал превью или полное фото. */
+function hasPhoto(profile: Profile): boolean {
+  return Boolean(profile.photo_thumb || profile.photo_full);
 }
 
 function contains(value: string | null, needle: string): boolean {
@@ -81,16 +91,16 @@ export function matchesQuery(profile: Profile, query: string): boolean {
   );
 }
 
-function dayStart(value: string): number | null {
+/**
+ * Граница календарного дня `YYYY-MM-DD`: `endOfDay` — 23:59:59.999, иначе
+ * 00:00:00.000. Обе границы включительно, поэтому фильтр не теряет день.
+ */
+function dayBoundary(value: string, endOfDay: boolean): number | null {
   const [year, month, day] = value.split("-").map(Number);
   if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
-}
-
-function dayEnd(value: string): number | null {
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
+  return endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59, 999).getTime()
+    : new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
 }
 
 function matchesUpdated(profile: Profile, filters: CatalogFilters): boolean {
@@ -99,10 +109,10 @@ function matchesUpdated(profile: Profile, filters: CatalogFilters): boolean {
   const updated = new Date(profile.updated_at).getTime();
   if (Number.isNaN(updated)) return false;
 
-  const from = filters.updatedFrom ? dayStart(filters.updatedFrom) : null;
+  const from = filters.updatedFrom ? dayBoundary(filters.updatedFrom, false) : null;
   if (from !== null && updated < from) return false;
 
-  const to = filters.updatedTo ? dayEnd(filters.updatedTo) : null;
+  const to = filters.updatedTo ? dayBoundary(filters.updatedTo, true) : null;
   if (to !== null && updated > to) return false;
 
   return true;
@@ -126,7 +136,7 @@ export function matchesFilters(profile: Profile, filters: CatalogFilters): boole
     if (profile.length === null || !filters.lengths.has(profile.length)) return false;
   }
 
-  if (filters.hasPhoto && profile.photo_thumb === null) return false;
+  if (filters.hasPhoto && !hasPhoto(profile)) return false;
 
   return matchesUpdated(profile, filters);
 }
@@ -146,7 +156,7 @@ function sortValue(profile: Profile, field: SortField): string | number | null {
     case "updated_at":
       return new Date(profile.updated_at).getTime();
     case "has_photo":
-      return profile.photo_thumb ? 1 : 0;
+      return hasPhoto(profile) ? 1 : 0;
   }
 }
 
@@ -189,7 +199,8 @@ export function activeFilterCount(filters: CatalogFilters): number {
   if (normalize(filters.name)) count += 1;
   if (normalize(filters.description)) count += 1;
   if (filters.quantityFrom !== null || filters.quantityTo !== null) count += 1;
-  count += filters.lengths.size;
+  // Группа длин — одно условие, даже если отмечено несколько значений.
+  if (filters.lengths.size > 0) count += 1;
   if (normalize(filters.notes)) count += 1;
   if (filters.hasPhoto) count += 1;
   if (filters.updatedFrom || filters.updatedTo) count += 1;
