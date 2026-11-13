@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { catalogApi } from "@/api/catalog";
 import { catalogKeys } from "@/lib/queryKeys";
 import { notesPayload } from "@/lib/domain/catalogNotes";
@@ -8,6 +8,9 @@ export function useCatalogAll() {
   return useQuery({
     queryKey: catalogKeys.list,
     queryFn: () => catalogApi.getAll(),
+    // Ручное обновление не должно мигать скелетоном: пока грузится новая
+    // копия списка, экран показывает предыдущую.
+    placeholderData: keepPreviousData,
     staleTime: 30000, // 30 seconds - prevent unnecessary refetches
   });
 }

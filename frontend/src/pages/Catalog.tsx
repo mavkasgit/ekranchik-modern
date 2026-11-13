@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Search,
   Image as ImageIcon,
@@ -8,6 +8,7 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  Check,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -41,16 +42,77 @@ import { useToast } from "@/hooks/use-toast";
 import { useCatalogAll, useUpdateNotes } from "@/hooks/useCatalog";
 import type { Profile } from "@/types/profile";
 import { photoUrl } from "@/lib/domain/photo";
+import {
+  activeFilterCount,
+  EMPTY_FILTERS,
+  lengthOptions,
+  matchesFilters,
+  matchesQuery,
+  parseStoredFilters,
+  parseStoredSort,
+  serializeFilters,
+  sortProfiles,
+  toggleSort,
+  type CatalogFilters,
+  type CatalogSort,
+  type SortDirection,
+  type SortField,
+} from "@/lib/domain/catalogView";
+import { ALL_FILTER_FIELDS, CatalogFilterChips, FilterPopover } from "@/components/CatalogFilters";
 
 type ViewMode = "grid" | "table";
-type SortField = "name" | "updated_at" | "has_photo";
-type SortDirection = "asc" | "desc";
 
+// Ключи с префиксом каталога: режим, сортировка и фильтры переживают
+// перезагрузку киоска. Старые записи (два ключа сортировки) читаются.
 const STORAGE_KEYS = {
   viewMode: "catalog_view_mode",
-  sortField: "catalog_sort_field",
-  sortDirection: "catalog_sort_direction",
+  sort: "catalog_sort",
+  filters: "catalog_filters",
 };
+
+const LEGACY_SORT_KEYS = {
+  field: "catalog_sort_field",
+  direction: "catalog_sort_direction",
+};
+
+const SORT_LABELS: Record<SortField, string> = {
+  name: "Артикул",
+  description: "Наименование",
+  quantity_per_hanger: "Количество",
+  length: "Длина",
+  notes: "Примечания",
+  updated_at: "Изменён",
+  has_photo: "Фото",
+};
+
+const SORT_FIELD_ORDER: SortField[] = [
+  "name",
+  "description",
+  "quantity_per_hanger",
+  "length",
+  "notes",
+  "updated_at",
+  "has_photo",
+];
+
+function readViewMode(): ViewMode {
+  return localStorage.getItem(STORAGE_KEYS.viewMode) === "table" ? "table" : "grid";
+}
+
+function readSort(): CatalogSort {
+  const stored = localStorage.getItem(STORAGE_KEYS.sort);
+  if (stored) return parseStoredSort(stored);
+
+  const field = localStorage.getItem(LEGACY_SORT_KEYS.field);
+  const direction = localStorage.getItem(LEGACY_SORT_KEYS.direction);
+  if (field || direction) return parseStoredSort(JSON.stringify({ field, direction }));
+
+  return parseStoredSort(null);
+}
+
+function readFilters(): CatalogFilters {
+  return parseStoredFilters(localStorage.getItem(STORAGE_KEYS.filters));
+}
 
 /** Счётчик в заголовке: «1 артикул», «2 артикула», «5 артикулов». */
 function articlesLabel(count: number): string {
@@ -66,11 +128,48 @@ function formatDate(value: string): string {
 }
 
 function SortIcon({ active, direction }: { active: boolean; direction: SortDirection }) {
-  if (!active) return <ArrowUpDown className="ml-1 h-4 w-4" />;
+  if (!active) return <ArrowUpDown className="ml-1 h-3.5 w-3.5 opacity-50" />;
   return direction === "asc" ? (
-    <ArrowUp className="ml-1 h-4 w-4" />
+    <ArrowUp className="ml-1 h-3.5 w-3.5" />
   ) : (
-    <ArrowDown className="ml-1 h-4 w-4" />
+    <ArrowDown className="ml-1 h-3.5 w-3.5" />
+  );
+}
+
+/**
+ * Заголовок колонки таблицы: клик по названию сортирует, кнопка фильтра
+ * открывает поповер этой колонки.
+ */
+function SortableHead({
+  label,
+  field,
+  sort,
+  onSort,
+  className,
+  children,
+}: {
+  label: string;
+  field: SortField;
+  sort: CatalogSort;
+  onSort: (field: SortField) => void;
+  className?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <TableHead className={className}>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onSort(field)}
+          className="flex items-center rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          title={`Сортировать: ${label}`}
+        >
+          {label}
+          <SortIcon active={sort.field === field} direction={sort.direction} />
+        </button>
+        {children}
+      </div>
+    </TableHead>
   );
 }
 
@@ -266,16 +365,14 @@ function CatalogSkeleton() {
 }
 
 export default function Catalog() {
+  // Поиск клиентский: 200 мс после последнего нажатия, без сетевых запросов.
+  const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>(
-    () => (localStorage.getItem(STORAGE_KEYS.viewMode) as ViewMode) || "grid",
-  );
-  const [sortField, setSortField] = useState<SortField>(
-    () => (localStorage.getItem(STORAGE_KEYS.sortField) as SortField) || "name",
-  );
-  const [sortDirection, setSortDirection] = useState<SortDirection>(
-    () => (localStorage.getItem(STORAGE_KEYS.sortDirection) as SortDirection) || "asc",
-  );
+  const queryTimer = useRef<number | undefined>(undefined);
+
+  const [viewMode, setViewMode] = useState<ViewMode>(readViewMode);
+  const [sort, setSort] = useState<CatalogSort>(readSort);
+  const [filters, setFilters] = useState<CatalogFilters>(readFilters);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   const { data: profiles, isLoading, isError, isFetching, refetch } = useCatalogAll();
@@ -285,50 +382,41 @@ export default function Catalog() {
   }, [viewMode]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.sortField, sortField);
-  }, [sortField]);
+    localStorage.setItem(STORAGE_KEYS.sort, JSON.stringify(sort));
+  }, [sort]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.sortDirection, sortDirection);
-  }, [sortDirection]);
+    localStorage.setItem(STORAGE_KEYS.filters, serializeFilters(filters));
+  }, [filters]);
+
+  useEffect(() => () => window.clearTimeout(queryTimer.current), []);
+
+  const changeQuery = (value: string) => {
+    setQueryInput(value);
+    window.clearTimeout(queryTimer.current);
+    queryTimer.current = window.setTimeout(() => setQuery(value), 200);
+  };
+
+  const updateFilters = (patch: Partial<CatalogFilters>) => {
+    setFilters((current) => ({ ...current, ...patch }));
+  };
+
+  const resetFilters = () => setFilters(EMPTY_FILTERS);
 
   const displayData = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase("ru");
     const matched = (profiles ?? []).filter(
-      (profile) =>
-        !normalizedQuery ||
-        [profile.name, profile.description, profile.notes].some((value) =>
-          value?.toLocaleLowerCase("ru").includes(normalizedQuery),
-        ),
+      (profile) => matchesQuery(profile, query) && matchesFilters(profile, filters),
     );
+    return sortProfiles(matched, sort);
+  }, [profiles, query, filters, sort]);
 
-    return [...matched].sort((a, b) => {
-      let cmp = 0;
-      switch (sortField) {
-        case "name":
-          cmp = a.name.localeCompare(b.name, "ru");
-          break;
-        case "updated_at":
-          cmp = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();
-          break;
-        case "has_photo":
-          cmp = (a.photo_thumb ? 1 : 0) - (b.photo_thumb ? 1 : 0);
-          break;
-      }
-      return sortDirection === "asc" ? cmp : -cmp;
-    });
-  }, [profiles, query, sortField, sortDirection]);
+  const lengths = useMemo(() => lengthOptions(profiles ?? []), [profiles]);
+  const filterCount = activeFilterCount(filters);
+  const hasSearch = query.trim() !== "";
 
   const selectedProfile = profiles?.find((profile) => profile.id === selectedId) ?? null;
 
-  const toggleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection((direction) => (direction === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
-      setSortDirection("asc");
-    }
-  };
+  const handleSort = (field: SortField) => setSort((current) => toggleSort(current, field));
 
   return (
     <div className="container mx-auto max-w-6xl p-4 md:p-6">
@@ -364,26 +452,39 @@ export default function Catalog() {
           </div>
         </div>
 
-        <div className="flex gap-2 md:gap-4">
-          <div className="relative flex-1">
+        <div className="flex flex-wrap gap-2 md:flex-nowrap md:gap-4">
+          <div className="relative min-w-0 flex-1 basis-full md:basis-auto">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Поиск по артикулу, наименованию и примечанию..."
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              value={queryInput}
+              onChange={(event) => changeQuery(event.target.value)}
               className="pl-10 pr-10"
             />
-            {query && (
+            {queryInput && (
               <Button
                 variant="ghost"
                 size="sm"
                 className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 p-0"
-                onClick={() => setQuery("")}
+                onClick={() => changeQuery("")}
                 title="Очистить поиск"
               >
                 <X className="h-4 w-4" />
               </Button>
             )}
+          </div>
+
+          {/* В таблице фильтры открываются из заголовков колонок; кнопка нужна
+              плитке, а на телефоне плитка — единственный режим. */}
+          <div className={viewMode === "table" ? "md:hidden" : undefined}>
+            <FilterPopover
+              label="Фильтры"
+              fields={ALL_FILTER_FIELDS}
+              filters={filters}
+              lengths={lengths}
+              onChange={updateFilters}
+              onReset={resetFilters}
+            />
           </div>
 
           <div className="flex">
@@ -395,11 +496,14 @@ export default function Catalog() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => toggleSort("name")}>По артикулу</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => toggleSort("updated_at")}>
-                  По дате изменения
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => toggleSort("has_photo")}>С фото</DropdownMenuItem>
+                {SORT_FIELD_ORDER.map((field) => (
+                  <DropdownMenuItem key={field} onClick={() => handleSort(field)}>
+                    <Check
+                      className={`mr-2 h-4 w-4 ${sort.field === field ? "opacity-100" : "opacity-0"}`}
+                    />
+                    {SORT_LABELS[field]}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
             <Button
@@ -407,11 +511,14 @@ export default function Catalog() {
               size="icon"
               className="rounded-l-none"
               onClick={() =>
-                setSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))
+                setSort((current) => ({
+                  ...current,
+                  direction: current.direction === "asc" ? "desc" : "asc",
+                }))
               }
-              title={sortDirection === "asc" ? "По возрастанию" : "По убыванию"}
+              title={sort.direction === "asc" ? "По возрастанию" : "По убыванию"}
             >
-              {sortDirection === "asc" ? (
+              {sort.direction === "asc" ? (
                 <ArrowUp className="h-4 w-4" />
               ) : (
                 <ArrowDown className="h-4 w-4" />
@@ -419,6 +526,12 @@ export default function Catalog() {
             </Button>
           </div>
         </div>
+
+        {filterCount > 0 && (
+          <div className="mt-3">
+            <CatalogFilterChips filters={filters} onChange={updateFilters} onReset={resetFilters} />
+          </div>
+        )}
       </div>
 
       {isLoading && <CatalogSkeleton />}
@@ -435,7 +548,7 @@ export default function Catalog() {
       {!isLoading && !isError && displayData.length === 0 && (
         <div className="py-12 text-center text-muted-foreground">
           <Search className="mx-auto mb-4 h-12 w-12 opacity-50" />
-          <p>{query.trim() ? "Ничего не найдено" : "Каталог пуст"}</p>
+          <p>{hasSearch || filterCount > 0 ? "Ничего не найдено" : "Каталог пуст"}</p>
         </div>
       )}
 
@@ -460,22 +573,90 @@ export default function Catalog() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-16">Фото</TableHead>
-                    <TableHead className="cursor-pointer" onClick={() => toggleSort("name")}>
-                      <div className="flex items-center">
-                        Артикул <SortIcon active={sortField === "name"} direction={sortDirection} />
-                      </div>
-                    </TableHead>
-                    <TableHead>Наименование</TableHead>
-                    <TableHead>Кол-во</TableHead>
-                    <TableHead>Длина</TableHead>
-                    <TableHead>Примечания</TableHead>
-                    <TableHead className="cursor-pointer" onClick={() => toggleSort("updated_at")}>
-                      <div className="flex items-center">
-                        Изменён{" "}
-                        <SortIcon active={sortField === "updated_at"} direction={sortDirection} />
-                      </div>
-                    </TableHead>
+                    <SortableHead
+                      label="Фото"
+                      field="has_photo"
+                      sort={sort}
+                      onSort={handleSort}
+                      className="w-24"
+                    >
+                      <FilterPopover
+                        fields={["has_photo"]}
+                        filters={filters}
+                        lengths={lengths}
+                        onChange={updateFilters}
+                        onReset={resetFilters}
+                      />
+                    </SortableHead>
+                    <SortableHead label="Артикул" field="name" sort={sort} onSort={handleSort}>
+                      <FilterPopover
+                        fields={["name"]}
+                        filters={filters}
+                        lengths={lengths}
+                        onChange={updateFilters}
+                        onReset={resetFilters}
+                      />
+                    </SortableHead>
+                    <SortableHead
+                      label="Наименование"
+                      field="description"
+                      sort={sort}
+                      onSort={handleSort}
+                    >
+                      <FilterPopover
+                        fields={["description"]}
+                        filters={filters}
+                        lengths={lengths}
+                        onChange={updateFilters}
+                        onReset={resetFilters}
+                      />
+                    </SortableHead>
+                    <SortableHead
+                      label="Кол-во"
+                      field="quantity_per_hanger"
+                      sort={sort}
+                      onSort={handleSort}
+                    >
+                      <FilterPopover
+                        fields={["quantity"]}
+                        filters={filters}
+                        lengths={lengths}
+                        onChange={updateFilters}
+                        onReset={resetFilters}
+                      />
+                    </SortableHead>
+                    <SortableHead label="Длина" field="length" sort={sort} onSort={handleSort}>
+                      <FilterPopover
+                        fields={["length"]}
+                        filters={filters}
+                        lengths={lengths}
+                        onChange={updateFilters}
+                        onReset={resetFilters}
+                      />
+                    </SortableHead>
+                    <SortableHead label="Примечания" field="notes" sort={sort} onSort={handleSort}>
+                      <FilterPopover
+                        fields={["notes"]}
+                        filters={filters}
+                        lengths={lengths}
+                        onChange={updateFilters}
+                        onReset={resetFilters}
+                      />
+                    </SortableHead>
+                    <SortableHead
+                      label="Изменён"
+                      field="updated_at"
+                      sort={sort}
+                      onSort={handleSort}
+                    >
+                      <FilterPopover
+                        fields={["updated_at"]}
+                        filters={filters}
+                        lengths={lengths}
+                        onChange={updateFilters}
+                        onReset={resetFilters}
+                      />
+                    </SortableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
