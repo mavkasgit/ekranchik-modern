@@ -325,10 +325,12 @@ function PhotoModal({
 
   // Calculate dialog size based on actual image pixels (like Catalog)
   const dialogSize = useMemo(() => {
-    const rightPanelWidth = 280;
+    // На узком экране правая панель скрыта, фото занимает всю ширину диалога
+    const rightPanelWidth = typeof window !== "undefined" && window.innerWidth >= 768 ? 280 : 0;
     const maxDialogHeight = typeof window !== "undefined" ? window.innerHeight - 100 : 800;
     const maxDialogWidth = typeof window !== "undefined" ? window.innerWidth - 100 : 1200;
-    const minHeight = 400;
+    // На низком окне минимум не должен выталкивать диалог за нижнюю границу экрана
+    const minHeight = Math.min(400, maxDialogHeight);
 
     if (!imageSize) {
       return { width: Math.min(900, maxDialogWidth), height: minHeight };
@@ -354,7 +356,7 @@ function PhotoModal({
 
     return {
       width: Math.max(600, imgDisplayWidth + rightPanelWidth),
-      height: Math.max(minHeight, imgDisplayHeight),
+      height: Math.min(maxDialogHeight, Math.max(minHeight, imgDisplayHeight)),
     };
   }, [imageSize]);
 
@@ -371,12 +373,13 @@ function PhotoModal({
             width: `${dialogSize.width}px`,
             height: `${dialogSize.height}px`,
             maxWidth: "calc(100vw - 100px)",
+            maxHeight: "95dvh",
           }}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          <div className="flex h-full">
+          <div className="flex h-full min-h-0">
             {/* Photo area - left side */}
-            <div className="flex-1 bg-muted flex items-center justify-center overflow-auto relative">
+            <div className="flex-1 min-h-0 min-w-0 bg-muted flex items-center justify-center overflow-auto relative">
               <Button
                 variant="ghost"
                 size="icon"
@@ -387,7 +390,7 @@ function PhotoModal({
                 <Maximize2 className="h-5 w-5" />
               </Button>
               <div
-                className="relative w-full h-full flex items-center justify-center select-none cursor-pointer"
+                className="relative w-full h-full min-h-0 flex items-center justify-center select-none cursor-pointer"
                 onClick={() => setIsFullscreen(true)}
               >
                 <img
@@ -399,7 +402,10 @@ function PhotoModal({
             </div>
 
             {/* Right panel - info (like Catalog view mode) */}
-            <div className="border-l bg-background p-4 flex flex-col" style={{ width: "280px" }}>
+            <div
+              className="hidden md:flex border-l bg-background p-4 flex-col"
+              style={{ width: "280px" }}
+            >
               <div className="flex-1 space-y-4 overflow-y-auto">
                 <h2 className="text-xl font-semibold">{profileName}</h2>
                 <div className="space-y-3 text-sm">
