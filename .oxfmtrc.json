@@ -9,6 +9,7 @@
     "journal-dev",
     "static",
     "backend/.venv",
-    "node_modules"
+    "node_modules",
+    ".mise/locks"
   ]
 }

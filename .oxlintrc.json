@@ -1,5 +1,5 @@
 {
-  "$schema": "https://unpkg.com/oxlint@1.92.0/configuration_schema.json",
+  "$schema": "https://unpkg.com/oxlint@1.93.0/configuration_schema.json",
   "plugins": ["typescript", "react", "react-hooks", "unicorn", "oxc"],
   "categories": {
     "correctness": "error"
