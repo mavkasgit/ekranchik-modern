@@ -19,16 +19,19 @@ catalog_module = importlib.import_module("app.services.catalog_service")
 APP_DIR = Path(catalog_module.__file__).resolve().parents[1]
 
 REMOVED_SERVICE_METHODS = [
-    "save_photo",
-    "generate_thumbnail",
-    "update_thumbnail",
-    "delete_photo",
-    "delete_full_photo",
-    "delete_thumbnail",
     "create_or_update_profile",
     "update_profile",
     "delete_profile",
     "increment_usage",
+    "upload_photo",
+    "update_thumbnail",
+    "delete_photo",
+    "delete_full_photo",
+    "delete_thumbnail",
+    "_rename_photo_files",
+    "_normalize_db_path",
+    "_db_photo_path",
+    "_same_photo_file",
 ]
 
 REMOVED_MODULE_HELPERS = [
@@ -36,10 +39,8 @@ REMOVED_MODULE_HELPERS = [
     "_resolve_photo_path",
     "_write_thumbnail",
     "_save_jpeg_thumbnail",
-    "_save_photo",
-    "_save_thumbnail",
-    "_db_photo_path",
-    "_same_photo_file",
+    "save_photo",
+    "save_thumbnail",
 ]
 
 PILLOW_IMPORT = re.compile(r"^\s*(?:from|import)\s+PIL\b", re.MULTILINE)

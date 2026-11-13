@@ -123,11 +123,12 @@ describe("matchesFilters", () => {
     expect(matchesFilters(profile({ notes: null }), filters)).toBe(false);
   });
 
-  it("«с фото» отсекает артикулы без превью", () => {
+  it("«с фото»: фото есть, если есть превью или полное", () => {
     const filters: CatalogFilters = { ...EMPTY_FILTERS, hasPhoto: true };
 
     expect(matchesFilters(profile({ photo_thumb: "images/a.jpg" }), filters)).toBe(true);
-    expect(matchesFilters(profile({ photo_thumb: null }), filters)).toBe(false);
+    expect(matchesFilters(profile({ photo_full: "images/a.jpg" }), filters)).toBe(true);
+    expect(matchesFilters(profile({ photo_thumb: null, photo_full: null }), filters)).toBe(false);
   });
 
   it("«изменён» — диапазон календарных дней, границы включительно", () => {
@@ -259,6 +260,15 @@ describe("sortProfiles", () => {
     );
   });
 
+  it("по наличию фото: полное фото без превью — тоже фото", () => {
+    const fullOnly = profile({ id: 1, photo_thumb: null, photo_full: "images/f.jpg" });
+    const none = profile({ id: 2, photo_thumb: null, photo_full: null });
+
+    expect(
+      sortProfiles([fullOnly, none], { field: "has_photo", direction: "asc" }).map((p) => p.id),
+    ).toEqual([2, 1]);
+  });
+
   it("исходный массив не меняется", () => {
     const source = [profile({ id: 1, name: "Ящик" }), profile({ id: 2, name: "Абразив" })];
 
@@ -299,8 +309,11 @@ describe("activeFilterCount", () => {
     expect(activeFilterCount({ ...EMPTY_FILTERS, hasPhoto: true })).toBe(1);
   });
 
-  it("каждая выбранная длина — отдельное условие, как и отдельный чип", () => {
-    expect(activeFilterCount({ ...EMPTY_FILTERS, lengths: new Set([350, 400, 500]) })).toBe(3);
+  it("каждая выбранная длина — одно условие группы, как и один чип группы", () => {
+    expect(activeFilterCount({ ...EMPTY_FILTERS, lengths: new Set([350, 400, 500]) })).toBe(1);
+    expect(activeFilterCount({ ...EMPTY_FILTERS, name: "юп", lengths: new Set([350, 400]) })).toBe(
+      2,
+    );
   });
 
   it("пробелы в текстовых фильтрах не считаются условием", () => {

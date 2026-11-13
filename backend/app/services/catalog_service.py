@@ -57,7 +57,9 @@ class CatalogService:
         Search profiles using normalized text comparison.
 
         Supports Latin/Cyrillic equivalence - searching for 'ALS' will find 'АЛС'.
-        Results are prioritized: name matches first, then notes, then quantity/length.
+        Results are prioritized: name matches first, then description, then notes,
+        then quantity/length. Equal priorities are ordered by name so the answer
+        does not depend on row order or the dead ``usage_count`` column.
 
         Args:
             query: Search query (can be Latin or Cyrillic)
@@ -84,8 +86,9 @@ class CatalogService:
                 if match_priority is not None:
                     matches.append((profile, match_priority))
 
-            # Sort by priority (lower is better), then by usage_count (higher is better)
-            matches.sort(key=lambda x: (x[1], -x[0].usage_count))
+            # Sort by priority (lower is better), then by article code. usage_count
+            # is dead: no scenario increments it, so it must not decide the order.
+            matches.sort(key=lambda x: (x[1], normalize_text(x[0].name)))
 
             # Convert to response schema with metadata
             selected = matches[:limit]
@@ -116,8 +119,9 @@ class CatalogService:
         Priority levels:
         - 1: Exact name match
         - 2: Name contains query
-        - 3: Notes contain query
-        - 4: Quantity or length match
+        - 3: Description contains query
+        - 4: Notes contain query
+        - 5: Quantity or length match
 
         Returns None if no match.
         """
@@ -131,19 +135,25 @@ class CatalogService:
         if normalized_query in normalized_name:
             return 2
 
-        # Priority 3: Notes contain query
+        # Priority 3: Description contains query
+        if profile.description:
+            normalized_description = normalize_text(profile.description)
+            if normalized_query in normalized_description:
+                return 3
+
+        # Priority 4: Notes contain query
         if profile.notes:
             normalized_notes = normalize_text(profile.notes)
             if normalized_query in normalized_notes:
-                return 3
+                return 4
 
-        # Priority 4: Quantity or length match (numeric search)
+        # Priority 5: Quantity or length match (numeric search)
         query_digits = "".join(c for c in normalized_query if c.isdigit())
         if query_digits:
             if profile.quantity_per_hanger is not None and query_digits in str(profile.quantity_per_hanger):
-                return 4
+                return 5
             if profile.length is not None and query_digits in str(int(profile.length)):
-                return 4
+                return 5
 
         return None
 

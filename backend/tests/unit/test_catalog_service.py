@@ -58,3 +58,25 @@ async def test_profile_response_has_no_version_for_missing_photo(images_dir, db_
     assert profile is not None
     assert profile.photo_thumb_version is None
     assert profile.photo_full_version is None
+
+
+async def test_search_profiles_matches_description(images_dir, db_session):
+    """Наименование участвует в поиске наравне с артикулом и примечанием."""
+    db_session.add(Profile(name="АРТ-100", description="Крючок латунный"))
+    await db_session.flush()
+
+    results = await catalog_service.search_profiles("латун", session=db_session)
+
+    assert [result.name for result in results] == ["АРТ-100"]
+    assert results[0].match_priority == 3
+
+
+async def test_search_profiles_breaks_ties_by_name_not_usage_count(images_dir, db_session):
+    """Одинаковый приоритет сортируется по артикулу: usage_count мёртв и не решает."""
+    db_session.add(Profile(name="ЮП-200", quantity_per_hanger=1, usage_count=100))
+    db_session.add(Profile(name="ЮП-100", quantity_per_hanger=1, usage_count=0))
+    await db_session.flush()
+
+    results = await catalog_service.search_profiles("юп", session=db_session)
+
+    assert [result.name for result in results] == ["ЮП-100", "ЮП-200"]

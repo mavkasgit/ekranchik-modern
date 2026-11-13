@@ -52,6 +52,7 @@ import {
   parseStoredFilters,
   parseStoredSort,
   serializeFilters,
+  SORT_FIELDS,
   sortProfiles,
   toggleSort,
   type CatalogFilters,
@@ -81,20 +82,10 @@ const SORT_LABELS: Record<SortField, string> = {
   description: "Наименование",
   quantity_per_hanger: "Количество",
   length: "Длина",
-  notes: "Примечания",
+  notes: "Примечание",
   updated_at: "Изменён",
   has_photo: "Фото",
 };
-
-const SORT_FIELD_ORDER: SortField[] = [
-  "name",
-  "description",
-  "quantity_per_hanger",
-  "length",
-  "notes",
-  "updated_at",
-  "has_photo",
-];
 
 function readViewMode(): ViewMode {
   return localStorage.getItem(STORAGE_KEYS.viewMode) === "table" ? "table" : "grid";
@@ -182,45 +173,65 @@ function ProfileCard({
   profile: Profile;
   onSelect: (profile: Profile) => void;
 }) {
-  const photoSrc = photoUrl(profile.photo_thumb, profile.photo_thumb_version);
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const thumbSrc = photoUrl(profile.photo_thumb, profile.photo_thumb_version);
+  // Просмотрщик показывает полное фото; если его нет — превью.
+  const photoSrc = photoUrl(profile.photo_full, profile.photo_full_version) ?? thumbSrc;
 
   return (
-    <Card
-      className="cursor-pointer transition-shadow hover:shadow-md"
-      onClick={() => onSelect(profile)}
-    >
-      <CardContent className="flex gap-3 p-3 md:gap-4 md:p-4">
-        <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
-          {photoSrc ? (
-            <img
-              src={photoSrc}
-              alt={profile.name}
-              loading="lazy"
-              decoding="async"
-              className="max-h-full max-w-full object-contain"
-            />
-          ) : (
-            <ImageIcon className="h-8 w-8 text-muted-foreground" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs text-muted-foreground">Артикул</p>
-          <h3 className="truncate font-medium">{profile.name}</h3>
-          {profile.description && (
-            <p className="truncate text-sm text-muted-foreground">{profile.description}</p>
-          )}
-          <div className="mt-1 flex flex-wrap gap-2">
-            {profile.quantity_per_hanger !== null && (
-              <Badge variant="secondary">{profile.quantity_per_hanger} шт/подв</Badge>
+    <>
+      <Card
+        data-testid="profile-card"
+        className="cursor-pointer transition-shadow hover:shadow-md"
+        onClick={() => onSelect(profile)}
+      >
+        <CardContent className="flex gap-3 p-3 md:gap-4 md:p-4">
+          <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
+            {thumbSrc ? (
+              <button
+                type="button"
+                title="Открыть фото"
+                className="flex h-full w-full cursor-zoom-in items-center justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPhotoOpen(true);
+                }}
+              >
+                <img
+                  src={thumbSrc}
+                  alt={profile.name}
+                  loading="lazy"
+                  decoding="async"
+                  className="max-h-full max-w-full object-contain"
+                />
+              </button>
+            ) : (
+              <ImageIcon className="h-8 w-8 text-muted-foreground" />
             )}
-            {profile.length !== null && <Badge variant="outline">{profile.length} мм</Badge>}
           </div>
-          {profile.notes && (
-            <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{profile.notes}</p>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-muted-foreground">Артикул</p>
+            <h3 className="truncate font-medium">{profile.name}</h3>
+            {profile.description && (
+              <p className="truncate text-sm text-muted-foreground">{profile.description}</p>
+            )}
+            <div className="mt-1 flex flex-wrap gap-2">
+              {profile.quantity_per_hanger !== null && (
+                <Badge variant="secondary">{profile.quantity_per_hanger} шт/подв</Badge>
+              )}
+              {profile.length !== null && <Badge variant="outline">{profile.length} мм</Badge>}
+            </div>
+            {profile.notes && (
+              <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{profile.notes}</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {photoOpen && photoSrc && (
+        <PhotoViewer src={photoSrc} article={profile.name} onClose={() => setPhotoOpen(false)} />
+      )}
+    </>
   );
 }
 
@@ -309,13 +320,13 @@ function ProfileDialog({ profile, onClose }: { profile: Profile; onClose: () => 
             </dl>
 
             <div className="mt-4 border-t pt-4">
-              <Label htmlFor="catalog-notes">Примечания</Label>
+              <Label htmlFor="catalog-notes">Примечание</Label>
               <Textarea
                 id="catalog-notes"
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
                 onBlur={saveNotes}
-                placeholder="Дополнительная информация..."
+                placeholder="Примечание к артикулу..."
                 rows={4}
                 className="mt-2"
               />
@@ -414,7 +425,7 @@ export default function Catalog() {
           <div className="flex items-center gap-2 md:gap-4">
             <h1 className="text-xl font-bold md:text-2xl">Каталог артикулов</h1>
             {!isLoading && !isError && (
-              <Badge variant="secondary" className="hidden sm:inline-flex">
+              <Badge variant="secondary" className="shrink-0 whitespace-nowrap">
                 {displayData.length} {articlesLabel(displayData.length)}
               </Badge>
             )}
@@ -485,7 +496,7 @@ export default function Catalog() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {SORT_FIELD_ORDER.map((field) => (
+                {SORT_FIELDS.map((field) => (
                   <DropdownMenuItem key={field} onClick={() => handleSort(field)}>
                     <Check
                       className={`mr-2 h-4 w-4 ${sort.field === field ? "opacity-100" : "opacity-0"}`}
@@ -499,12 +510,7 @@ export default function Catalog() {
               variant="outline"
               size="icon"
               className="rounded-l-none"
-              onClick={() =>
-                setSort((current) => ({
-                  ...current,
-                  direction: current.direction === "asc" ? "desc" : "asc",
-                }))
-              }
+              onClick={() => setSort((current) => toggleSort(current, current.field))}
               title={sort.direction === "asc" ? "По возрастанию" : "По убыванию"}
             >
               {sort.direction === "asc" ? (
@@ -623,7 +629,7 @@ export default function Catalog() {
                         onReset={resetFilters}
                       />
                     </SortableHead>
-                    <SortableHead label="Примечания" field="notes" sort={sort} onSort={handleSort}>
+                    <SortableHead label="Примечание" field="notes" sort={sort} onSort={handleSort}>
                       <FilterPopover
                         fields={["notes"]}
                         filters={filters}
