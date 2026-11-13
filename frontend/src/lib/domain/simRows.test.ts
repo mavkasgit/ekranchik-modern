@@ -10,6 +10,7 @@ function catalogProfile(
   return {
     id: index,
     name: `1010${index}`,
+    description: null,
     quantity_per_hanger: 12,
     length: 6000,
     notes: null,
@@ -17,7 +18,6 @@ function catalogProfile(
     photo_full: photo ? photo.replace("-thumb", "") : null,
     photo_thumb_version: photo ? `v-${index}` : null,
     photo_full_version: photo ? `v-${index}` : null,
-    usage_count: 0,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   };

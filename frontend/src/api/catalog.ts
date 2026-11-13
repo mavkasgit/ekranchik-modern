@@ -1,12 +1,10 @@
 import { api } from "./client";
-import type {
-  Profile,
-  ProfileSearchResult,
-  ProfileCreate,
-  PhotoUploadResponse,
-} from "@/types/profile";
+import { notesPayload } from "@/lib/domain/catalogNotes";
+import type { Profile, ProfileSearchResult } from "@/types/profile";
 
+// Витрина: каталог только читается. Единственная запись — примечание.
 export const catalogApi = {
+  // Остаётся как API поиска; витрина фильтрует список на клиенте.
   search: async (query: string, limit = 50): Promise<ProfileSearchResult[]> => {
     const { data } = await api.get<ProfileSearchResult[]>("/catalog", {
       params: { q: query, limit },
@@ -21,55 +19,13 @@ export const catalogApi = {
     return data;
   },
 
-  createOrUpdate: async (profile: ProfileCreate): Promise<Profile> => {
-    const { data } = await api.post<Profile>("/catalog", profile);
+  getProfile: async (name: string): Promise<Profile> => {
+    const { data } = await api.get<Profile>(`/catalog/${encodeURIComponent(name)}`);
     return data;
   },
 
-  update: async (id: number, profile: ProfileCreate): Promise<Profile> => {
-    const { data } = await api.put<Profile>(`/catalog/${id}`, profile);
+  updateNotes: async (id: number, notes: string): Promise<Profile> => {
+    const { data } = await api.patch<Profile>(`/catalog/${id}/notes`, notesPayload(notes));
     return data;
-  },
-
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/catalog/${id}`);
-  },
-
-  uploadPhoto: async (name: string, file: File, thumbnail?: File): Promise<PhotoUploadResponse> => {
-    const formData = new FormData();
-    formData.append("file", file);
-    if (thumbnail) {
-      formData.append("thumbnail", thumbnail);
-    }
-
-    const { data } = await api.post<PhotoUploadResponse>(
-      `/catalog/${encodeURIComponent(name)}/photo`,
-      formData,
-      { headers: { "Content-Type": "multipart/form-data" } },
-    );
-    return data;
-  },
-
-  updateThumbnail: async (
-    name: string,
-    thumbnail: File,
-  ): Promise<{ success: boolean; thumbnail: string }> => {
-    const formData = new FormData();
-    formData.append("file", thumbnail);
-
-    const { data } = await api.put<{ success: boolean; thumbnail: string }>(
-      `/catalog/${encodeURIComponent(name)}/thumbnail`,
-      formData,
-      { headers: { "Content-Type": "multipart/form-data" } },
-    );
-    return data;
-  },
-
-  deleteFullPhoto: async (name: string): Promise<void> => {
-    await api.delete(`/catalog/${encodeURIComponent(name)}/photo/full`);
-  },
-
-  deleteThumbnail: async (name: string): Promise<void> => {
-    await api.delete(`/catalog/${encodeURIComponent(name)}/photo/thumbnail`);
   },
 };
