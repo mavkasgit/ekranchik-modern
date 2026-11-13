@@ -53,19 +53,21 @@ class TestProfileSchemas:
         data = {
             "id": 1,
             "name": "ЮП-1625",
+            "description": "Профиль ЮП-1625",
             "quantity_per_hanger": 10,
             "length": 6000.0,
             "notes": "Test",
             "photo_thumb": "/static/images/test-thumb.jpg",
             "photo_full": "/static/images/test.jpg",
-            "usage_count": 5,
             "created_at": datetime.now(),
             "updated_at": datetime.now(),
         }
         profile = ProfileResponse(**data)
         assert profile.id == 1
         assert profile.name == "ЮП-1625"
+        assert profile.description == "Профиль ЮП-1625"
         assert profile.has_photo is True
+        assert "usage_count" not in profile.model_dump(), "счётчик использований в API не отдаётся"
 
 
 class TestDashboardSchemas:

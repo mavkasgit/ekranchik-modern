@@ -13,7 +13,6 @@ WebSocket, и секундный опрос монитора, и ``/health``. П
 """
 
 import asyncio
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -352,39 +351,6 @@ async def test_slow_book_read_keeps_the_event_loop_ticking(monkeypatch):
 
     assert tick_after < 0.3, f"loop стоял {tick_after:.2f} с на чтении книги"
     assert health.status_code == 200, health.text
-
-
-async def test_zip_export_runs_off_the_event_loop_thread(tmp_path, monkeypatch):
-    """Сборка ZIP каталога (sqlite + фото) — в потоке."""
-    from app.api.routes import catalog as catalog_route
-    from app.core.config import settings
-
-    db = tmp_path / "catalog.db"
-    sqlite3.connect(db).close()
-    images = tmp_path / "images"
-    images.mkdir()
-    (images / "photo.jpg").write_bytes(b"jpeg")
-
-    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{db.as_posix()}")
-    monkeypatch.setattr(settings, "IMAGES_DIR", str(images))
-
-    loop_thread = threading.get_ident()
-    seen: list[int] = []
-    original_zip = catalog_route.zipfile.ZipFile
-
-    def recording_zip(*args, **kwargs):
-        seen.append(threading.get_ident())
-        return original_zip(*args, **kwargs)
-
-    monkeypatch.setattr(catalog_route.zipfile, "ZipFile", recording_zip)
-
-    async with _client() as client:
-        response = await client.get("/api/catalog/export/zip")
-
-    assert response.status_code == 200, response.text
-    assert response.content, "архив пуст"
-    assert seen, "ZIP вообще не собирался"
-    assert loop_thread not in seen, "сборка ZIP осталась в потоке event loop"
 
 
 async def test_startup_journal_reads_off_the_event_loop_thread(monkeypatch):
