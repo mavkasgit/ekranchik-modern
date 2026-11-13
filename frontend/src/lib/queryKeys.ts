@@ -5,3 +5,7 @@ export const OPCUA_STATUS_KEY = [...DASHBOARD_KEY, "opcuaStatus"] as const;
 export const MATCHED_UNLOAD_KEY = [...DASHBOARD_KEY, "opcuaMatchedUnloadEvents"] as const;
 export const JOURNAL_KEY = ["journal", "passes"] as const;
 export const LINE_STATUS_KEY = ["line", "status"] as const;
+export const catalogKeys = {
+  root: ["catalog"] as const,
+  list: ["catalog", "all"] as const,
+};

@@ -1,101 +1,44 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { catalogApi } from "@/api/catalog";
-import type { ProfileCreate } from "@/types/profile";
-
-export function useCatalogSearch(query: string, enabled = true) {
-  return useQuery({
-    queryKey: ["catalog", "search", query],
-    queryFn: () => catalogApi.search(query),
-    enabled: enabled && query.length > 0,
-    staleTime: 30000,
-  });
-}
+import { catalogKeys } from "@/lib/queryKeys";
+import { notesPayload } from "@/lib/domain/catalogNotes";
+import type { Profile } from "@/types/profile";
 
 export function useCatalogAll() {
   return useQuery({
-    queryKey: ["catalog", "all"],
+    queryKey: catalogKeys.list,
     queryFn: () => catalogApi.getAll(),
     staleTime: 30000, // 30 seconds - prevent unnecessary refetches
   });
 }
 
-export function useCreateOrUpdateProfile() {
+/**
+ * Единственная запись витрины. Оптимистично подставляет примечание в список,
+ * при ошибке возвращает прежнее значение, в конце сверяется с сервером.
+ */
+export function useUpdateNotes() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (profile: ProfileCreate) => catalogApi.createOrUpdate(profile),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["catalog"] });
+    mutationFn: ({ id, notes }: { id: number; notes: string }) => catalogApi.updateNotes(id, notes),
+    onMutate: async ({ id, notes }) => {
+      await queryClient.cancelQueries({ queryKey: catalogKeys.root });
+      const previous = queryClient.getQueriesData<Profile[]>({ queryKey: catalogKeys.root });
+      const value = notesPayload(notes).notes;
+
+      queryClient.setQueriesData<Profile[]>({ queryKey: catalogKeys.root }, (list) =>
+        list?.map((profile) => (profile.id === id ? { ...profile, notes: value } : profile)),
+      );
+
+      return { previous };
     },
-  });
-}
-
-export function useUpdateProfile() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: ProfileCreate }) => catalogApi.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["catalog"] });
+    onError: (_error, _variables, context) => {
+      for (const [queryKey, data] of context?.previous ?? []) {
+        queryClient.setQueryData(queryKey, data);
+      }
     },
-  });
-}
-
-export function useDeleteProfile() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (id: number) => catalogApi.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["catalog"] });
-    },
-  });
-}
-
-export function useUploadPhoto() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ name, file, thumbnail }: { name: string; file: File; thumbnail?: File }) =>
-      catalogApi.uploadPhoto(name, file, thumbnail),
-    onSuccess: () => {
-      // Force refetch and reset cache with timestamp
-      queryClient.resetQueries({ queryKey: ["catalog"] });
-    },
-  });
-}
-
-export function useUpdateThumbnail() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ name, thumbnail }: { name: string; thumbnail: File }) =>
-      catalogApi.updateThumbnail(name, thumbnail),
-    onSuccess: () => {
-      // Force refetch and reset cache with timestamp
-      queryClient.resetQueries({ queryKey: ["catalog"] });
-    },
-  });
-}
-
-export function useDeleteFullPhoto() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (name: string) => catalogApi.deleteFullPhoto(name),
-    onSuccess: () => {
-      queryClient.resetQueries({ queryKey: ["catalog"] });
-    },
-  });
-}
-
-export function useDeleteThumbnail() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (name: string) => catalogApi.deleteThumbnail(name),
-    onSuccess: () => {
-      queryClient.resetQueries({ queryKey: ["catalog"] });
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: catalogKeys.root });
     },
   });
 }
