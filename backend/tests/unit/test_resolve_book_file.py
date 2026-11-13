@@ -5,9 +5,16 @@
 внутрь него — стенд читал несуществующую книгу, хотя путь был верный.
 """
 
+import sys
 from pathlib import Path
 
+import pytest
 
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="UNC-путь абсолютен только на Windows; в Linux-контейнере разбор пути оператора проверяет тест ниже",
+)
 def test_real_path_wins_over_a_stale_book_folder(tmp_path, monkeypatch):
     from app.api.routes import dashboard as routes
 
