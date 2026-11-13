@@ -17,9 +17,6 @@ pandas==3.1.1
 openpyxl==3.1.5
 python-calamine==0.9.1  # Fast Rust-based Excel reader (4x faster)
 
-# Image processing
-pillow==13.0.0
-
 # File watching
 watchdog==7.1.0
 

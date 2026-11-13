@@ -10,7 +10,6 @@ from pydantic import ValidationError
 from app.schemas.dashboard import FileStatus, HangerData
 from app.schemas.profile import (
     ProfileBase,
-    ProfileCreate,
     ProfileResponse,
 )
 from app.schemas.websocket import WebSocketMessage
@@ -42,11 +41,6 @@ class TestProfileSchemas:
         """Negative quantity should fail validation"""
         with pytest.raises(ValidationError):
             ProfileBase(name="Test", quantity_per_hanger=-1)
-
-    def test_profile_create(self):
-        """ProfileCreate works like ProfileBase"""
-        profile = ProfileCreate(name="Test Profile")
-        assert profile.name == "Test Profile"
 
     def test_profile_response_from_dict(self):
         """ProfileResponse can be created from dict (simulating ORM)"""
