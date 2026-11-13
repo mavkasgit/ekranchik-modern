@@ -142,10 +142,6 @@ class Settings(BaseSettings):
             return Path(self.JOURNAL_DIR)
         return self.data_dir_path / "journal"
 
-    # Photo upload
-    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
-    THUMBNAIL_SIZE: tuple = (200, 200)
-
     @property
     def excel_active_file_name(self) -> str:
         """Имя файла выбора активной книги; в симуляции — вариант с ``_sim``.

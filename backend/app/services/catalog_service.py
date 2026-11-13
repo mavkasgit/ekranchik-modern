@@ -2,155 +2,21 @@
 Catalog Service - read-only catalog showcase and the local profile note.
 
 Данные артикула принадлежат каталогу-источнику (спека 0002, ADR 0010):
-сервис читает профили, ищет их и обновляет одно примечание. Помощники
-записи фото остаются мёртвыми до выпила (тикет 0019).
+сервис читает профили, ищет их и обновляет одно примечание.
 """
 
 import asyncio
-import hashlib
-import io
-import logging
-import os
 import re
-from pathlib import Path
 
-from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.text_utils import normalize_text
 from app.db.models import Profile
 from app.db.session import get_session
 from app.schemas.profile import ProfileResponse, ProfileSearchResult
 from app.services.photo_version import photo_file_versions
 from app.services.profile_name import parse_profile
-
-logger = logging.getLogger(__name__)
-
-# Символы, запрещённые в именах файлов Windows. Имя файла фото строится из
-# имени профиля, а оно приходит снаружи: из адреса запроса и из книги учёта.
-_FORBIDDEN_FILENAME_CHARS = '<>:"/\\|?*'
-
-# Имена, которые Windows не разрешает использовать даже с расширением.
-_RESERVED_FILENAME_STEMS = {
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    *(f"COM{number}" for number in range(1, 10)),
-    *(f"LPT{number}" for number in range(1, 10)),
-}
-
-# Запас под ``-thumb.jpg`` и суффикс: длинное имя не должно упираться в
-# ограничение файловой системы (255 символов на компонент пути).
-_MAX_PHOTO_STEM = 80
-
-
-def _photo_file_stem(profile_name: str) -> str:
-    """Имя файла фото из имени профиля, безопасное для каталога images.
-
-    ``/`` и ``\\`` в имени профиля — не редкость (несколько артикулов через
-    ``/``), но в имени файла они означают подкаталог или выход за пределы
-    images. Заменяем запрещённые символы на ``_``, как это делает автобэкап
-    книги для имён папок; буквы (в том числе кириллица) не трогаем, чтобы
-    имя файла оставалось узнаваемым. Старые фото находятся по пути из БД,
-    а не по имени профиля.
-
-    К имени добавляется короткий хеш исходного имени. Без него ``A/B`` и
-    ``A_B`` давали один и тот же файл, и фото одного профиля затирало фото
-    другого. Хеш считается от исходной строки, поэтому одинаковое имя
-    профиля всегда даёт одно имя файла, а разные — разные (в том числе если
-    они различаются только регистром: на NTFS/CIFS это один файл).
-    """
-    stem = "".join("_" if char in _FORBIDDEN_FILENAME_CHARS or ord(char) < 32 else char for char in profile_name)
-    stem = stem.rstrip(" .")
-    if not stem:
-        stem = "_"
-    if len(stem) > _MAX_PHOTO_STEM:
-        stem = stem[:_MAX_PHOTO_STEM].rstrip(" .") or "_"
-    if stem.upper() in _RESERVED_FILENAME_STEMS:
-        stem = f"_{stem}"
-    digest = hashlib.sha1(profile_name.encode("utf-8")).hexdigest()[:12]
-    return f"{stem}-{digest}"
-
-
-def _resolve_photo_path(images_dir: Path, filename: str) -> Path:
-    """Путь к файлу фото с проверкой, что он остался внутри images.
-
-    Имя строится из внешней строки, поэтому проверка на выход за каталог
-    нужна на выходе, а не только при замене разделителей: ``..``, точка или
-    пробел в конце не должны превратить запись в файл где-то ещё.
-    """
-    path = (images_dir / filename).resolve()
-    if not path.is_relative_to(images_dir.resolve()):
-        raise ValueError(f"Photo path escapes images directory: {filename!r}")
-    return path
-
-
-def _write_thumbnail(source: bytes | Path, thumb_path: Path) -> None:
-    """Пережать картинку в превью JPEG: PIL, зовётся только из потока.
-
-    ``source`` — байты присланного превью или путь к полному фото. Правило
-    одно для обоих входов: цветовой режим, размер и качество превью не
-    должны зависеть от того, откуда взялась картинка.
-    """
-    if isinstance(source, bytes):
-        with io.BytesIO(source) as buffer, Image.open(buffer) as img:
-            _save_jpeg_thumbnail(img, thumb_path)
-        return
-    with Image.open(source) as img:
-        _save_jpeg_thumbnail(img, thumb_path)
-
-
-def _save_jpeg_thumbnail(img: Image.Image, thumb_path: Path) -> None:
-    """Записать открытую картинку превью: RGB и ``thumbnail`` не увеличивают."""
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
-    img.thumbnail(settings.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-    img.save(thumb_path, "JPEG", quality=85, optimize=True)
-
-
-def _save_photo(
-    images_dir: Path,
-    stem: str,
-    image_data: bytes,
-    thumbnail_data: bytes | None = None,
-) -> tuple[Path, Path]:
-    """Записать фото и превью: I/O и PIL, поэтому зовётся только из потока.
-
-    Декодирование и пережатие JPEG занимает десятки миллисекунд, а запись на
-    диск — ещё больше; в event loop это останавливало бы опрос линии.
-    """
-    ext = ".jpg"  # Always save as jpg for consistency
-    full_path = _resolve_photo_path(images_dir, f"{stem}{ext}")
-    thumb_path = _resolve_photo_path(images_dir, f"{stem}-thumb{ext}")
-
-    with open(full_path, "wb") as f:
-        f.write(image_data)
-
-    try:
-        if thumbnail_data:
-            # Use custom thumbnail provided by user (cropped area)
-            _write_thumbnail(thumbnail_data, thumb_path)
-        else:
-            # Auto-generate thumbnail from full image
-            _write_thumbnail(full_path, thumb_path)
-    except Exception as e:
-        # Clean up full image if thumbnail fails
-        if full_path.exists():
-            full_path.unlink()
-        raise ValueError(f"Failed to process image: {e}") from e
-
-    return full_path, thumb_path
-
-
-def _save_thumbnail(thumb_path: Path, thumbnail_data: bytes) -> None:
-    """Пережать и записать превью: PIL, зовётся из потока."""
-    try:
-        _write_thumbnail(thumbnail_data, thumb_path)
-    except Exception as e:
-        raise ValueError(f"Failed to process thumbnail: {e}") from e
 
 
 async def _responses_with_photo_versions(profiles: list[Profile]) -> list[ProfileResponse]:
@@ -183,56 +49,6 @@ class CatalogService:
     - Read-only access to profiles
     - Note update (the only catalog write)
     """
-
-    def _normalize_db_path(self, path: str | None) -> str | None:
-        """
-        Normalize image path from DB to be relative to static directory without leading slashes.
-        e.g. '/static/images/123.jpg' -> 'images/123.jpg'
-             'images/123.jpg' -> 'images/123.jpg'
-        """
-        if not path:
-            return None
-
-        # Remove leading slashes and backslashes
-        clean_path = path.replace("\\", "/").lstrip("/")
-
-        # Remove 'static/' if it exists
-        if clean_path.startswith("static/"):
-            clean_path = clean_path[7:]
-
-        return clean_path
-
-    def _db_photo_path(self, path: str | None) -> Path | None:
-        """Абсолютный путь к фото из БД, но только внутри каталога images.
-
-        Путь в БД — тоже внешние данные: он мог остаться от старой версии,
-        быть поправленным вручную или прийти из импортированной базы. Без
-        проверки ``../../x`` удалял бы файл за пределами images.
-        """
-        normalized = self._normalize_db_path(path)
-        if not normalized:
-            return None
-
-        images_root = settings.images_path.resolve()
-        resolved = (settings.images_path.parent / normalized).resolve()
-        if not resolved.is_relative_to(images_root):
-            logger.warning(f"[Catalog] Refusing photo path outside images: {path!r}")
-            return None
-        return resolved
-
-    @staticmethod
-    def _same_photo_file(first: Path, second: Path) -> bool:
-        """Один ли это файл: на NTFS/CIFS регистр в пути не различается.
-
-        Сравнение строк пути без учёта регистра считало ``A.jpg`` и
-        ``a.jpg`` разными и удаляло только что записанный файл как
-        «старый». ``samefile`` спрашивает файловую систему и не зависит от
-        того, канонизирует ли ``resolve()`` регистр на конкретной шаре.
-        """
-        try:
-            return os.path.samefile(first, second)
-        except OSError:
-            return os.path.normcase(str(first)) == os.path.normcase(str(second))
 
     async def search_profiles(
         self, query: str, limit: int = 50, session: AsyncSession | None = None
@@ -421,8 +237,6 @@ class CatalogService:
 
     def _extract_digits(self, text: str) -> str:
         """Extract all digits from text."""
-        import re
-
         return "".join(re.findall(r"\d", str(text)))
 
     async def get_profiles_photos_batch(
