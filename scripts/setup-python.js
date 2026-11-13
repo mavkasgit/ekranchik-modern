@@ -3,7 +3,7 @@
  *
  * The pins in requirements.txt target Python 3.14: that is the version
  * backend/Dockerfile runs in production, and the one with wheels for every
- * pinned package (pandas, pillow, aiohttp, python-calamine). The Windows
+ * pinned package (pandas, aiohttp, python-calamine). The Windows
  * installer still embeds Python 3.12 (scripts/build-full-package.ps1): the
  * requirements support both, so the two runtimes do not drift in what they
  * install.

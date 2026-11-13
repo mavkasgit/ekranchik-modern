@@ -16,24 +16,6 @@ class ProfileBase(BaseModel):
     notes: str | None = Field(None, max_length=2000, description="Additional notes")
 
 
-class ProfileCreate(ProfileBase):
-    """Schema for creating a new profile"""
-
-    pass
-
-
-class ProfileUpdate(BaseModel):
-    """Schema for updating a profile"""
-
-    name: str | None = Field(None, min_length=1, max_length=255)
-    quantity_per_hanger: int | None = Field(None, ge=0)
-    length: float | None = Field(None, ge=0)
-    notes: str | None = Field(None, max_length=2000)
-    photo_thumb: str | None = None
-    photo_full: str | None = None
-    usage_count: int | None = Field(None, ge=0)
-
-
 class ProfileNotesUpdate(BaseModel):
     """Schema for updating a profile note - the only locally owned catalog field"""
 
