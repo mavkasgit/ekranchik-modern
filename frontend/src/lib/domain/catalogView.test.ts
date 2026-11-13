@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { Profile } from "@/types/profile";
 import {
-  activeFilterCount,
-  EMPTY_FILTERS,
-  lengthOptions,
-  matchesFilters,
-  matchesQuery,
-  parseStoredFilters,
-  parseStoredSort,
-  serializeFilters,
-  sortProfiles,
-  toggleSort,
-  type CatalogFilters,
+  CATALOG_COLUMNS,
+  DEFAULT_SORTS,
+  catalogFilterValues,
+  catalogSearchText,
+  filterCatalog,
+  parseStoredColumnState,
+  parseStoredSorts,
+  serializeSorts,
+  type CatalogColumnFilterState,
 } from "./catalogView";
+import { emptyColumnFilterState } from "./columnFilters";
+import type { SortConfig } from "./tableQuery";
 
 // Витрина грузит весь список сразу, поэтому поиск, фильтры и сортировка —
-// чистая функция над уже загруженным массивом. Здесь единственный источник
-// правды для того, что экран показывает оператору.
+// чистые функции над массивом. Здесь проверяется то, что оператор видит в
+// таблице: порядок строк, состав списков фильтра и переживание перезагрузки.
 
 function profile(overrides: Partial<Profile> = {}): Profile {
   return {
@@ -36,311 +36,280 @@ function profile(overrides: Partial<Profile> = {}): Profile {
   };
 }
 
-/** Локальная дата в ISO: фильтр «изменён» сравнивает календарные дни. */
+function state(patch: Partial<CatalogColumnFilterState> = {}): CatalogColumnFilterState {
+  return { ...emptyColumnFilterState(), ...patch };
+}
+
 function localDay(year: number, month: number, day: number): string {
   return new Date(year, month - 1, day, 12, 0, 0).toISOString();
 }
 
-describe("matchesQuery", () => {
-  it("находит артикул без учёта регистра, в том числе кириллицу", () => {
-    const item = profile({ name: "Крючок-ЮП-3168" });
-
-    expect(matchesQuery(item, "юп-3168")).toBe(true);
-    expect(matchesQuery(item, "КРЮЧОК")).toBe(true);
-  });
-
-  it("ищет по наименованию и примечанию", () => {
-    const item = profile({ description: "Крючок латунный", notes: "Аналог ЮП-3168" });
-
-    expect(matchesQuery(item, "латунный")).toBe(true);
-    expect(matchesQuery(item, "аналог")).toBe(true);
-  });
-
-  it("не находит то, чего нет ни в одном поле", () => {
-    expect(matchesQuery(profile(), "петля")).toBe(false);
-  });
-
-  it("пустой запрос и одни пробелы пропускают всё", () => {
-    expect(matchesQuery(profile({ name: "", description: null, notes: null }), "")).toBe(true);
-    expect(matchesQuery(profile(), "   ")).toBe(true);
-  });
-
-  it("null в наименовании и примечании не ломает поиск", () => {
-    const item = profile({ description: null, notes: null });
-
-    expect(matchesQuery(item, "арт")).toBe(true);
-  });
-});
-
-describe("matchesFilters", () => {
-  it("пустой фильтр пропускает любой артикул", () => {
-    expect(matchesFilters(profile(), EMPTY_FILTERS)).toBe(true);
-    expect(matchesFilters(profile({ description: null, notes: null }), EMPTY_FILTERS)).toBe(true);
-  });
-
-  it("артикул «содержит», без учёта регистра", () => {
-    const filters: CatalogFilters = { ...EMPTY_FILTERS, name: "юп-31" };
-
-    expect(matchesFilters(profile({ name: "Крючок-ЮП-3168" }), filters)).toBe(true);
-    expect(matchesFilters(profile({ name: "Крючок-ЮП-2000" }), filters)).toBe(false);
-  });
-
-  it("наименование «содержит», null не совпадает", () => {
-    const filters: CatalogFilters = { ...EMPTY_FILTERS, description: "латун" };
-
-    expect(matchesFilters(profile({ description: "Крючок латунный" }), filters)).toBe(true);
-    expect(matchesFilters(profile({ description: null }), filters)).toBe(false);
-  });
-
-  it("количество от/до включительно, null не попадает в диапазон", () => {
-    const range: CatalogFilters = { ...EMPTY_FILTERS, quantityFrom: 4, quantityTo: 6 };
-    const fromOnly: CatalogFilters = { ...EMPTY_FILTERS, quantityFrom: 6 };
-    const toOnly: CatalogFilters = { ...EMPTY_FILTERS, quantityTo: 4 };
-
-    expect(matchesFilters(profile({ quantity_per_hanger: 4 }), range)).toBe(true);
-    expect(matchesFilters(profile({ quantity_per_hanger: 6 }), range)).toBe(true);
-    expect(matchesFilters(profile({ quantity_per_hanger: 3 }), range)).toBe(false);
-    expect(matchesFilters(profile({ quantity_per_hanger: 7 }), range)).toBe(false);
-    expect(matchesFilters(profile({ quantity_per_hanger: null }), range)).toBe(false);
-    expect(matchesFilters(profile({ quantity_per_hanger: 6 }), fromOnly)).toBe(true);
-    expect(matchesFilters(profile({ quantity_per_hanger: 5 }), toOnly)).toBe(false);
-  });
-
-  it("длина — набор значений; пустой набор значит «любая»", () => {
-    const lengths: CatalogFilters = { ...EMPTY_FILTERS, lengths: new Set([400, 500]) };
-
-    expect(matchesFilters(profile({ length: 400 }), lengths)).toBe(true);
-    expect(matchesFilters(profile({ length: 500 }), lengths)).toBe(true);
-    expect(matchesFilters(profile({ length: 350 }), lengths)).toBe(false);
-    expect(matchesFilters(profile({ length: null }), lengths)).toBe(false);
-    expect(matchesFilters(profile({ length: null }), EMPTY_FILTERS)).toBe(true);
-  });
-
-  it("примечание «содержит»", () => {
-    const filters: CatalogFilters = { ...EMPTY_FILTERS, notes: "аналог" };
-
-    expect(matchesFilters(profile({ notes: "Аналог ЮП-3168" }), filters)).toBe(true);
-    expect(matchesFilters(profile({ notes: null }), filters)).toBe(false);
-  });
-
-  it("«с фото»: фото есть, если есть превью или полное", () => {
-    const filters: CatalogFilters = { ...EMPTY_FILTERS, hasPhoto: true };
-
-    expect(matchesFilters(profile({ photo_thumb: "images/a.jpg" }), filters)).toBe(true);
-    expect(matchesFilters(profile({ photo_full: "images/a.jpg" }), filters)).toBe(true);
-    expect(matchesFilters(profile({ photo_thumb: null, photo_full: null }), filters)).toBe(false);
-  });
-
-  it("«изменён» — диапазон календарных дней, границы включительно", () => {
-    const filters: CatalogFilters = {
-      ...EMPTY_FILTERS,
-      updatedFrom: "2026-11-01",
-      updatedTo: "2026-11-05",
-    };
-
-    expect(matchesFilters(profile({ updated_at: localDay(2026, 11, 1) }), filters)).toBe(true);
-    expect(matchesFilters(profile({ updated_at: localDay(2026, 11, 5) }), filters)).toBe(true);
-    expect(matchesFilters(profile({ updated_at: localDay(2026, 10, 31) }), filters)).toBe(false);
-    expect(matchesFilters(profile({ updated_at: localDay(2026, 11, 6) }), filters)).toBe(false);
-  });
-
-  it("несколько условий складываются через «и»", () => {
-    const filters: CatalogFilters = {
-      ...EMPTY_FILTERS,
-      description: "крючок",
-      hasPhoto: true,
-      lengths: new Set([400]),
-    };
-
-    expect(matchesFilters(profile({ photo_thumb: "images/a.jpg", length: 400 }), filters)).toBe(
-      true,
+describe("catalogSearchText", () => {
+  it("собирает артикул, наименование и примечание", () => {
+    const text = catalogSearchText(
+      profile({ name: "ЮП-3168", description: "Крючок", notes: "аналог" }),
     );
-    expect(matchesFilters(profile({ photo_thumb: null, length: 400 }), filters)).toBe(false);
-    expect(matchesFilters(profile({ photo_thumb: "images/a.jpg", length: 500 }), filters)).toBe(
-      false,
-    );
+
+    expect(text).toBe("ЮП-3168 Крючок аналог");
   });
 });
 
-describe("parseStoredFilters", () => {
-  it("пустое хранилище — пустой фильтр", () => {
-    expect(parseStoredFilters(null)).toEqual(EMPTY_FILTERS);
+describe("CATALOG_COLUMNS", () => {
+  it("каждая колонка объявляет и фильтр, и сортировку", () => {
+    for (const column of CATALOG_COLUMNS) {
+      expect(column.filterField).toBeDefined();
+      expect(column.sortField).toBeDefined();
+      expect(column.label).not.toBe("");
+    }
   });
 
-  it("старое значение без новых полей читается, недостающие — по умолчанию", () => {
-    expect(parseStoredFilters('{"name":"юп"}')).toEqual({ ...EMPTY_FILTERS, name: "юп" });
-  });
+  it("фото — готовый домен значений с подписями", () => {
+    const photo = CATALOG_COLUMNS.find((column) => column.filterField === "has_photo");
 
-  it("битый JSON не роняет экран", () => {
-    expect(parseStoredFilters("{не json")).toEqual(EMPTY_FILTERS);
-  });
-
-  it("длины сохраняются как числа, мусор отбрасывается", () => {
-    expect(parseStoredFilters('{"lengths":[400,"500",null,"x"]}').lengths).toEqual(
-      new Set([400, 500]),
-    );
+    expect(photo?.filterValues).toEqual(["1", "0"]);
+    expect(photo?.valueLabel?.("1")).toBe("С фото");
+    expect(photo?.valueLabel?.("0")).toBe("Без фото");
   });
 });
 
-describe("serializeFilters", () => {
-  it("набор длин переживает сохранение и чтение", () => {
-    const filters: CatalogFilters = {
-      ...EMPTY_FILTERS,
-      name: "юп",
-      quantityFrom: 4,
-      lengths: new Set([500, 350]),
-      hasPhoto: true,
-      updatedFrom: "2026-11-01",
-    };
-
-    expect(parseStoredFilters(serializeFilters(filters))).toEqual(filters);
-  });
-});
-
-describe("toggleSort", () => {
-  it("новый столбец начинает с возрастания", () => {
-    expect(toggleSort({ field: "name", direction: "desc" }, "length")).toEqual({
-      field: "length",
-      direction: "asc",
-    });
-  });
-
-  it("повторный клик по тому же столбцу меняет направление", () => {
-    expect(toggleSort({ field: "name", direction: "asc" }, "name")).toEqual({
-      field: "name",
-      direction: "desc",
-    });
-  });
-});
-
-describe("sortProfiles", () => {
-  const items = [
-    profile({ id: 1, name: "Ящик", length: null, quantity_per_hanger: 100 }),
-    profile({ id: 2, name: "Абразив", length: 350, quantity_per_hanger: 9 }),
-    profile({ id: 3, name: "Болт", length: 500, quantity_per_hanger: null }),
+describe("catalogFilterValues", () => {
+  const list = [
+    profile({ id: 1, length: 500, description: null, notes: null }),
+    profile({ id: 2, length: null, description: "Крючок", notes: "аналог" }),
+    profile({ id: 3, length: 350, description: "Крючок", notes: null }),
+    profile({ id: 4, length: 500, description: null, notes: null }),
   ];
 
-  it("по артикулу — кириллическая азбука, а не код символов", () => {
-    expect(sortProfiles(items, { field: "name", direction: "asc" }).map((p) => p.name)).toEqual([
-      "Абразив",
-      "Болт",
-      "Ящик",
-    ]);
-    expect(sortProfiles(items, { field: "name", direction: "desc" }).map((p) => p.name)).toEqual([
-      "Ящик",
-      "Болт",
-      "Абразив",
-    ]);
+  it("длины — уникальные числа по возрастанию, пустые не попадают", () => {
+    expect(catalogFilterValues(list).length).toEqual(["350", "500"]);
   });
 
-  it("по длине — числа, а не строки: 350 < 500", () => {
-    expect(sortProfiles(items, { field: "length", direction: "asc" }).map((p) => p.id)).toEqual([
+  it("наименования и примечания — без пустых строк", () => {
+    const values = catalogFilterValues(list);
+
+    expect(values.description).toEqual(["Крючок"]);
+    expect(values.notes).toEqual(["аналог"]);
+  });
+
+  it("диапазонные колонки списка значений не строят", () => {
+    const values = catalogFilterValues(list);
+
+    expect(values.quantity).toBeUndefined();
+    expect(values.updated_at).toBeUndefined();
+  });
+});
+
+describe("filterCatalog", () => {
+  const list = [
+    profile({
+      id: 1,
+      name: "Ящик",
+      description: null,
+      notes: null,
+      length: null,
+      quantity_per_hanger: null,
+    }),
+    profile({
+      id: 2,
+      name: "Абразив",
+      description: "Крючок латунный",
+      length: 350,
+      quantity_per_hanger: 9,
+      photo_thumb: "images/a.jpg",
+    }),
+    profile({
+      id: 3,
+      name: "Болт",
+      description: null,
+      length: 500,
+      quantity_per_hanger: 6,
+      notes: "аналог ЮП-3168",
+    }),
+  ];
+
+  it("пустые фильтры — сортировка по артикулу по возрастанию", () => {
+    expect(filterCatalog(list, "", state(), DEFAULT_SORTS).map((item) => item.id)).toEqual([
       2, 3, 1,
     ]);
   });
 
-  it("null всегда в конце, независимо от направления", () => {
-    expect(sortProfiles(items, { field: "length", direction: "desc" }).map((p) => p.id)).toEqual([
-      3, 2, 1,
-    ]);
-    expect(
-      sortProfiles(items, { field: "quantity_per_hanger", direction: "asc" }).map((p) => p.id),
-    ).toEqual([2, 1, 3]);
-  });
-
-  it("по дате изменения — хронология", () => {
-    const dated = [
-      profile({ id: 1, updated_at: "2026-11-05T10:00:00.000Z" }),
-      profile({ id: 2, updated_at: "2026-10-01T10:00:00.000Z" }),
-      profile({ id: 3, updated_at: "2026-12-31T10:00:00.000Z" }),
-    ];
-
-    expect(sortProfiles(dated, { field: "updated_at", direction: "asc" }).map((p) => p.id)).toEqual(
-      [2, 1, 3],
-    );
-  });
-
-  it("по наличию фото: полное фото без превью — тоже фото", () => {
-    const fullOnly = profile({ id: 1, photo_thumb: null, photo_full: "images/f.jpg" });
-    const none = profile({ id: 2, photo_thumb: null, photo_full: null });
-
-    expect(
-      sortProfiles([fullOnly, none], { field: "has_photo", direction: "asc" }).map((p) => p.id),
-    ).toEqual([2, 1]);
-  });
-
-  it("исходный массив не меняется", () => {
-    const source = [profile({ id: 1, name: "Ящик" }), profile({ id: 2, name: "Абразив" })];
-
-    sortProfiles(source, { field: "name", direction: "asc" });
-
-    expect(source.map((p) => p.id)).toEqual([1, 2]);
-  });
-});
-
-describe("lengthOptions", () => {
-  it("уникальные длины по возрастанию, null не попадает", () => {
-    const list = [
-      profile({ length: 500 }),
-      profile({ length: null }),
-      profile({ length: 350 }),
-      profile({ length: 500 }),
-    ];
-
-    expect(lengthOptions(list)).toEqual([350, 500]);
-  });
-
-  it("пустой список — пустой набор длин", () => {
-    expect(lengthOptions([])).toEqual([]);
-  });
-});
-
-describe("activeFilterCount", () => {
-  it("пустой фильтр — ноль", () => {
-    expect(activeFilterCount(EMPTY_FILTERS)).toBe(0);
-  });
-
-  it("каждое условие считается один раз", () => {
-    expect(activeFilterCount({ ...EMPTY_FILTERS, name: "юп" })).toBe(1);
-    expect(activeFilterCount({ ...EMPTY_FILTERS, quantityFrom: 1, quantityTo: 6 })).toBe(1);
-    expect(
-      activeFilterCount({ ...EMPTY_FILTERS, updatedFrom: "2026-11-01", updatedTo: "2026-11-05" }),
-    ).toBe(1);
-    expect(activeFilterCount({ ...EMPTY_FILTERS, hasPhoto: true })).toBe(1);
-  });
-
-  it("каждая выбранная длина — одно условие группы, как и один чип группы", () => {
-    expect(activeFilterCount({ ...EMPTY_FILTERS, lengths: new Set([350, 400, 500]) })).toBe(1);
-    expect(activeFilterCount({ ...EMPTY_FILTERS, name: "юп", lengths: new Set([350, 400]) })).toBe(
+  it("общий поиск ищет по наименованию и примечанию без учёта регистра", () => {
+    expect(filterCatalog(list, "латун", state(), DEFAULT_SORTS).map((item) => item.id)).toEqual([
       2,
-    );
+    ]);
+    expect(filterCatalog(list, "АНАЛОГ", state(), DEFAULT_SORTS).map((item) => item.id)).toEqual([
+      3,
+    ]);
   });
 
-  it("пробелы в текстовых фильтрах не считаются условием", () => {
-    expect(activeFilterCount({ ...EMPTY_FILTERS, name: "  ", notes: " " })).toBe(0);
+  it("фильтр длины — точные значения, несколько через «или»", () => {
+    const filters = state({ filters: { length: new Set(["350", "500"]) } });
+
+    expect(filterCatalog(list, "", filters, DEFAULT_SORTS).map((item) => item.id)).toEqual([2, 3]);
+  });
+
+  it("текст в колонке «Артикул» — «содержит»", () => {
+    const filters = state({ queries: { name: "бол" } });
+
+    expect(filterCatalog(list, "", filters, DEFAULT_SORTS).map((item) => item.id)).toEqual([3]);
+  });
+
+  it("выбранное значение колонки — точное совпадение", () => {
+    const filters = state({ filters: { has_photo: new Set(["1"]) } });
+
+    expect(filterCatalog(list, "", filters, DEFAULT_SORTS).map((item) => item.id)).toEqual([2]);
+  });
+
+  it("количество — диапазон включительно, пустое значение не проходит", () => {
+    const filters = state({ ranges: { quantity: { from: "6", to: "9" } } });
+
+    expect(filterCatalog(list, "", filters, DEFAULT_SORTS).map((item) => item.id)).toEqual([2, 3]);
+
+    const fromOnly = state({ ranges: { quantity: { from: "7", to: "" } } });
+    expect(filterCatalog(list, "", fromOnly, DEFAULT_SORTS).map((item) => item.id)).toEqual([2]);
+  });
+
+  it("«изменён» — календарные дни, обе границы включительно", () => {
+    const dated = [
+      profile({ id: 1, updated_at: localDay(2026, 10, 31) }),
+      profile({ id: 2, updated_at: localDay(2026, 11, 1) }),
+      profile({ id: 3, updated_at: localDay(2026, 11, 5) }),
+      profile({ id: 4, updated_at: localDay(2026, 11, 6) }),
+    ];
+    const filters = state({ ranges: { updated_at: { from: "2026-11-01", to: "2026-11-05" } } });
+
+    expect(filterCatalog(dated, "", filters, DEFAULT_SORTS).map((item) => item.id)).toEqual([2, 3]);
+  });
+
+  it("фильтры разных колонок складываются через «и»", () => {
+    const filters = state({
+      filters: { length: new Set(["350"]) },
+      queries: { description: "крючок" },
+    });
+
+    expect(filterCatalog(list, "", filters, DEFAULT_SORTS).map((item) => item.id)).toEqual([2]);
+  });
+
+  it("мультисортировка: первый ключ, затем второй", () => {
+    const sorts: SortConfig<"length" | "name">[] = [
+      { field: "length", order: "asc" },
+      { field: "name", order: "desc" },
+    ];
+
+    expect(filterCatalog(list, "", state(), sorts).map((item) => item.id)).toEqual([2, 3, 1]);
   });
 });
 
-describe("parseStoredSort", () => {
-  it("пустое хранилище — артикул по возрастанию", () => {
-    expect(parseStoredSort(null)).toEqual({ field: "name", direction: "asc" });
+describe("parseStoredSorts", () => {
+  it("новый формат — массив ключей с приоритетами", () => {
+    const raw = JSON.stringify({
+      sorts: [
+        { field: "length", order: "asc" },
+        { field: "name", order: "desc" },
+      ],
+    });
+
+    expect(parseStoredSorts(raw, null)).toEqual([
+      { field: "length", order: "asc" },
+      { field: "name", order: "desc" },
+    ]);
   });
 
-  it("сохранённая сортировка читается", () => {
-    expect(parseStoredSort('{"field":"length","direction":"desc"}')).toEqual({
-      field: "length",
-      direction: "desc",
+  it("старый формат — один ключ, читается как один", () => {
+    expect(parseStoredSorts(null, JSON.stringify({ field: "length", direction: "desc" }))).toEqual([
+      { field: "length", order: "desc" },
+    ]);
+  });
+
+  it("незнакомые поля, повторы и лишние ключи отбрасываются", () => {
+    const raw = JSON.stringify({
+      sorts: [
+        { field: "name", order: "asc" },
+        { field: "name", order: "desc" },
+        { field: "magic", order: "asc" },
+        { field: "length", order: "sideways" },
+        { field: "notes", order: "desc" },
+        { field: "description", order: "asc" },
+        { field: "updated_at", order: "desc" },
+      ],
+    });
+
+    expect(parseStoredSorts(raw, null)).toEqual([
+      { field: "name", order: "asc" },
+      { field: "notes", order: "desc" },
+      { field: "description", order: "asc" },
+    ]);
+  });
+
+  it("битый JSON и пустое хранилище — сортировка по умолчанию", () => {
+    expect(parseStoredSorts("{не json", null)).toEqual(DEFAULT_SORTS);
+    expect(parseStoredSorts(null, null)).toEqual(DEFAULT_SORTS);
+  });
+
+  it("пустой массив — это «без сортировки», а не отсутствие записи", () => {
+    expect(parseStoredSorts(JSON.stringify({ sorts: [] }), null)).toEqual([]);
+  });
+
+  it("сохранённое читается тем же парсером", () => {
+    const sorts: SortConfig<"name" | "length">[] = [
+      { field: "name", order: "asc" },
+      { field: "length", order: "desc" },
+    ];
+
+    expect(parseStoredSorts(serializeSorts(sorts), null)).toEqual(sorts);
+  });
+});
+
+describe("parseStoredColumnState", () => {
+  it("новый формат — значения, текст и диапазоны", () => {
+    const raw = JSON.stringify({
+      filters: { length: ["350", "500"], has_photo: ["1"] },
+      queries: { name: "юп" },
+      ranges: { quantity: { from: "4", to: "6" } },
+    });
+
+    expect(parseStoredColumnState(raw)).toEqual({
+      filters: { length: new Set(["350", "500"]), has_photo: new Set(["1"]) },
+      queries: { name: "юп" },
+      ranges: { quantity: { from: "4", to: "6" } },
     });
   });
 
-  it("неизвестное поле и направление — значения по умолчанию", () => {
-    expect(parseStoredSort('{"field":"magic","direction":"sideways"}')).toEqual({
-      field: "name",
-      direction: "asc",
+  it("старый формат каталога переводится в те же карты", () => {
+    const raw = JSON.stringify({
+      name: "юп",
+      description: "крючок",
+      notes: "аналог",
+      lengths: [400, "500"],
+      quantityFrom: 4,
+      quantityTo: 6,
+      hasPhoto: true,
+      updatedFrom: "2026-11-01",
+      updatedTo: "2026-11-05",
+    });
+
+    expect(parseStoredColumnState(raw)).toEqual({
+      filters: { length: new Set(["400", "500"]), has_photo: new Set(["1"]) },
+      queries: { name: "юп", description: "крючок", notes: "аналог" },
+      ranges: {
+        quantity: { from: "4", to: "6" },
+        updated_at: { from: "2026-11-01", to: "2026-11-05" },
+      },
     });
   });
 
-  it("битый JSON не роняет экран", () => {
-    expect(parseStoredSort("не json")).toEqual({ field: "name", direction: "asc" });
+  it("пустое и битое хранилище — пустое состояние", () => {
+    expect(parseStoredColumnState(null)).toEqual(emptyColumnFilterState());
+    expect(parseStoredColumnState("не json")).toEqual(emptyColumnFilterState());
+  });
+
+  it("незнакомые поля отбрасываются", () => {
+    const raw = JSON.stringify({
+      filters: { magic: ["1"] },
+      queries: { magic: "x" },
+      ranges: { magic: { from: "1", to: "2" } },
+    });
+
+    expect(parseStoredColumnState(raw)).toEqual(emptyColumnFilterState());
   });
 });

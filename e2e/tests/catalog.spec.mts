@@ -221,18 +221,18 @@ test.describe("Каталог: поиск, фильтр по длине и пр�
       const lengthHeader = page.locator("th").filter({
         has: page.getByRole("button", { name: "Длина", exact: true }),
       });
-      await lengthHeader.locator('button[title="Фильтр"]').click();
+      await lengthHeader.getByRole("button", { name: "Длина", exact: true }).click();
 
-      const panel = page.getByRole("dialog", { name: "Фильтр колонки" });
+      const panel = page.getByRole("dialog", { name: "Фильтр колонки: Длина" });
       await expect(panel).toBeVisible();
-      const checkbox = panel.getByRole("checkbox").first();
-      const lengthLabel = (await checkbox.locator("xpath=..").innerText()).trim();
-      await checkbox.click();
+      const valueButton = panel.locator("[data-filter-value]").first();
+      const lengthValue = await valueButton.getAttribute("data-filter-value");
+      await valueButton.click();
       await panel.getByRole("button", { name: "Готово" }).click();
 
       await expect.poll(() => rows.count(), { timeout: 5_000 }).toBeLessThan(before);
       expect(await rows.count()).toBeGreaterThan(0);
-      await expect(page.getByText(`Длина: ${lengthLabel}`)).toBeVisible();
+      await expect(page.getByText(`Длина: ${lengthValue} мм`)).toBeVisible();
       // Группа длин — одно условие: счётчик считает её один раз.
       await expect(page.getByText("Фильтров: 1")).toBeVisible();
     });
