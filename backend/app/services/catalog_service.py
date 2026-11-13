@@ -1,5 +1,9 @@
 """
-Catalog Service - handles profile search, CRUD operations, and photo management.
+Catalog Service - read-only catalog showcase and the local profile note.
+
+Данные артикула принадлежат каталогу-источнику (спека 0002, ADR 0010):
+сервис читает профили, ищет их и обновляет одно примечание. Помощники
+записи фото остаются мёртвыми до выпила (тикет 0019).
 """
 
 import asyncio
@@ -8,7 +12,6 @@ import io
 import logging
 import os
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 
 from PIL import Image
@@ -19,7 +22,7 @@ from app.core.config import settings
 from app.core.text_utils import normalize_text
 from app.db.models import Profile
 from app.db.session import get_session
-from app.schemas.profile import ProfileCreate, ProfileResponse, ProfileSearchResult, ProfileUpdate
+from app.schemas.profile import ProfileResponse, ProfileSearchResult
 from app.services.photo_version import photo_file_versions
 from app.services.profile_name import parse_profile
 
@@ -173,12 +176,12 @@ async def _responses_with_photo_versions(profiles: list[Profile]) -> list[Profil
 
 class CatalogService:
     """
-    Service for managing the profile catalog.
+    Service for reading the profile catalog and storing its local notes.
 
     Provides:
     - Profile search with Latin/Cyrillic normalization
-    - CRUD operations for profiles
-    - Photo management
+    - Read-only access to profiles
+    - Note update (the only catalog write)
     """
 
     def _normalize_db_path(self, path: str | None) -> str | None:
@@ -354,165 +357,6 @@ class CatalogService:
             async with get_session() as sess:
                 return await _get(sess)
 
-    async def create_or_update_profile(
-        self, data: ProfileCreate, session: AsyncSession | None = None
-    ) -> ProfileResponse:
-        """
-        Create a new profile or update existing one by name.
-
-        Args:
-            data: Profile data
-            session: Optional database session
-
-        Returns:
-            Created or updated profile
-        """
-
-        async def _create_or_update(sess: AsyncSession) -> ProfileResponse:
-            # Check if profile exists
-            stmt = select(Profile).where(Profile.name == data.name)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-
-            if profile:
-                # Update existing
-                for field, value in data.model_dump(exclude_unset=True).items():
-                    setattr(profile, field, value)
-            else:
-                # Create new
-                profile = Profile(**data.model_dump())
-                sess.add(profile)
-
-            await sess.flush()
-            await sess.refresh(profile)
-            return (await _responses_with_photo_versions([profile]))[0]
-
-        if session:
-            return await _create_or_update(session)
-        else:
-            async with get_session() as sess:
-                return await _create_or_update(sess)
-
-    async def update_profile(
-        self, profile_id: int, data: ProfileUpdate, session: AsyncSession | None = None
-    ) -> ProfileResponse | None:
-        """
-        Update an existing profile by ID.
-
-        If name is changed and profile has photos, the photo files will be
-        renamed to match the new profile name.
-
-        Args:
-            profile_id: Profile ID
-            data: Update data
-            session: Optional database session
-
-        Returns:
-            Updated profile if found, None otherwise
-        """
-
-        async def _update(sess: AsyncSession) -> ProfileResponse | None:
-            stmt = select(Profile).where(Profile.id == profile_id)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-
-            if not profile:
-                return None
-
-            # Check if name is being changed and profile has photos
-            old_name = profile.name
-            new_name = data.name if data.name else old_name
-            name_changed = new_name != old_name and data.name is not None
-
-            if name_changed and (profile.photo_thumb or profile.photo_full):
-                # Rename photo files
-                new_thumb_path, new_full_path = self._rename_photo_files(
-                    profile.photo_thumb, profile.photo_full, new_name
-                )
-                profile.photo_thumb = new_thumb_path
-                profile.photo_full = new_full_path
-
-            # Update other fields
-            for field, value in data.model_dump(exclude_unset=True).items():
-                if value is not None:
-                    setattr(profile, field, value)
-
-            await sess.flush()
-            await sess.refresh(profile)
-            return (await _responses_with_photo_versions([profile]))[0]
-
-        if session:
-            return await _update(session)
-        else:
-            async with get_session() as sess:
-                return await _update(sess)
-
-    def _rename_photo_files(
-        self, old_thumb_path: str | None, old_full_path: str | None, new_name: str
-    ) -> tuple[str | None, str | None]:
-        """
-        Rename photo files when profile name changes.
-
-        Uses format: {stem}.jpg and {stem}-thumb.jpg, where ``stem`` is
-        produced by ``_photo_file_stem``.
-
-        Args:
-            old_thumb_path: Current thumbnail path (relative)
-            old_full_path: Current full photo path (relative)
-            new_name: New profile name
-
-        Returns:
-            Tuple of (new_thumb_path, new_full_path)
-        """
-        images_dir = settings.images_path
-
-        new_thumb_path = old_thumb_path
-        new_full_path = old_full_path
-
-        # Rename thumbnail: {stem}-thumb.jpg
-        if old_thumb_path:
-            old_thumb_file = self._db_photo_path(old_thumb_path)
-            if old_thumb_file and old_thumb_file.exists():
-                new_thumb_filename = f"{_photo_file_stem(new_name)}-thumb.jpg"
-                new_thumb_file = _resolve_photo_path(images_dir, new_thumb_filename)
-                old_thumb_file.rename(new_thumb_file)
-                new_thumb_path = f"images/{new_thumb_filename}"
-
-        # Rename full photo: {stem}.jpg
-        if old_full_path:
-            old_full_file = self._db_photo_path(old_full_path)
-            if old_full_file and old_full_file.exists():
-                new_full_filename = f"{_photo_file_stem(new_name)}.jpg"
-                new_full_file = _resolve_photo_path(images_dir, new_full_filename)
-                old_full_file.rename(new_full_file)
-                new_full_path = f"images/{new_full_filename}"
-
-        return new_thumb_path, new_full_path
-
-    async def increment_usage(self, name: str, session: AsyncSession | None = None) -> None:
-        """
-        Increment usage count for a profile.
-
-        Args:
-            name: Profile name
-            session: Optional database session
-        """
-
-        async def _increment(sess: AsyncSession) -> None:
-            stmt = select(Profile).where(Profile.name == name)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-
-            if profile:
-                profile.usage_count += 1
-                await sess.flush()
-
-        if session:
-            await _increment(session)
-        else:
-            async with get_session() as sess:
-                await _increment(sess)
-
     async def get_all_profiles(self, limit: int = 500, session: AsyncSession | None = None) -> list[ProfileResponse]:
         """
         Get all profiles.
@@ -537,306 +381,43 @@ class CatalogService:
             async with get_session() as sess:
                 return await _get(sess)
 
-    async def upload_photo(
-        self,
-        profile_name: str,
-        image_data: bytes,
-        filename: str,
-        thumbnail_data: bytes | None = None,
-        session: AsyncSession | None = None,
-    ) -> tuple[str, str]:
-        """
-        Upload a photo for a profile, generating both thumbnail and full-size versions.
+    async def update_notes(
+        self, profile_id: int, notes: str | None, session: AsyncSession | None = None
+    ) -> ProfileResponse | None:
+        """Обновить примечание профиля — единственную локальную запись каталога.
 
-        Args:
-            profile_name: Name of the profile
-            image_data: Raw image bytes for full-size photo
-            filename: Original filename
-            thumbnail_data: Optional custom thumbnail bytes (user-cropped)
-            session: Optional database session
-
-        Returns:
-            Tuple of (thumbnail_path, full_path) relative to static dir
-
-        Raises:
-            ValueError: If image is too large or invalid
-        """
-        # Validate size
-        if len(image_data) > settings.MAX_UPLOAD_SIZE:
-            raise ValueError(f"Image exceeds maximum size of {settings.MAX_UPLOAD_SIZE // (1024 * 1024)}MB")
-
-        # Create images directory if needed
-        images_dir = settings.images_path
-        images_dir.mkdir(parents=True, exist_ok=True)
-
-        logger.info(
-            f"[upload_photo] images_dir: {images_dir}, exists: {images_dir.exists()}, absolute: {images_dir.absolute()}"
-        )
-
-        # Имя файла из имени профиля: без разделителей пути и запрещённых
-        # символов (см. _photo_file_stem). Буквы и дефисы сохраняются.
-        base_name = _photo_file_stem(profile_name)
-
-        logger.info(f"[upload_photo] Saving photo for {profile_name!r} to: {images_dir.absolute()}")
-
-        full_path, thumb_path = await asyncio.to_thread(
-            _save_photo, images_dir, base_name, image_data, thumbnail_data
-        )
-
-        logger.info(
-            f"[upload_photo] Full image saved, size: {full_path.stat().st_size if full_path.exists() else 'NOT FOUND'}"
-        )
-
-        # Relative paths for storage in DB
-        rel_thumb = f"images/{thumb_path.name}"
-        rel_full = f"images/{full_path.name}"
-
-        # Update profile in database
-        async def _update(sess: AsyncSession) -> None:
-            stmt = select(Profile).where(Profile.name == profile_name)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-
-            if profile:
-                # Delete old photos that live under a different name. При
-                # повторной загрузке того же профиля старый путь совпадает с
-                # только что записанным файлом: удалять его нельзя, иначе
-                # запись в БД указывает на несуществующий файл. Сравнение
-                # без учёта регистра: на NTFS/CIFS ``A.jpg`` и ``a.jpg`` —
-                # один файл.
-                old_thumb = self._db_photo_path(profile.photo_thumb)
-                if old_thumb and not self._same_photo_file(old_thumb, thumb_path) and old_thumb.exists():
-                    old_thumb.unlink()
-                old_full = self._db_photo_path(profile.photo_full)
-                if old_full and not self._same_photo_file(old_full, full_path) and old_full.exists():
-                    old_full.unlink()
-
-                profile.photo_thumb = rel_thumb
-                profile.photo_full = rel_full
-                # Поля могли не измениться: повторная загрузка пишет файл по
-                # тому же имени. Явная метка нужна, чтобы updated_at сменился
-                # и браузер (cache-buster по нему) показал новое фото.
-                profile.updated_at = datetime.now(UTC)
-            else:
-                # Create new profile with photo
-                new_profile = Profile(name=profile_name, photo_thumb=rel_thumb, photo_full=rel_full)
-                sess.add(new_profile)
-
-            await sess.flush()
-
-        if session:
-            await _update(session)
-        else:
-            async with get_session() as sess:
-                await _update(sess)
-
-        return rel_thumb, rel_full
-
-    async def update_thumbnail(
-        self, profile_name: str, thumbnail_data: bytes, session: AsyncSession | None = None
-    ) -> str:
-        """
-        Update only the thumbnail for a profile (keeps full image).
-
-        Args:
-            profile_name: Name of the profile
-            thumbnail_data: New thumbnail image bytes
-            session: Optional database session
-
-        Returns:
-            Relative path to new thumbnail
-
-        Raises:
-            ValueError: If profile not found or has no photo
-        """
-        images_dir = settings.images_path
-        images_dir.mkdir(parents=True, exist_ok=True)
-
-        thumb_filename = f"{_photo_file_stem(profile_name)}-thumb.jpg"
-        thumb_path = _resolve_photo_path(images_dir, thumb_filename)
-        rel_thumb = f"images/{thumb_filename}"
-
-        # Save new thumbnail: PIL пережимает JPEG, это работа потока.
-        await asyncio.to_thread(_save_thumbnail, thumb_path, thumbnail_data)
-
-        # Update profile in database
-        async def _update(sess: AsyncSession) -> None:
-            stmt = select(Profile).where(Profile.name == profile_name)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-
-            if not profile:
-                raise ValueError(f"Profile '{profile_name}' not found")
-
-            profile.photo_thumb = rel_thumb
-            profile.updated_at = datetime.now(UTC)  # Force update timestamp
-            await sess.flush()
-
-        if session:
-            await _update(session)
-        else:
-            async with get_session() as sess:
-                await _update(sess)
-
-        return rel_thumb
-
-    async def delete_photo(self, profile_name: str, session: AsyncSession | None = None) -> bool:
-        """
-        Delete photos for a profile.
-
-        Args:
-            profile_name: Name of the profile
-            session: Optional database session
-
-        Returns:
-            True if photos were deleted, False if profile not found
-        """
-
-        async def _delete(sess: AsyncSession) -> bool:
-            stmt = select(Profile).where(Profile.name == profile_name)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-
-            if not profile:
-                return False
-
-            # Delete files
-            thumb_path = self._db_photo_path(profile.photo_thumb)
-            if thumb_path and thumb_path.exists():
-                thumb_path.unlink()
-
-            full_path = self._db_photo_path(profile.photo_full)
-            if full_path and full_path.exists():
-                full_path.unlink()
-
-            # Clear DB fields
-            profile.photo_thumb = None
-            profile.photo_full = None
-            await sess.flush()
-
-            return True
-
-        if session:
-            return await _delete(session)
-        else:
-            async with get_session() as sess:
-                return await _delete(sess)
-
-    async def delete_full_photo(self, profile_name: str, session: AsyncSession | None = None) -> bool:
-        """
-        Delete only the full photo for a profile (keeps thumbnail).
-
-        Args:
-            profile_name: Name of the profile
-            session: Optional database session
-
-        Returns:
-            True if full photo was deleted, False if profile not found
-        """
-
-        async def _delete(sess: AsyncSession) -> bool:
-            stmt = select(Profile).where(Profile.name == profile_name)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-
-            if not profile:
-                return False
-
-            # Delete full photo file
-            full_path = self._db_photo_path(profile.photo_full)
-            if full_path and full_path.exists():
-                full_path.unlink()
-
-            # Clear DB field
-            profile.photo_full = None
-            profile.updated_at = datetime.now(UTC)
-            await sess.flush()
-
-            return True
-
-        if session:
-            return await _delete(session)
-        else:
-            async with get_session() as sess:
-                return await _delete(sess)
-
-    async def delete_thumbnail(self, profile_name: str, session: AsyncSession | None = None) -> bool:
-        """
-        Delete only the thumbnail for a profile (keeps full photo).
-
-        Args:
-            profile_name: Name of the profile
-            session: Optional database session
-
-        Returns:
-            True if thumbnail was deleted, False if profile not found
-        """
-
-        async def _delete(sess: AsyncSession) -> bool:
-            stmt = select(Profile).where(Profile.name == profile_name)
-            result = await sess.execute(stmt)
-            profile = result.scalar_one_or_none()
-
-            if not profile:
-                return False
-
-            # Delete thumbnail file
-            thumb_path = self._db_photo_path(profile.photo_thumb)
-            if thumb_path and thumb_path.exists():
-                thumb_path.unlink()
-
-            # Clear DB field
-            profile.photo_thumb = None
-            profile.updated_at = datetime.now(UTC)
-            await sess.flush()
-
-            return True
-
-        if session:
-            return await _delete(session)
-        else:
-            async with get_session() as sess:
-                return await _delete(sess)
-
-    async def delete_profile(self, profile_id: int, session: AsyncSession | None = None) -> bool:
-        """
-        Delete a profile by ID, including its photos.
+        Поля артикула принадлежат каталогу-источнику, поэтому здесь меняется
+        только примечание: обработчик PATCH не должен уметь править остальное.
+        Пустая строка и ``None`` очищают примечание, чтобы в базе не жили два
+        разных «пусто».
 
         Args:
             profile_id: Profile ID
+            notes: New note; ``None`` or blank clears it
             session: Optional database session
 
         Returns:
-            True if deleted, False if not found
+            Updated profile if found, None otherwise
         """
 
-        async def _delete(sess: AsyncSession) -> bool:
+        async def _update(sess: AsyncSession) -> ProfileResponse | None:
             stmt = select(Profile).where(Profile.id == profile_id)
             result = await sess.execute(stmt)
             profile = result.scalar_one_or_none()
 
             if not profile:
-                return False
+                return None
 
-            # Delete photo files. Путь из БД нормализуем, как в остальных
-            # операциях с фото: старые записи могли хранить «/static/images/…».
-            thumb_path = self._db_photo_path(profile.photo_thumb)
-            if thumb_path and thumb_path.exists():
-                thumb_path.unlink()
-
-            full_path = self._db_photo_path(profile.photo_full)
-            if full_path and full_path.exists():
-                full_path.unlink()
-
-            await sess.delete(profile)
+            profile.notes = notes or None
             await sess.flush()
-            return True
+            await sess.refresh(profile)
+            return (await _responses_with_photo_versions([profile]))[0]
 
         if session:
-            return await _delete(session)
+            return await _update(session)
         else:
             async with get_session() as sess:
-                return await _delete(sess)
+                return await _update(sess)
 
     def _extract_digits(self, text: str) -> str:
         """Extract all digits from text."""

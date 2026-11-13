@@ -22,6 +22,7 @@ class Profile(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     quantity_per_hanger: Mapped[int | None] = mapped_column(Integer, nullable=True)
     length: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
