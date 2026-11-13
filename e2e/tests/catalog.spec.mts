@@ -208,6 +208,14 @@ test.describe("Каталог: поиск, фильтр по длине и пр�
 
       const rows = page.locator("table tbody tr");
       await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+
+      // Превью в таблице показывает картинку целиком, без обрезки по краям.
+      const preview = rows.locator("td img").first();
+      if ((await preview.count()) > 0) {
+        await expect(preview).toBeVisible();
+        await expect(preview).toHaveCSS("object-fit", "contain");
+      }
+
       const before = await rows.count();
 
       const lengthHeader = page.locator("th").filter({

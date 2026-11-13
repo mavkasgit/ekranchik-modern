@@ -669,7 +669,7 @@ export default function Catalog() {
                               alt={profile.name}
                               loading="lazy"
                               decoding="async"
-                              className="h-full w-full object-cover"
+                              className="max-h-full max-w-full object-contain"
                             />
                           ) : (
                             <ImageIcon className="h-4 w-4 text-muted-foreground" />
