@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { useCatalogAll, useUpdateNotes } from "@/hooks/useCatalog";
+import { PhotoViewer } from "@/components/PhotoViewer";
 import type { Profile } from "@/types/profile";
 import { photoUrl } from "@/lib/domain/photo";
 
@@ -227,22 +228,10 @@ function ProfileDialog({ profile, onClose }: { profile: Profile; onClose: () => 
         </div>
       </DialogContent>
 
-      {/* Полное фото: вписывается в экран, 0018 заменит это на просмотрщик */}
-      <Dialog open={photoOpen} onOpenChange={setPhotoOpen}>
-        <DialogContent className="max-h-[95dvh] w-auto max-w-[95vw] gap-0 border-0 bg-black p-0">
-          <DialogHeader className="sr-only">
-            <DialogTitle>{profile.name}</DialogTitle>
-            <DialogDescription>Фото артикула</DialogDescription>
-          </DialogHeader>
-          {photoSrc && (
-            <img
-              src={photoSrc}
-              alt={profile.name}
-              className="max-h-[92dvh] max-w-[95vw] object-contain"
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Полное фото: вписанный просмотр с зумом, панорамой и копированием */}
+      {photoOpen && photoSrc && (
+        <PhotoViewer src={photoSrc} article={profile.name} onClose={() => setPhotoOpen(false)} />
+      )}
     </Dialog>
   );
 }
