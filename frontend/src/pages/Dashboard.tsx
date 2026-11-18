@@ -51,7 +51,7 @@ import { useTestRun } from "@/hooks/useTestRun";
 import { useColors } from "@/hooks/useColors";
 import { DASHBOARD_KEY } from "@/lib/queryKeys";
 import { SIDEBAR_ROW_LIMIT } from "@/config/limits";
-import { colorCode, colorHex, colorName, type ColorSpec } from "@/lib/domain/color";
+import { colorHex, colorName, type ColorSpec } from "@/lib/domain/color";
 import {
   describeHangerRow,
   isBlankRow,
@@ -699,8 +699,8 @@ function DataTable({
   ariaLabel?: string;
 }) {
   const gridTemplateColumns = showEntryExit
-    ? "[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px"
-    : "[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px";
+    ? "[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] minmax(110px, 150px)"
+    : "[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] minmax(110px, 150px)";
 
   return (
     <div
@@ -956,11 +956,11 @@ function DataTable({
                 }}
               >
                 <div
-                  className="inline-flex flex-col items-center max-w-[80px]"
-                  title={colorName(colors, hanger.color)}
+                  className="inline-flex flex-col items-center max-w-[150px]"
+                  title={hanger.color}
                 >
                   <span className="text-sm leading-tight text-center break-words">
-                    {colorCode(colors, hanger.color)}
+                    {hanger.color}
                   </span>
                   <div
                     className="w-full h-1.5 rounded-full mt-0.5"
