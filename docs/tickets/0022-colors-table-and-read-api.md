@@ -14,9 +14,11 @@
 
 ### Данные
 
-- Миграция `003_colors`: таблица `colors` с полями
-  `id`, `code` (nullable), `name`, `abbreviation`, `hex`, `operation_code`
-  (nullable, unique), `source` (`ktm`/`local`), `updated_at`, `created_at`.
+- Миграция `003_colors` создаёт таблицу `colors` с полями
+  `id`, `code` (nullable), `name`, `hex`, `operation_code` (nullable, unique),
+  `source` (`ktm`/`local`), `updated_at`, `created_at`; миграция `004`
+  добавляет `abbreviation` (история dev-базы: `003` уже была применена).
+  Итоговая схема после `head` — с `abbreviation`.
 - Модель `Color` и отношение к БД по образцу `Profile`.
 - Засев в миграции:
   - десять текущих названий: серебро, черный, золото, шампань, титан,

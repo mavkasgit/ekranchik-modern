@@ -134,12 +134,12 @@ describe("код цвета", () => {
     ];
 
     expect(colorAbbreviation(sparse, "C77")).toBe("C77");
-    expect(colorAbbreviation(sparse, "патина")).toBe("пат");
+    expect(colorAbbreviation(sparse, "патина")).toBe("пати");
   });
 
   it("неизвестный цвет остаётся серым и с аббревиатурой из книги", () => {
     expect(colorHex(CATALOG, "RAL 9016")).toBe(UNKNOWN_HEX);
-    expect(colorCode(CATALOG, "RAL 9016")).toBe("ral ");
+    expect(colorCode(CATALOG, "RAL 9016")).toBe("ral");
   });
 
   it("пустой справочник (API грузится или упал) не ломает панель", () => {

@@ -63,7 +63,10 @@ async def empty_colors_db(tmp_path, monkeypatch):
     """Таблица цветов есть, строк нет: пустой справочник — не 404."""
     from app.db import session as session_module
     from app.db.base import Base
-    from app.db.models import Color  # noqa: F401 — регистрирует таблицу в metadata
+    from app.db.models import Color
+
+    # Импорт регистрирует таблицу в metadata; проверка делает его используемым.
+    assert Color.__tablename__ == "colors"
 
     url = _migrate_to_temp_db(tmp_path, monkeypatch)
 

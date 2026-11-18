@@ -64,7 +64,11 @@ _INSERT_MISSING = text(
     """
     INSERT INTO colors (code, name, hex, operation_code, source, updated_at)
     SELECT :code, :name, :hex, :operation_code, 'local', :updated_at
-    WHERE NOT EXISTS (SELECT 1 FROM colors WHERE name = :name)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM colors
+      WHERE (:operation_code IS NOT NULL AND operation_code = :operation_code)
+         OR (:operation_code IS NULL AND :code IS NOT NULL AND code = :code)
+    )
     """
 )
 
@@ -72,9 +76,10 @@ _INSERT_MISSING = text(
 def seed_missing_colors(connection: Connection) -> int:
     """Дописать отсутствующие цвета засева и вернуть число вставленных строк.
 
-    Проверка по названию делает засев идемпотентным: повторный запуск после
-    сбоя миграции не плодит дубли. Переименованные локально строки не
-    восстанавливаются — это уже данные администратора, а не засев.
+    Проверка идёт по ключу синка (``operation_code``, у локальных строк —
+    ``code``), а не по названию: переименованная администратором строка не
+    должна вставиться второй раз и упасть на уникальном ключе. Повторный
+    запуск после сбоя миграции не плодит дубли.
     """
     inserted = 0
     for color in SEED_COLORS:

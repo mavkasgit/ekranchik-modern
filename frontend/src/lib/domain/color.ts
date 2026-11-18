@@ -82,13 +82,15 @@ function matchColor(colors: readonly ColorSpec[], written: string): ColorSpec | 
  */
 function colorLabel(color: ColorSpec): string {
   return (
-    color.abbreviation.trim() || color.code?.trim() || color.name.toLowerCase().trim().slice(0, 3)
+    color.abbreviation.trim() ||
+    color.code?.trim() ||
+    color.name.toLowerCase().trim().slice(0, 4).trimEnd()
   );
 }
 
 /** Цвета нет в справочнике: показываем первые четыре символа из книги, как раньше. */
 function writtenLabel(written: string): string {
-  return written.toLowerCase().trim().slice(0, 4) || "—";
+  return written.toLowerCase().trim().slice(0, 4).trimEnd() || "—";
 }
 
 /**
