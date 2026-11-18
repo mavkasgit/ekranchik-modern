@@ -29,7 +29,6 @@ function seededClient(): QueryClient {
         pallete: 777,
         in_time: 10,
         out_time: 310,
-        free: false,
         article: "П-1",
         color: "серебро",
       },
