@@ -48,9 +48,10 @@ import {
 } from "@/hooks/useDashboard";
 import { useRealtimeConnection } from "@/hooks/useRealtime";
 import { useTestRun } from "@/hooks/useTestRun";
+import { useColors } from "@/hooks/useColors";
 import { DASHBOARD_KEY } from "@/lib/queryKeys";
 import { SIDEBAR_ROW_LIMIT } from "@/config/limits";
-import { colorHex, colorName } from "@/lib/domain/color";
+import { colorHex, colorName, type ColorSpec } from "@/lib/domain/color";
 import {
   describeHangerRow,
   isBlankRow,
@@ -79,6 +80,9 @@ const TEST_FRAME = "border-purple-500/40 bg-purple-500/5";
 
 /** Пустой прогон для витринных режимов: карточек нет, линия не подмешивается. */
 const EMPTY_RUN = emptyRun();
+
+/** Справочник ещё не пришёл: цвета показываются как неизвестные, панель живёт. */
+const NO_COLORS: ColorSpec[] = [];
 interface Filters {
   loadingLimit: number;
   realtimeLimit: number;
@@ -679,12 +683,15 @@ function ClockInline() {
 // Data table
 function DataTable({
   data,
+  colors,
   onPhotoClick,
   isFullscreen = false,
   showEntryExit = false,
   ariaLabel,
 }: {
   data: HangerData[];
+  /** Справочник цветов из API: код в ячейке, название в подсказке. */
+  colors: readonly ColorSpec[];
   onPhotoClick: (url: string, name: string) => void;
   isFullscreen?: boolean;
   showEntryExit?: boolean;
@@ -692,8 +699,8 @@ function DataTable({
   ariaLabel?: string;
 }) {
   const gridTemplateColumns = showEntryExit
-    ? "[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px"
-    : "[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] 65px";
+    ? "[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] minmax(110px, 150px)"
+    : "[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] minmax(110px, 150px)";
 
   return (
     <div
@@ -948,13 +955,16 @@ function DataTable({
                   gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
                 }}
               >
-                <div className="inline-flex flex-col items-center max-w-[80px]">
+                <div
+                  className="inline-flex flex-col items-center max-w-[150px]"
+                  title={hanger.color}
+                >
                   <span className="text-sm leading-tight text-center break-words">
-                    {colorName(hanger.color)}
+                    {hanger.color}
                   </span>
                   <div
                     className="w-full h-1.5 rounded-full mt-0.5"
-                    style={{ backgroundColor: colorHex(hanger.color), minWidth: "50px" }}
+                    style={{ backgroundColor: colorHex(colors, hanger.color), minWidth: "50px" }}
                   />
                 </div>
               </div>
@@ -1009,10 +1019,13 @@ function DataTable({
 
 function SidebarQueueTable({
   data,
+  colors,
   isLoading,
   isFullscreen = false,
 }: {
   data?: HangerData[];
+  /** Справочник цветов из API: точка в строке и её подсказка. */
+  colors: readonly ColorSpec[];
   isLoading: boolean;
   isFullscreen?: boolean;
 }) {
@@ -1085,8 +1098,8 @@ function SidebarQueueTable({
                             hanger.color.trim() !== "" && (
                               <span
                                 className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-black/15 dark:border-white/15"
-                                style={{ backgroundColor: colorHex(hanger.color) }}
-                                title={colorName(hanger.color)}
+                                style={{ backgroundColor: colorHex(colors, hanger.color) }}
+                                title={colorName(colors, hanger.color)}
                               />
                             )}
                           <span className="truncate">{displayProfile}</span>
@@ -1389,6 +1402,9 @@ export default function Dashboard() {
   } = useDashboard(7, SIDEBAR_ROW_LIMIT, false);
   const { data: fileStatus } = useFileStatus();
   const { data: matchedEvents } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit);
+  // Справочник цветов: пока он грузится или упал, панель не блокируется —
+  // цвета показываются как неизвестные, список остаётся пустым.
+  const { data: colors = NO_COLORS } = useColors();
 
   // Роли книг — единственное, что задаёт оператор: какую книгу читать сейчас,
   // решает правило `standby_book` по росту строк.
@@ -1562,12 +1578,21 @@ export default function Dashboard() {
 
     setTestError(null);
 
+    // «Все цвета» показывает справочник: если он ещё не пришёл или упал,
+    // витрине нечего показывать, и это не ошибка каталога.
+    if (mode === "colors" && colors.length === 0) {
+      setTestRows([]);
+      setTestMode(null);
+      setTestError("Справочник цветов не загрузился — витрина недоступна");
+      return;
+    }
+
     try {
       const res = await fetch("/api/catalog/all?limit=1000");
       if (!res.ok) throw new Error("Failed to fetch catalog");
       const profiles: Profile[] = await res.json();
 
-      const rows = buildTestRows(profiles, mode);
+      const rows = buildTestRows(profiles, mode, colors);
       if (rows.length === 0) {
         setTestRows([]);
         setTestMode(null);
@@ -1939,6 +1964,7 @@ export default function Dashboard() {
                   ) : loadingRows?.length ? (
                     <DataTable
                       data={loadingRows}
+                      colors={colors}
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
                       ariaLabel="Очередь загрузки"
@@ -1967,6 +1993,7 @@ export default function Dashboard() {
               {/* Forecast Row - Outside the green border */}
               {filters.showForecast && (
                 <BathForecast
+                  colors={colors}
                   hangerMetaByNumber={hangerMetaByNumber}
                   testRun={testMode ? (testMode === "sim" ? run : EMPTY_RUN) : undefined}
                 />
@@ -1991,6 +2018,7 @@ export default function Dashboard() {
                     {unloadRows.length > 0 ? (
                       <DataTable
                         data={unloadRows}
+                        colors={colors}
                         onPhotoClick={handlePhotoClick}
                         isFullscreen={isFullscreen}
                         showEntryExit
@@ -2012,6 +2040,7 @@ export default function Dashboard() {
         <div className={`${isFullscreen ? "col-span-1" : "xl:col-span-1"} w-full`}>
           <SidebarQueueTable
             data={sidebarRows}
+            colors={colors}
             isLoading={testMode ? false : isLoadingAll}
             isFullscreen={isFullscreen}
           />
