@@ -21,8 +21,10 @@ async def list_colors():
 
 @router.patch("/{color_id}", response_model=ColorResponse)
 async def update_color(color_id: int, data: ColorUpdate):
-    """Поправить название или hex; ``code`` и ``operation_code`` не меняются."""
-    color = await color_service.update_color(color_id, name=data.name, hex_value=data.hex)
+    """Поправить название, подпись или hex; ``code`` и ``operation_code`` не меняются."""
+    color = await color_service.update_color(
+        color_id, name=data.name, abbreviation=data.abbreviation, hex_value=data.hex
+    )
     if color is None:
         raise HTTPException(status_code=404, detail="Color not found")
     return color

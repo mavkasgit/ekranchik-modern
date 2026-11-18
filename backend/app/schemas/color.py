@@ -9,10 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 HEX_PATTERN = r"^#[0-9A-Fa-f]{6}$"
 
 ColorName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+ColorAbbreviation = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=16)]
 
 
 class ColorUpdate(BaseModel):
-    """Локальная правка цвета: только подпись и hex.
+    """Локальная правка цвета: подпись, название и hex.
 
     ``code`` и ``operation_code`` — ключи синхронизации, а не подпись, поэтому
     в теле запроса их нет. Пустой запрос — 422: PATCH без изменений не должен
@@ -20,12 +21,13 @@ class ColorUpdate(BaseModel):
     """
 
     name: ColorName | None = Field(default=None, description="Название покрытия")
+    abbreviation: ColorAbbreviation | None = Field(default=None, description="Привычная подпись в ячейке")
     hex: str | None = Field(default=None, pattern=HEX_PATTERN, description="Цвет в формате #RRGGBB")
 
     @model_validator(mode="after")
     def _require_change(self) -> "ColorUpdate":
         if not self.model_fields_set:
-            raise ValueError("нужно передать name или hex")
+            raise ValueError("нужно передать name, abbreviation или hex")
         for field in self.model_fields_set:
             if getattr(self, field) is None:
                 raise ValueError(f"{field} не может быть пустым")

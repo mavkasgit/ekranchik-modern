@@ -223,6 +223,22 @@ async def test_patch_changes_only_the_field_that_was_sent(colors_db):
     assert recolored["name"] == "Шампань тёмная"
 
 
+async def test_patch_updates_abbreviation(colors_db):
+    """PATCH меняет привычную подпись, не трогая название и hex."""
+    color_id = await _color_id("C32")
+    before = next(item for item in await _get_colors() if item["id"] == color_id)
+
+    status, updated = await _patch(color_id, {"abbreviation": "тш"})
+
+    assert status == 200, updated
+    assert updated["abbreviation"] == "тш"
+    assert updated["name"] == before["name"]
+    assert updated["hex"] == before["hex"]
+
+    after = next(item for item in await _get_colors() if item["id"] == color_id)
+    assert after["abbreviation"] == "тш"
+
+
 async def test_patch_marks_color_local_and_moves_updated_at(colors_db):
     """Успешная правка ставит source=local и текущее UTC-время."""
     from datetime import timedelta
@@ -264,6 +280,10 @@ async def test_patch_reports_missing_color(colors_db):
         {"name": None},
         {"name": ""},
         {"name": "   "},
+        {"abbreviation": None},
+        {"abbreviation": ""},
+        {"abbreviation": "   "},
+        {"abbreviation": "аббр" * 4 + "а"},
         {"hex": "123456"},
         {"hex": "#12345"},
         {"hex": "#GGGGGG"},

@@ -38,6 +38,7 @@ class ColorService:
         self,
         color_id: int,
         name: str | None = None,
+        abbreviation: str | None = None,
         hex_value: str | None = None,
         session: AsyncSession | None = None,
     ) -> ColorResponse | None:
@@ -56,6 +57,8 @@ class ColorService:
 
             if name is not None:
                 color.name = name
+            if abbreviation is not None:
+                color.abbreviation = abbreviation
             if hex_value is not None:
                 color.hex = hex_value
             color.updated_at = datetime.now(UTC)
