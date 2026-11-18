@@ -4,7 +4,7 @@
 // «Фото» у такой строки — обычное дело. Номер подвеса и время ставит прогон,
 // когда подвес встаёт на линию.
 
-import { COLOR_CATALOG } from "@/lib/domain/color";
+import type { ColorSpec } from "@/lib/domain/color";
 import { formatLocalized } from "@/lib/domain/time";
 import type { HangerData } from "@/types/dashboard";
 import type { Profile } from "@/types/profile";
@@ -64,13 +64,16 @@ function toRow(profile: Profile, color: string, number: number, now: Date): Hang
 }
 
 /**
- * Строки витрины. `colors` — по одной на каждый цвет справочника, остальные
- * режимы — весь каталог в случайном порядке, и цвет каждой строки тоже
- * случайный из справочника: в каталоге цвета нет, он живёт в книге учёта.
+ * Строки витрины. `colors` — справочник из API: по одной строке на каждый цвет,
+ * остальные режимы — весь каталог в случайном порядке, и цвет каждой строки
+ * тоже случайный из справочника: в каталоге цвета нет, он живёт в книге учёта.
+ * Справочник приходит аргументом, а не константой: список цветов у панели один
+ * и приходит из `GET /api/colors`.
  */
 export function buildTestRows(
   profiles: Profile[],
   mode: TestMode,
+  colors: readonly ColorSpec[],
   random: () => number = Math.random,
 ): HangerData[] {
   const ordered = shuffle(profiles, random);
@@ -80,13 +83,13 @@ export function buildTestRows(
   // прогон переставит его каждому подвесу, когда тот встанет в ванну.
   const now = new Date();
   if (mode === "colors") {
-    return COLOR_CATALOG.map((color, index) => {
+    return colors.map((color, index) => {
       const profile = ordered[index % ordered.length];
       return toRow(profile, color.name, index + 1, now);
     });
   }
 
   return ordered.map((profile, index) =>
-    toRow(profile, COLOR_CATALOG[Math.floor(random() * COLOR_CATALOG.length)].name, index + 1, now),
+    toRow(profile, colors[Math.floor(random() * colors.length)]?.name ?? NO_VALUE, index + 1, now),
   );
 }
