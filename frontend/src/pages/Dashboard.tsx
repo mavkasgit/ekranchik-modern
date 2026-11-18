@@ -1,8 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-// App-овский `useFullscreen` — псевдо-фуллскрин киоска (скрыть шапку и меню),
-// а это браузерный Fullscreen API для фото; имена не путаются алиасом.
-import { useFullscreen as useBrowserFullscreen } from "@siberiacancode/reactuse";
 import {
   RefreshCw,
   Wifi,
@@ -67,9 +64,12 @@ import { profileText } from "@/lib/domain/profile";
 import { fileName, pathHint } from "@/lib/domain/bookPath";
 import type { Profile } from "@/types/profile";
 import { formatClock, formatLocalized } from "@/lib/domain/time";
+import { currentFullscreenElement, useFullscreenElement } from "@/lib/useFullscreenElement";
 import { BathForecast } from "@/components/BathForecastTable";
 import { dashboardApi } from "@/api/dashboard";
 import type { HangerData, RecentBookPath } from "@/types/dashboard";
+// App-овский `useFullscreen` — псевдо-фуллскрин киоска (скрыть шапку и меню);
+// браузерный Fullscreen API фото живёт в `@/lib/useFullscreenElement`.
 import { useFullscreen } from "@/App";
 
 const FILTERS_KEY = "ekranchik_filters";
@@ -237,10 +237,17 @@ function PhotoModal({
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  // Браузерный фуллскрин оверлея: хук владеет ссылкой на него и сам сообщает,
-  // когда браузер вышел из режима (Esc, F11), — тогда оверлей закрывается.
-  const { ref: overlayRef } = useBrowserFullscreen<HTMLDivElement>({
+  // Браузерный фуллскрин оверлея: хук владеет ссылкой на него, сам просит
+  // режим промисом (отказ виден в `onError`) и сообщает, когда браузер вышел
+  // (Esc, F11), — тогда оверлей закрывается.
+  const {
+    ref: overlayRef,
+    enter: enterFullscreen,
+    exit: exitFullscreen,
+  } = useFullscreenElement<HTMLDivElement>({
+    onEnter: () => setIsFullscreen(true),
     onExit: () => setIsFullscreen(false),
+    onError: () => setIsFullscreen(false),
   });
 
   // Load image dimensions
@@ -295,17 +302,18 @@ function PhotoModal({
     }
   }, [open, isFullscreen, onClose]);
 
-  // Request fullscreen when isFullscreen becomes true
+  // Просим фуллскрин, только когда оверлей уже смонтирован. Чужой режим
+  // (киоск) не перебиваем: если что-то уже в фуллскрине — не наш ход.
   useEffect(() => {
-    if (!isFullscreen) return;
+    if (!isFullscreen || currentFullscreenElement()) return;
+    void enterFullscreen().catch(() => {});
+  }, [isFullscreen, enterFullscreen]);
 
-    const fullscreenElement = overlayRef.current;
-    if (fullscreenElement && !document.fullscreenElement) {
-      fullscreenElement.requestFullscreen().catch(() => {
-        console.log("Fullscreen not supported");
-      });
-    }
-  }, [isFullscreen, overlayRef]);
+  // Закрытие оверлея выходит из фуллскрина только своего элемента.
+  const closeFullscreen = () => {
+    setIsFullscreen(false);
+    void exitFullscreen().catch(() => {});
+  };
 
   // Calculate dialog size based on actual image pixels (like Catalog)
   const dialogSize = useMemo(() => {
@@ -422,7 +430,7 @@ function PhotoModal({
           ref={overlayRef}
           id="fullscreen-photo-container"
           className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
-          onClick={() => setIsFullscreen(false)}
+          onClick={closeFullscreen}
         >
           {/* Large close area for mobile - top-left corner */}
           {typeof window !== "undefined" && window.innerWidth < 768 && (
@@ -430,7 +438,7 @@ function PhotoModal({
               className="absolute top-0 left-0 w-16 h-16 z-20 cursor-pointer"
               onClick={(e) => {
                 e.stopPropagation();
-                setIsFullscreen(false);
+                closeFullscreen();
               }}
             />
           )}
@@ -441,7 +449,7 @@ function PhotoModal({
             className="absolute top-4 right-4 text-white hover:bg-white/20 z-10"
             onClick={(e) => {
               e.stopPropagation();
-              setIsFullscreen(false);
+              closeFullscreen();
             }}
           >
             <Minimize2 className="h-6 w-6" />
@@ -453,7 +461,7 @@ function PhotoModal({
             onClick={(e) => {
               e.stopPropagation();
               onClose();
-              setIsFullscreen(false);
+              closeFullscreen();
             }}
           >
             <X className="h-6 w-6" />

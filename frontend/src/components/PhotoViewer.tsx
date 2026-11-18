@@ -13,7 +13,6 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useFullscreen } from "@siberiacancode/reactuse";
 import {
   Check,
   Copy,
@@ -38,6 +37,7 @@ import {
   type Point,
 } from "@/lib/domain/photoViewer";
 import { copyPhoto, downloadPhoto } from "@/lib/photoTransfer";
+import { useFullscreenElement } from "@/lib/useFullscreenElement";
 
 interface Notice {
   text: string;
@@ -132,25 +132,43 @@ export function PhotoViewer({
   // ссылка-состояние хука такой рендер даёт. Своим хук считает только этот
   // элемент, поэтому чужой фуллскрин (киоск) не показывается как «наш» и
   // кнопка «Свернуть» не выходит из него.
-  const { ref: contentRef, value: isFullscreen } = useFullscreen<HTMLDivElement>();
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showNotice = (text: string, tone: Notice["tone"]) => {
+    setNotice({ text, tone });
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+  };
+
+  const {
+    ref: contentRef,
+    element: content,
+    value: isFullscreen,
+    toggle: toggleFullscreen,
+    exit: exitFullscreen,
+  } = useFullscreenElement<HTMLDivElement>({
+    // Отказ браузера (потерян user gesture, запрет политики) не глотаем:
+    // хук пробрасывает reject, а оператор видит причину плашкой.
+    onError: () => showNotice("Браузер не разрешил полноэкранный режим", "error"),
+  });
+
   const imageRef = useRef<HTMLImageElement>(null);
   const [view, setView] = useState<PhotoView>(resetView);
   const viewRef = useRef(view);
-  const [notice, setNotice] = useState<Notice | null>(null);
   const [copied, setCopied] = useState(false);
   const pointersRef = useRef(new Map<number, Point>());
   const dragRef = useRef<DragState | null>(null);
   const pinchRef = useRef<PinchState | null>(null);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const commitView = useCallback(
     (next: PhotoView) => {
-      const fitted = fitIntoWindow(next, contentRef.current, imageRef.current);
+      const fitted = fitIntoWindow(next, content, imageRef.current);
       viewRef.current = fitted;
       setView(fitted);
     },
-    [contentRef],
+    [content],
   );
 
   useEffect(
@@ -164,12 +182,11 @@ export function PhotoViewer({
   // Колесо слушаем нативно: React вешает wheel пассивно, и preventDefault
   // в синтетическом обработчике не остановил бы прокрутку страницы.
   //
-  // Слушатель висит на window, а не на contentRef: Radix монтирует содержимое
-  // диалога в портал, и на момент этого эффекта ref ещё может быть пустым.
-  // Цель проверяем в самом обработчике — тогда зум работает и после портала.
+  // Слушатель висит на window, а не на самом содержимом: Radix монтирует
+  // диалог в портал, и обычный ref мог остаться пустым. Узел берём из хука —
+  // после появления портала он приходит рендером и эффект перезапускается.
   useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
-      const content = contentRef.current;
       if (!content) return;
       if (!(event.target instanceof Node) || !content.contains(event.target)) return;
 
@@ -182,26 +199,18 @@ export function PhotoViewer({
 
     window.addEventListener("wheel", handleWheel, { passive: false });
     return () => window.removeEventListener("wheel", handleWheel);
-  }, [commitView, contentRef]);
+  }, [commitView, content]);
 
   // Закрытие просмотрщика не должно оставлять браузер в полноэкранном режиме,
-  // но чужой фуллскрин (киоск) не трогаем. Ссылку читаем при размонтировании:
-  // на первом рендере портал Radix ещё не смонтирован, и захваченное значение
-  // было бы пустым.
+  // но чужой фуллскрин (киоск) не трогаем: `exit()` выходит только из своего
+  // элемента. Цель хук помнит и после размонтирования — на первом рендере
+  // портал Radix ещё не смонтирован, ссылка появляется позже.
   useEffect(
     () => () => {
-      if (document.fullscreenElement === contentRef.current) {
-        void document.exitFullscreen().catch(() => {});
-      }
+      void exitFullscreen().catch(() => {});
     },
-    [contentRef],
+    [exitFullscreen],
   );
-
-  const showNotice = (text: string, tone: Notice["tone"]) => {
-    setNotice({ text, tone });
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
-  };
 
   const handleCopy = async () => {
     try {
@@ -224,19 +233,9 @@ export function PhotoViewer({
     }
   };
 
-  // Запрос остаётся ручным: `enter`/`toggle` хука не возвращают промис, а отказ
-  // браузера оператор должен увидеть плашкой, а не молчаливым нажатием. Выход
-  // тоже адресный: чужой фуллскрин (киоск) кнопка не закрывает.
-  const toggleFullscreen = async () => {
-    const content = contentRef.current;
-    if (!content) return;
-    try {
-      if (document.fullscreenElement === content) await document.exitFullscreen();
-      else await content.requestFullscreen();
-    } catch {
-      showNotice("Браузер не разрешил полноэкранный режим", "error");
-    }
-  };
+  // Кнопка ведёт `toggle()` хука: он сам решает enter/exit по нашему элементу,
+  // а отказ браузера приходит в `onError` — оператор видит плашку, а не
+  // молчаливое нажатие. Чужой фуллскрин (киоск) кнопка не закрывает.
 
   const zoomTo = (nextZoom: number, pointer: Point) => {
     commitView(zoomAroundPoint(viewRef.current, pointer, nextZoom));
