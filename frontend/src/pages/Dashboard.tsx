@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+// App-овский `useFullscreen` — псевдо-фуллскрин киоска (скрыть шапку и меню),
+// а это браузерный Fullscreen API для фото; имена не путаются алиасом.
+import { useFullscreen as useBrowserFullscreen } from "@siberiacancode/reactuse";
 import {
   RefreshCw,
   Wifi,
@@ -234,6 +237,11 @@ function PhotoModal({
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Браузерный фуллскрин оверлея: хук владеет ссылкой на него и сам сообщает,
+  // когда браузер вышел из режима (Esc, F11), — тогда оверлей закрывается.
+  const { ref: overlayRef } = useBrowserFullscreen<HTMLDivElement>({
+    onExit: () => setIsFullscreen(false),
+  });
 
   // Load image dimensions
   useEffect(() => {
@@ -287,42 +295,17 @@ function PhotoModal({
     }
   }, [open, isFullscreen, onClose]);
 
-  // Fullscreen API management
-  useEffect(() => {
-    if (!isFullscreen) return;
-
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement) {
-        setIsFullscreen(false);
-      }
-    };
-
-    const handleEscFullscreen = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setIsFullscreen(false);
-      }
-    };
-
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    window.addEventListener("keydown", handleEscFullscreen);
-
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-      window.removeEventListener("keydown", handleEscFullscreen);
-    };
-  }, [isFullscreen]);
-
   // Request fullscreen when isFullscreen becomes true
   useEffect(() => {
     if (!isFullscreen) return;
 
-    const fullscreenElement = document.getElementById("fullscreen-photo-container");
+    const fullscreenElement = overlayRef.current;
     if (fullscreenElement && !document.fullscreenElement) {
       fullscreenElement.requestFullscreen().catch(() => {
         console.log("Fullscreen not supported");
       });
     }
-  }, [isFullscreen]);
+  }, [isFullscreen, overlayRef]);
 
   // Calculate dialog size based on actual image pixels (like Catalog)
   const dialogSize = useMemo(() => {
@@ -436,6 +419,7 @@ function PhotoModal({
       {/* Fullscreen overlay - desktop only */}
       {isFullscreen && photoUrl && typeof window !== "undefined" && window.innerWidth >= 768 && (
         <div
+          ref={overlayRef}
           id="fullscreen-photo-container"
           className="fixed inset-0 z-[100] bg-black flex items-center justify-center"
           onClick={() => setIsFullscreen(false)}
