@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { useFullscreen } from "@siberiacancode/reactuse";
 import {
   Check,
   Copy,
@@ -125,24 +126,32 @@ export function PhotoViewer({
   article: string;
   onClose: () => void;
 }) {
-  const contentRef = useRef<HTMLDivElement>(null);
+  // Ссылка на содержимое и полноэкранный режим — из одного хука. Radix
+  // монтирует диалог в портал после первого эффекта, поэтому обычный `useRef`
+  // хук не увидел бы: без рендера его эффект не перезапускается, а
+  // ссылка-состояние хука такой рендер даёт. Своим хук считает только этот
+  // элемент, поэтому чужой фуллскрин (киоск) не показывается как «наш» и
+  // кнопка «Свернуть» не выходит из него.
+  const { ref: contentRef, value: isFullscreen } = useFullscreen<HTMLDivElement>();
   const imageRef = useRef<HTMLImageElement>(null);
   const [view, setView] = useState<PhotoView>(resetView);
   const viewRef = useRef(view);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [copied, setCopied] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const pointersRef = useRef(new Map<number, Point>());
   const dragRef = useRef<DragState | null>(null);
   const pinchRef = useRef<PinchState | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const commitView = useCallback((next: PhotoView) => {
-    const fitted = fitIntoWindow(next, contentRef.current, imageRef.current);
-    viewRef.current = fitted;
-    setView(fitted);
-  }, []);
+  const commitView = useCallback(
+    (next: PhotoView) => {
+      const fitted = fitIntoWindow(next, contentRef.current, imageRef.current);
+      viewRef.current = fitted;
+      setView(fitted);
+    },
+    [contentRef],
+  );
 
   useEffect(
     () => () => {
@@ -173,24 +182,20 @@ export function PhotoViewer({
 
     window.addEventListener("wheel", handleWheel, { passive: false });
     return () => window.removeEventListener("wheel", handleWheel);
-  }, [commitView]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, []);
+  }, [commitView, contentRef]);
 
   // Закрытие просмотрщика не должно оставлять браузер в полноэкранном режиме,
-  // но чужой фуллскрин (киоск) не трогаем.
-  useEffect(() => {
-    const content = contentRef.current;
-    return () => {
-      if (content && document.fullscreenElement === content) {
+  // но чужой фуллскрин (киоск) не трогаем. Ссылку читаем при размонтировании:
+  // на первом рендере портал Radix ещё не смонтирован, и захваченное значение
+  // было бы пустым.
+  useEffect(
+    () => () => {
+      if (document.fullscreenElement === contentRef.current) {
         void document.exitFullscreen().catch(() => {});
       }
-    };
-  }, []);
+    },
+    [contentRef],
+  );
 
   const showNotice = (text: string, tone: Notice["tone"]) => {
     setNotice({ text, tone });
@@ -219,11 +224,14 @@ export function PhotoViewer({
     }
   };
 
+  // Запрос остаётся ручным: `enter`/`toggle` хука не возвращают промис, а отказ
+  // браузера оператор должен увидеть плашкой, а не молчаливым нажатием. Выход
+  // тоже адресный: чужой фуллскрин (киоск) кнопка не закрывает.
   const toggleFullscreen = async () => {
     const content = contentRef.current;
     if (!content) return;
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
+      if (document.fullscreenElement === content) await document.exitFullscreen();
       else await content.requestFullscreen();
     } catch {
       showNotice("Браузер не разрешил полноэкранный режим", "error");
