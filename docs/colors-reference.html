@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Цвета анодирования — справочник</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7f9;
+        --panel: #ffffff;
+        --text: #16181d;
+        --muted: #5c6470;
+        --line: #d9dde3;
+        --accent: #1f6feb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #12141a;
+          --panel: #1a1d25;
+          --text: #eef0f4;
+          --muted: #9aa3b2;
+          --line: #2b303b;
+          --accent: #6ea8ff;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 20px 64px;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+      }
+      .wrap {
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+      header {
+        margin-bottom: 24px;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 26px;
+        letter-spacing: -0.01em;
+      }
+      .lead {
+        margin: 0;
+        color: var(--muted);
+        max-width: 780px;
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        margin: 24px 0 8px;
+      }
+      input[type="search"] {
+        flex: 1 1 260px;
+        min-width: 200px;
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--text);
+        font: inherit;
+      }
+      input[type="search"]:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+      .count {
+        color: var(--muted);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      section {
+        margin-top: 28px;
+      }
+      h2 {
+        margin: 0 0 4px;
+        font-size: 17px;
+      }
+      .section-note {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+      }
+      article {
+        display: flex;
+        gap: 14px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel);
+      }
+      article[hidden] {
+        display: none;
+      }
+      .swatch {
+        flex: 0 0 64px;
+        height: 64px;
+        border-radius: 10px;
+        border: 1px solid rgb(0 0 0 / 0.14);
+        box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28);
+      }
+      .info {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+      }
+      .code {
+        font:
+          600 15px/1.2 ui-monospace,
+          "Cascadia Mono",
+          Consolas,
+          monospace;
+        letter-spacing: 0.02em;
+      }
+      .code.none {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .name {
+        font-weight: 500;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+      }
+      .meta code {
+        font-size: 12px;
+      }
+      .empty {
+        margin-top: 20px;
+        color: var(--muted);
+      }
+      footer {
+        margin-top: 40px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+      @media print {
+        body {
+          padding: 0;
+          background: #fff;
+          color: #000;
+        }
+        .toolbar {
+          display: none;
+        }
+        article {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Цвета анодирования</h1>
+        <p class="lead">
+          Справочник «Экранчика»: 10 текущих названий и 12 цветов веера ClassicELOX с кодами. В
+          основной колонке панели показывается ровно то, что записано в книге учёта; этот справочник
+          нужен для плашки и подсказки.
+        </p>
+      </header>
+
+      <div class="toolbar">
+        <input
+          id="q"
+          type="search"
+          placeholder="Поиск по коду, названию или hex…"
+          autocomplete="off"
+          aria-label="Поиск по цветам"
+        />
+        <span class="count" id="count"></span>
+      </div>
+
+      <section>
+        <h2>Веер ClassicELOX</h2>
+        <p class="section-note">Операции участка анодирования KTM с прямыми кодами.</p>
+        <div class="grid" id="fan">
+          <article data-search="c0 серебро #c2cad3 c0">
+            <div class="swatch" style="background: #c2cad3"></div>
+            <div class="info">
+              <div class="code">C0</div>
+              <div class="name">Серебро</div>
+              <div class="meta"><span>“C0”</span><code>#C2CAD3</code></div>
+            </div>
+          </article>
+          <article data-search="c35 чёрный черный #4e4e52 c35">
+            <div class="swatch" style="background: #4e4e52"></div>
+            <div class="info">
+              <div class="code">C35</div>
+              <div class="name">Чёрный</div>
+              <div class="meta"><span>“C35”</span><code>#4E4E52</code></div>
+            </div>
+          </article>
+          <article data-search="s120-0 золото #e1ddb0 s120-0">
+            <div class="swatch" style="background: #e1ddb0"></div>
+            <div class="info">
+              <div class="code">S120-0</div>
+              <div class="name">Золото</div>
+              <div class="meta"><span>“S120-0”</span><code>#E1DDB0</code></div>
+            </div>
+          </article>
+          <article data-search="s120-2 старое золото #ad9e77 s120-2">
+            <div class="swatch" style="background: #ad9e77"></div>
+            <div class="info">
+              <div class="code">S120-2</div>
+              <div class="name">Старое золото</div>
+              <div class="meta"><span>“S120-2”</span><code>#AD9E77</code></div>
+            </div>
+          </article>
+          <article data-search="c31 светлая шампань #cfd4d5 c31">
+            <div class="swatch" style="background: #cfd4d5"></div>
+            <div class="info">
+              <div class="code">C31</div>
+              <div class="name">Светлая шампань</div>
+              <div class="meta"><span>“C31”</span><code>#CFD4D5</code></div>
+            </div>
+          </article>
+          <article data-search="c32 тёмная темная шампань #aea895 c32">
+            <div class="swatch" style="background: #aea895"></div>
+            <div class="info">
+              <div class="code">C32</div>
+              <div class="name">Тёмная шампань</div>
+              <div class="meta"><span>“C32”</span><code>#AEA895</code></div>
+            </div>
+          </article>
+          <article data-search="c33 светлая бронза #716c62 c33">
+            <div class="swatch" style="background: #716c62"></div>
+            <div class="info">
+              <div class="code">C33</div>
+              <div class="name">Светлая бронза</div>
+              <div class="meta"><span>“C33”</span><code>#716C62</code></div>
+            </div>
+          </article>
+          <article data-search="c34 тёмная темная бронза #595655 c34">
+            <div class="swatch" style="background: #595655"></div>
+            <div class="info">
+              <div class="code">C34</div>
+              <div class="name">Тёмная бронза</div>
+              <div class="meta"><span>“C34”</span><code>#595655</code></div>
+            </div>
+          </article>
+          <article data-search="c41 медь #a0837e c41">
+            <div class="swatch" style="background: #a0837e"></div>
+            <div class="info">
+              <div class="code">C41</div>
+              <div class="name">Медь</div>
+              <div class="meta"><span>“C41”</span><code>#A0837E</code></div>
+            </div>
+          </article>
+          <article data-search="c44 тёмная темная медь #715c5f c44">
+            <div class="swatch" style="background: #715c5f"></div>
+            <div class="info">
+              <div class="code">C44</div>
+              <div class="name">Тёмная медь</div>
+              <div class="meta"><span>“C44”</span><code>#715C5F</code></div>
+            </div>
+          </article>
+          <article data-search="c51 нержавеющая сталь #a9968e c51">
+            <div class="swatch" style="background: #a9968e"></div>
+            <div class="info">
+              <div class="code">C51</div>
+              <div class="name">Нержавеющая сталь</div>
+              <div class="meta"><span>“C51”</span><code>#A9968E</code></div>
+            </div>
+          </article>
+          <article data-search="c54 тёмный темный титан #766d6d c54">
+            <div class="swatch" style="background: #766d6d"></div>
+            <div class="info">
+              <div class="code">C54</div>
+              <div class="name">Тёмный титан</div>
+              <div class="meta"><span>“C54”</span><code>#766D6D</code></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Текущие названия</h2>
+        <p class="section-note">
+          Привычные записи книги учёта. Аббревиатуры — только для бокового прогноза ванн.
+        </p>
+        <div class="grid" id="current">
+          <article data-search="серебро #c0c0c0 сер anod_01">
+            <div class="swatch" style="background: #c0c0c0"></div>
+            <div class="info">
+              <div class="code none">без кода</div>
+              <div class="name">серебро</div>
+              <div class="meta"><span>сер</span><span>ANOD_01</span><code>#C0C0C0</code></div>
+            </div>
+          </article>
+          <article data-search="черный чёрный #1c1c1c чер anod_05">
+            <div class="swatch" style="background: #1c1c1c"></div>
+            <div class="info">
+              <div class="code none">без кода</div>
+              <div class="name">черный</div>
+              <div class="meta"><span>чер</span><span>ANOD_05</span><code>#1C1C1C</code></div>
+            </div>
+          </article>
+          <article data-search="золото #ffd700 зол anod_02">
+            <div class="swatch" style="background: #ffd700"></div>
+            <div class="info">
+              <div class="code none">без кода</div>
+              <div class="name">золото</div>
+              <div class="meta"><span>зол</span><span>ANOD_02</span><code>#FFD700</code></div>
+            </div>
+          </article>
+          <article data-search="шампань #f7e7ce шам anod_06">
+            <div class="swatch" style="background: #f7e7ce"></div>
+            <div class="info">
+              <div class="code none">без кода</div>
+              <div class="name">шампань</div>
+              <div class="meta"><span>шам</span><span>ANOD_06</span><code>#F7E7CE</code></div>
+            </div>
+          </article>
+          <article data-search="титан #878681 тит anod_08">
+            <div class="swatch" style="background: #878681"></div>
+            <div class="info">
+              <div class="code none">без кода</div>
+              <div class="name">титан</div>
+              <div class="meta"><span>тит</span><span>ANOD_08</span><code>#878681</code></div>
+            </div>
+          </article>
+          <article data-search="бронза #8b5a2b брз anod_03">
+            <div class="swatch" style="background: #8b5a2b"></div>
+            <div class="info">
+              <div class="code none">без кода</div>
+              <div class="name">бронза</div>
+              <div class="meta"><span>брз</span><span>ANOD_03</span><code>#8B5A2B</code></div>
+            </div>
+          </article>
+          <article data-search="медь #cd5c5c мед anod_07">
+            <div class="swatch" style="background: #cd5c5c"></div>
+            <div class="info">
+              <div class="code none">без кода</div>
+              <div class="name">медь</div>
+              <div class="meta"><span>мед</span><span>ANOD_07</span><code>#CD5C5C</code></div>
+            </div>
+          </article>
+          <article data-search="растрав #d3d3d3 рст rst">
+            <div class="swatch" style="background: #d3d3d3"></div>
+            <div class="info">
+              <div class="code">RST</div>
+              <div class="name">растрав</div>
+              <div class="meta"><span>рст</span><code>#D3D3D3</code></div>
+            </div>
+          </article>
+          <article data-search="rose gold #b76e79 rg">
+            <div class="swatch" style="background: #b76e79"></div>
+            <div class="info">
+              <div class="code">RG</div>
+              <div class="name">Rose Gold</div>
+              <div class="meta"><span>RG</span><code>#B76E79</code></div>
+            </div>
+          </article>
+          <article data-search="rose bronze #800020 rb">
+            <div class="swatch" style="background: #800020"></div>
+            <div class="info">
+              <div class="code">RB</div>
+              <div class="name">Rose Bronze</div>
+              <div class="meta"><span>RB</span><code>#800020</code></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <p class="empty" id="empty" hidden>Ничего не найдено.</p>
+
+      <footer>
+        Hex снят с фото веера и справочный: точный оттенок зависит от сплава и освещения. Всего
+        цветов — 22. Источник для синка — операции участка
+        <code>ANODIZING</code> в KTM; локальная копия живёт в <code>static/ekranchik.db</code>,
+        таблица <code>colors</code>.
+      </footer>
+    </div>
+
+    <script>
+      const query = document.getElementById("q");
+      const cards = [...document.querySelectorAll("article[data-search]")];
+      const count = document.getElementById("count");
+      const empty = document.getElementById("empty");
+
+      function applyFilter() {
+        const needle = query.value.trim().toLowerCase();
+        let shown = 0;
+        for (const card of cards) {
+          const haystack = card.dataset.search + " " + card.textContent.toLowerCase();
+          const match = !needle || haystack.includes(needle);
+          card.hidden = !match;
+          if (match) shown += 1;
+        }
+        count.textContent = shown + " из " + cards.length;
+        empty.hidden = shown !== 0;
+      }
+
+      query.addEventListener("input", applyFilter);
+      applyFilter();
+    </script>
+  </body>
+</html>

@@ -127,6 +127,15 @@ export function colorCode(colors: readonly ColorSpec[], written: string): string
   return color.code?.trim() || colorLabel(color);
 }
 
+/**
+ * Подпись для витрины «Все цвета»: код и название вместе (`C31 — Светлая
+ * шампань`), чтобы тестовая строка показывала обе части справочника. У старых
+ * цветов кода нет — остаётся одно название.
+ */
+export function colorOptionLabel(color: ColorSpec): string {
+  return color.code ? `${color.code} — ${color.name}` : color.name;
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const normalized = hex.replace("#", "").trim();
   if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {

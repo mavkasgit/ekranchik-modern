@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { colorAbbreviation, colorCode, colorHex, colorName, type ColorSpec } from "./color";
+import {
+  colorAbbreviation,
+  colorCode,
+  colorHex,
+  colorName,
+  colorOptionLabel,
+  type ColorSpec,
+} from "./color";
 
 // Фикстура справочника: старые названия без кода и веер ClassicELOX с кодами,
 // как их отдаёт GET /api/colors. Подпись приходит из API: у старых названий
@@ -147,5 +154,23 @@ describe("код цвета", () => {
     expect(colorName(empty, "C32")).toBe("C32");
     expect(colorHex(empty, "C32")).toBe(UNKNOWN_HEX);
     expect(colorCode(empty, "C32")).toBe("c32");
+  });
+});
+
+describe("colorOptionLabel", () => {
+  it("в витрине «Все цвета» код и название идут вместе", () => {
+    expect(colorOptionLabel(CATALOG[1])).toBe("C31 — Светлая шампань");
+    expect(colorOptionLabel(CATALOG[2])).toBe("C32 — Тёмная шампань");
+  });
+
+  it("у цвета без кода остаётся одно название", () => {
+    expect(colorOptionLabel(CATALOG[8])).toBe("серебро");
+    expect(colorOptionLabel(CATALOG[9])).toBe("бронза");
+  });
+
+  it("подпись витрины по-прежнему находится справочником: плашка и hex цветные", () => {
+    const label = colorOptionLabel(CATALOG[1]);
+
+    expect(colorHex(CATALOG, label)).toBe("#E8D5A3");
   });
 });
