@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Pencil } from "lucide-react";
+import { isComposing } from "@/lib/keyboard";
 
 export type BookPathTone = "main" | "reserve" | "neutral";
 
@@ -61,6 +62,7 @@ export function ClickableBookPath({
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={(event) => {
+          if (isComposing(event)) return;
           if (event.key === "Enter") commit();
           if (event.key === "Escape") {
             setDraft(value);

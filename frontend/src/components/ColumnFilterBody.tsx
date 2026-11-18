@@ -9,6 +9,7 @@ import {
   sortByPartialSearchMatch,
 } from "@/lib/domain/columnFilters";
 import type { ColumnFilterKind } from "@/lib/domain/columnSpecs";
+import { isComposing } from "@/lib/keyboard";
 import { cn } from "@/lib/utils";
 
 // Содержимое поповера одной колонки. Один компонент на шапку таблицы и на
@@ -94,6 +95,7 @@ function ValueFilterBody<Field extends string>({
           }
         }}
         onKeyDown={(event) => {
+          if (isComposing(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
             onDone();
@@ -204,6 +206,7 @@ function RangeFilterBody<Field extends string>({
             value={range.from}
             onChange={(event) => onRangeChange(field, { from: event.target.value })}
             onKeyDown={(event) => {
+              if (isComposing(event)) return;
               if (event.key === "Enter") onDone();
             }}
             className="h-8 text-sm"
@@ -219,6 +222,7 @@ function RangeFilterBody<Field extends string>({
             value={range.to}
             onChange={(event) => onRangeChange(field, { to: event.target.value })}
             onKeyDown={(event) => {
+              if (isComposing(event)) return;
               if (event.key === "Enter") onDone();
             }}
             className="h-8 text-sm"
