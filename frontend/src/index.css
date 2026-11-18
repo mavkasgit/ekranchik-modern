@@ -8,6 +8,9 @@ body {
 
 @layer base {
   :root {
+    /* Схема для нативных контролов, скроллбаров и автозаполнения: та же, что
+       в <meta name="color-scheme">, иначе они остаются в схеме ОС. */
+    color-scheme: light;
     --background: 0 0% 100%;
     --foreground: 0 0% 3.9%;
     --card: 0 0% 100%;
@@ -35,6 +38,7 @@ body {
     --radius: 0.5rem;
   }
   .dark {
+    color-scheme: dark;
     --background: 0 0% 3.9%;
     --foreground: 0 0% 98%;
     --card: 0 0% 3.9%;
