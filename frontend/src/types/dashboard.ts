@@ -2,6 +2,10 @@ export interface ProfileInfo {
   name: string;
   canonical_name?: string;
   processing: string[];
+  /** Длина из книги в метрах; null — в ячейке её нет (ADR 0012). */
+  length_m?: number | null;
+  /** Длина для бейджа: «2,75 м». */
+  length_text?: string | null;
   has_photo: boolean;
   photo_thumb?: string;
   photo_full?: string;
