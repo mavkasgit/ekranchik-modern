@@ -157,7 +157,7 @@ S120-0, S120-2, C31, C32, C33, C34, C41, C44, C51, C54) нет ни в KTM, ни
   `attributes.customer="ГорКомплекс"`,
   `attributes.pack={"sets_per_hanger":4,"pieces_per_set":2}`,
   `attributes.hanger_mode="manual"`,
-  `attributes.quantity_per_hanger={"default":{"manual":8}}`.
+  `attributes.quantity_per_hanger={"default":{"auto":null,"manual":8}}`.
   Наименование: «Урны, комплект 2 шт (корпус + крышка)».
 - Для `volume` разрешается ручная норма с ключом `default`; для `length`
   поведение не меняется. Синк читает `default` у безразмерных продуктов.
