@@ -11,6 +11,9 @@
 - ``code`` веера равен коду операции KTM, поэтому первый синк найдёт строку,
   а не создаст вторую.
 - ``source=local`` у всех: до первого синка строки живут только в Экранчике.
+- ``abbreviation`` — привычная подпись в ячейке. Правило «код или первые
+  буквы» ломает старые ``брз``/``рст``, поэтому подпись хранится рядом с
+  названием, а не выводится из него.
 - ``hex`` веера — справочные значения по фото веера ClassicELOX; точный
   оттенок зависит от сплава и освещения, колориметрическая точность вне рамок.
 """
@@ -21,33 +24,39 @@ from sqlalchemy.engine import Connection
 # Десять текущих названий: их уже знает панель и книга учёта. Старые операции
 # KTM остаются без отображаемого кода, поэтому code=None.
 _CURRENT_COLORS: tuple[dict[str, str | None], ...] = (
-    {"code": None, "name": "серебро", "hex": "#C0C0C0", "operation_code": "ANOD_01"},
-    {"code": None, "name": "черный", "hex": "#1C1C1C", "operation_code": "ANOD_05"},
-    {"code": None, "name": "золото", "hex": "#FFD700", "operation_code": "ANOD_02"},
-    {"code": None, "name": "шампань", "hex": "#F7E7CE", "operation_code": "ANOD_06"},
-    {"code": None, "name": "титан", "hex": "#878681", "operation_code": "ANOD_08"},
-    {"code": None, "name": "бронза", "hex": "#8B5A2B", "operation_code": "ANOD_03"},
-    {"code": None, "name": "медь", "hex": "#CD5C5C", "operation_code": "ANOD_07"},
-    {"code": "RST", "name": "растрав", "hex": "#D3D3D3", "operation_code": None},
-    {"code": "RG", "name": "Rose Gold", "hex": "#B76E79", "operation_code": None},
-    {"code": "RB", "name": "Rose Bronze", "hex": "#800020", "operation_code": None},
+    {"code": None, "name": "серебро", "hex": "#C0C0C0", "abbreviation": "сер", "operation_code": "ANOD_01"},
+    {"code": None, "name": "черный", "hex": "#1C1C1C", "abbreviation": "чер", "operation_code": "ANOD_05"},
+    {"code": None, "name": "золото", "hex": "#FFD700", "abbreviation": "зол", "operation_code": "ANOD_02"},
+    {"code": None, "name": "шампань", "hex": "#F7E7CE", "abbreviation": "шам", "operation_code": "ANOD_06"},
+    {"code": None, "name": "титан", "hex": "#878681", "abbreviation": "тит", "operation_code": "ANOD_08"},
+    {"code": None, "name": "бронза", "hex": "#8B5A2B", "abbreviation": "брз", "operation_code": "ANOD_03"},
+    {"code": None, "name": "медь", "hex": "#CD5C5C", "abbreviation": "мед", "operation_code": "ANOD_07"},
+    {"code": "RST", "name": "растрав", "hex": "#D3D3D3", "abbreviation": "рст", "operation_code": None},
+    {"code": "RG", "name": "Rose Gold", "hex": "#B76E79", "abbreviation": "RG", "operation_code": None},
+    {"code": "RB", "name": "Rose Bronze", "hex": "#800020", "abbreviation": "RB", "operation_code": None},
 )
 
 # Двенадцать цветов веера ClassicELOX: кодов в KTM ещё нет, операция заводится
 # сразу с прямым кодом C0…C54 (T-378).
 _FAN_COLORS: tuple[dict[str, str | None], ...] = (
-    {"code": "C0", "name": "Серебро", "hex": "#C9CCCE", "operation_code": "C0"},
-    {"code": "C35", "name": "Чёрный", "hex": "#2A2A2A", "operation_code": "C35"},
-    {"code": "S120-0", "name": "Золото", "hex": "#D4AF37", "operation_code": "S120-0"},
-    {"code": "S120-2", "name": "Старое золото", "hex": "#B08D57", "operation_code": "S120-2"},
-    {"code": "C31", "name": "Светлая шампань", "hex": "#E9D9BC", "operation_code": "C31"},
-    {"code": "C32", "name": "Тёмная шампань", "hex": "#C8B184", "operation_code": "C32"},
-    {"code": "C33", "name": "Светлая бронза", "hex": "#B0895C", "operation_code": "C33"},
-    {"code": "C34", "name": "Тёмная бронза", "hex": "#7B5A38", "operation_code": "C34"},
-    {"code": "C41", "name": "Медь", "hex": "#B87333", "operation_code": "C41"},
-    {"code": "C44", "name": "Тёмная медь", "hex": "#8C5230", "operation_code": "C44"},
-    {"code": "C51", "name": "Нержавеющая сталь", "hex": "#A8A9AD", "operation_code": "C51"},
-    {"code": "C54", "name": "Тёмный титан", "hex": "#5C5D60", "operation_code": "C54"},
+    {"code": "C0", "name": "Серебро", "hex": "#C9CCCE", "abbreviation": "C0", "operation_code": "C0"},
+    {"code": "C35", "name": "Чёрный", "hex": "#2A2A2A", "abbreviation": "C35", "operation_code": "C35"},
+    {"code": "S120-0", "name": "Золото", "hex": "#D4AF37", "abbreviation": "S120-0", "operation_code": "S120-0"},
+    {"code": "S120-2", "name": "Старое золото", "hex": "#B08D57", "abbreviation": "S120-2", "operation_code": "S120-2"},
+    {
+        "code": "C31",
+        "name": "Светлая шампань",
+        "hex": "#E9D9BC",
+        "abbreviation": "C31",
+        "operation_code": "C31",
+    },
+    {"code": "C32", "name": "Тёмная шампань", "hex": "#C8B184", "abbreviation": "C32", "operation_code": "C32"},
+    {"code": "C33", "name": "Светлая бронза", "hex": "#B0895C", "abbreviation": "C33", "operation_code": "C33"},
+    {"code": "C34", "name": "Тёмная бронза", "hex": "#7B5A38", "abbreviation": "C34", "operation_code": "C34"},
+    {"code": "C41", "name": "Медь", "hex": "#B87333", "abbreviation": "C41", "operation_code": "C41"},
+    {"code": "C44", "name": "Тёмная медь", "hex": "#8C5230", "abbreviation": "C44", "operation_code": "C44"},
+    {"code": "C51", "name": "Нержавеющая сталь", "hex": "#A8A9AD", "abbreviation": "C51", "operation_code": "C51"},
+    {"code": "C54", "name": "Тёмный титан", "hex": "#5C5D60", "abbreviation": "C54", "operation_code": "C54"},
 )
 
 SEED_COLORS: tuple[dict[str, str | None], ...] = _CURRENT_COLORS + _FAN_COLORS
@@ -73,3 +82,30 @@ def seed_missing_colors(connection: Connection) -> int:
         result = connection.execute(_INSERT_MISSING, color)
         inserted += result.rowcount or 0
     return inserted
+
+
+_UPDATE_ABBREVIATION = text(
+    """
+    UPDATE colors SET abbreviation = :abbreviation
+    WHERE abbreviation IS NULL
+      AND (
+        (:operation_code IS NOT NULL AND operation_code = :operation_code)
+        OR (:operation_code IS NULL AND :code IS NOT NULL AND code = :code)
+      )
+    """
+)
+
+
+def fill_seed_abbreviations(connection: Connection) -> int:
+    """Проставить привычные подписи строкам засева, у которых их ещё нет.
+
+    Миграция ``003`` создала таблицу без ``abbreviation``; колонку добавляет
+    ``004`` и этой функцией заполняет уже засеянные строки. Сопоставление идёт
+    по ключу синка, а не по названию: строку могли переименовать локально.
+    Уже заполненную подпись не трогаем — её мог поправить администратор.
+    """
+    updated = 0
+    for color in SEED_COLORS:
+        result = connection.execute(_UPDATE_ABBREVIATION, color)
+        updated += result.rowcount or 0
+    return updated

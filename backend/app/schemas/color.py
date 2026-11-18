@@ -39,6 +39,7 @@ class ColorResponse(BaseModel):
     code: str | None = Field(description="Отображаемый код; у старых названий его нет")
     name: str
     hex: str
+    abbreviation: str | None = Field(default=None, description="Привычная подпись в ячейке")
     operation_code: str | None = Field(description="Ключ синка с KTM")
     source: Literal["ktm", "local"] = Field(description="Чья правка последняя")
     updated_at: datetime

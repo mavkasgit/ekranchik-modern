@@ -61,6 +61,7 @@ class Color(Base):
     code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    abbreviation: Mapped[str | None] = mapped_column(String(16), nullable=True)
     operation_code: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="local", server_default="local")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

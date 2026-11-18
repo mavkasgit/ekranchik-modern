@@ -16,8 +16,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-# Поля ответа из тикета 0022: id/code/name/hex/operation_code/source/updated_at.
-COLOR_FIELDS = {"id", "code", "name", "hex", "operation_code", "source", "updated_at"}
+# Поля ответа из тикета 0022 плюс abbreviation: id/code/name/hex/operation_code/source/updated_at.
+COLOR_FIELDS = {"id", "code", "name", "hex", "abbreviation", "operation_code", "source", "updated_at"}
 
 # Двенадцать кодов веера — каждый должен прийти из засева.
 FAN_CODES = {"C0", "C35", "S120-0", "S120-2", "C31", "C32", "C33", "C34", "C41", "C44", "C51", "C54"}
@@ -133,6 +133,14 @@ async def test_migration_seeds_full_color_dictionary(tmp_path, monkeypatch):
     assert by_code["C32"]["source"] == "local"
     assert by_code["C32"]["operation_code"] == "C32"
 
+    # Аббревиатура — подпись, привычная оператору: правило «первые буквы»
+    # ломало бы «брз» и «рст», поэтому она приходит из засева.
+    assert by_name["бронза"]["abbreviation"] == "брз"
+    assert by_name["растрав"]["abbreviation"] == "рст"
+    assert by_name["Rose Gold"]["abbreviation"] == "RG"
+    assert by_code["C32"]["abbreviation"] == "C32"
+    assert all(row["abbreviation"] for row in rows), "у каждой строки засева есть аббревиатура"
+
 
 async def test_repeated_startup_does_not_duplicate_seed(tmp_path, monkeypatch):
     """Повторный запуск миграций не плодит дубли в справочнике."""
@@ -164,6 +172,11 @@ async def test_colors_list_returns_whole_dictionary_without_db_fields(colors_db)
     assert by_code["C41"]["name"] == "Медь"
     assert by_code["C51"]["name"] == "Нержавеющая сталь"
 
+    # Привычные подписи старых цветов не должны меняться: «брз» и «рст» из засева.
+    by_name = {item["name"]: item for item in listing}
+    assert by_name["бронза"]["abbreviation"] == "брз"
+    assert by_name["растрав"]["abbreviation"] == "рст"
+
     # Стабильный порядок: коды идут по возрастанию, повторный запрос совпадает.
     codes = [item["code"] for item in listing if item["code"]]
     assert codes == sorted(codes)
@@ -185,6 +198,7 @@ async def test_patch_updates_name_and_hex_but_keeps_sync_keys(colors_db):
     assert status == 200, updated
     assert updated["name"] == "Тёмная шампань (правка)"
     assert updated["hex"] == "#123456"
+    assert updated["abbreviation"] == before["abbreviation"]
     assert updated["code"] == before["code"]
     assert updated["operation_code"] == before["operation_code"]
 
