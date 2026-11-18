@@ -149,3 +149,50 @@ async def test_photo_lookup_real_book_cells(images_dir, db_session):
     photos = await catalog_service.get_profiles_photos_batch(list(cells), session=db_session)
 
     assert {cell: photos[cell]["name"] for cell in cells} == cells
+
+
+async def test_photo_lookup_finds_article_after_length_is_removed(images_dir, db_session):
+    """Длина ушла из имени (ADR 0012) — фото ищется по чистому артикулу.
+
+    До разбора длины ячейка ``ЮП-2083 2,75 метра`` находилась только запасным
+    проходом по ведущему слову. Теперь имя — сам артикул, поэтому совпадение
+    точное.
+    """
+    (images_dir / "ЮП-2083-thumb.jpg").write_bytes(b"thumb")
+    db_session.add(
+        Profile(
+            name="ЮП-2083",
+            photo_thumb="images/ЮП-2083-thumb.jpg",
+            photo_full="images/ЮП-2083.jpg",
+        )
+    )
+    await db_session.flush()
+
+    cells = ["ЮП-2083 2,75 метра", "ЮП-2083(1.8м)", "профиль ЮП-2083 (2.7)"]
+    photos = await catalog_service.get_profiles_photos_batch(cells, session=db_session)
+
+    assert {cell: photos[cell]["name"] for cell in cells} == {
+        "ЮП-2083 2,75 метра": "ЮП-2083",
+        "ЮП-2083(1.8м)": "ЮП-2083",
+        "профиль ЮП-2083 (2.7)": "ЮП-2083",
+    }
+
+
+async def test_photo_lookup_keeps_fallback_for_other_tails(images_dir, db_session):
+    """Запасной проход остаётся: «381 (ЮП-2900 окно)» — артикул «381».
+
+    Ячейка начинается с номера, а не с артикула: после снятия обработки
+    («окно») и длины имя не совпадает с каталогом, и фото находит только
+    поиск по ведущему слову.
+    """
+    (images_dir / "381-thumb.jpg").write_bytes(b"thumb")
+    db_session.add(
+        Profile(name="381", photo_thumb="images/381-thumb.jpg", photo_full="images/381.jpg")
+    )
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(
+        ["381 (ЮП-2900 окно)"], session=db_session
+    )
+
+    assert photos["381 (ЮП-2900 окно)"]["name"] == "381"

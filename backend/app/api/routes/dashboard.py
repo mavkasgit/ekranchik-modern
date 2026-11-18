@@ -74,6 +74,8 @@ def _build_profiles_info(profile_text, photos_map: dict) -> list[ProfileInfo]:
                 photo_thumb_version=photo.get("photo_thumb_version"),
                 photo_full_version=photo.get("photo_full_version"),
                 processing=parsed.processing,
+                length_m=parsed.length_m,
+                length_text=parsed.length_text,
                 updated_at=photo.get("updated_at"),
             )
         )
