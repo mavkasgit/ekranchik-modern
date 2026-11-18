@@ -171,7 +171,7 @@ class LineMonitorService:
         node_ids = []
 
         # Узлы для всех 39 ванн
-        bath_props = ["InUse", "Free", "Pallete", "InTime", "OutTime", "dTime"]
+        bath_props = ["InUse", "Pallete", "InTime", "OutTime", "dTime"]
         for bath_num in range(1, 40):
             for prop in bath_props:
                 node_ids.append(f"ns=4;s=Bath[{bath_num}].{prop}")

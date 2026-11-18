@@ -4,7 +4,6 @@ export interface BathStatus {
   pallete: number;
   in_time: number;
   out_time: number;
-  free?: boolean;
   d_time?: number;
   article?: string;
   color?: string;
