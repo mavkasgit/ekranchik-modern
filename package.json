@@ -24,7 +24,8 @@
     "test:e2e:ui": "playwright test --config=playwright.config.mts --ui",
     "report:photos": "node scripts/run-python.js ../scripts/photo-match-report.py",
     "chrome:debug": "start chrome --remote-debugging-port=9222 --no-first-run --no-default-browser-check --user-data-dir=\"%CD%\\.chrome-dev-profile\" http://127.0.0.1:5173/opcua",
-    "check:web": "node scripts/modern-web.mjs"
+    "check:web": "node scripts/modern-web.mjs",
+    "check:web-diff": "node scripts/reactuse-diff.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",

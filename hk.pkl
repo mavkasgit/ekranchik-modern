@@ -33,6 +33,11 @@ local modernWeb = (Step) {
   check = "node scripts/modern-web.mjs"
 }
 
+// Дифф-ратчет ReactUse: только новые ручные matchMedia/clipboard/observers.
+local reactuseDiff = (Step) {
+  check = "node scripts/reactuse-diff.mjs"
+}
+
 local commitlint = (Step) {
   check = "npx --no-install commitlint --edit {{ commit_msg_file }}"
 }
@@ -59,6 +64,7 @@ hooks {
       ["knip"] = knip
       ["tsc"] = tsc
       ["modern-web"] = modernWeb
+      ["reactuse-diff"] = reactuseDiff
     }
   }
   ["pre-push"] {
@@ -73,6 +79,7 @@ hooks {
       ["knip"] = knip
       ["tsc"] = tsc
       ["modern-web"] = modernWeb
+      ["reactuse-diff"] = reactuseDiff
     }
   }
   ["commit-msg"] {
