@@ -2,19 +2,21 @@ import { describe, expect, it } from "vitest";
 import { colorAbbreviation, colorCode, colorHex, colorName, type ColorSpec } from "./color";
 
 // Фикстура справочника: старые названия без кода и веер ClassicELOX с кодами,
-// как их отдаёт GET /api/colors. Порядок — сначала коды, затем названия.
+// как их отдаёт GET /api/colors. Подпись приходит из API: у старых названий
+// привычные «сер»/«брз», у цветов веера — код. Порядок — сначала коды, затем названия.
 const CATALOG: ColorSpec[] = [
-  { code: "C0", name: "Серебро", hex: "#C0C0C0" },
-  { code: "C31", name: "Светлая шампань", hex: "#E8D5A3" },
-  { code: "C32", name: "Тёмная шампань", hex: "#C9A24B" },
-  { code: "C41", name: "Медь", hex: "#B87333" },
-  { code: "C44", name: "Тёмная медь", hex: "#8C4A2F" },
-  { code: "RB", name: "Rose Bronze", hex: "#800020" },
-  { code: "RG", name: "Rose Gold", hex: "#B76E79" },
-  { code: "RST", name: "растрав", hex: "#D3D3D3" },
-  { code: null, name: "серебро", hex: "#C0C0C0" },
-  { code: null, name: "шампань", hex: "#F7E7CE" },
-  { code: null, name: "черный", hex: "#1C1C1C" },
+  { code: "C0", name: "Серебро", hex: "#C0C0C0", abbreviation: "C0" },
+  { code: "C31", name: "Светлая шампань", hex: "#E8D5A3", abbreviation: "C31" },
+  { code: "C32", name: "Тёмная шампань", hex: "#C9A24B", abbreviation: "C32" },
+  { code: "C41", name: "Медь", hex: "#B87333", abbreviation: "C41" },
+  { code: "C44", name: "Тёмная медь", hex: "#8C4A2F", abbreviation: "C44" },
+  { code: "RB", name: "Rose Bronze", hex: "#800020", abbreviation: "RB" },
+  { code: "RG", name: "Rose Gold", hex: "#B76E79", abbreviation: "RG" },
+  { code: "RST", name: "растрав", hex: "#D3D3D3", abbreviation: "рст" },
+  { code: null, name: "серебро", hex: "#C0C0C0", abbreviation: "сер" },
+  { code: null, name: "бронза", hex: "#8B5A2B", abbreviation: "брз" },
+  { code: null, name: "шампань", hex: "#F7E7CE", abbreviation: "шам" },
+  { code: null, name: "черный", hex: "#1C1C1C", abbreviation: "чер" },
 ];
 
 // В книге учёта код пишут кириллицей, канон справочника — латиница.
@@ -110,6 +112,29 @@ describe("код цвета", () => {
   it("у цвета без кода показывает старую аббревиатуру, а не выдуманный код", () => {
     expect(colorCode(CATALOG, "серебро")).toBe("сер");
     expect(colorHex(CATALOG, "серебро")).toBe("#C0C0C0");
+  });
+
+  it("подпись берёт из справочника: «бронза» — брз, «растрав» — рст", () => {
+    expect(colorAbbreviation(CATALOG, "бронза")).toBe("брз");
+    expect(colorAbbreviation(CATALOG, "растрав")).toBe("рст");
+    expect(colorAbbreviation(CATALOG, "Растрав")).toBe("рст");
+    expect(colorCode(CATALOG, "бронза")).toBe("брз");
+  });
+
+  it("у цвета веера вместо подписи стоит код", () => {
+    expect(colorAbbreviation(CATALOG, "C31")).toBe("C31");
+    expect(colorAbbreviation(CATALOG, "Светлая шампань")).toBe("C31");
+    expect(colorCode(CATALOG, "C31")).toBe("C31");
+  });
+
+  it("если API не прислал подпись, остаются код или первые три буквы названия", () => {
+    const sparse: ColorSpec[] = [
+      { code: "C77", name: "Новый цвет", hex: "#123456", abbreviation: "" },
+      { code: null, name: "патина", hex: "#654321", abbreviation: "" },
+    ];
+
+    expect(colorAbbreviation(sparse, "C77")).toBe("C77");
+    expect(colorAbbreviation(sparse, "патина")).toBe("пат");
   });
 
   it("неизвестный цвет остаётся серым и с аббревиатурой из книги", () => {

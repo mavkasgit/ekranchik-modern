@@ -5,10 +5,10 @@ import type { Profile } from "@/types/profile";
 
 /** Фикстура справочника: витрина не должна зависеть от длины боевого списка цветов. */
 const COLORS: ColorSpec[] = [
-  { code: "C31", name: "Светлая шампань", hex: "#E8D5A3" },
-  { code: "C32", name: "Тёмная шампань", hex: "#C9A24B" },
-  { code: "RG", name: "Rose Gold", hex: "#B76E79" },
-  { code: null, name: "серебро", hex: "#C0C0C0" },
+  { code: "C31", name: "Светлая шампань", hex: "#E8D5A3", abbreviation: "C31" },
+  { code: "C32", name: "Тёмная шампань", hex: "#C9A24B", abbreviation: "C32" },
+  { code: "RG", name: "Rose Gold", hex: "#B76E79", abbreviation: "RG" },
+  { code: null, name: "серебро", hex: "#C0C0C0", abbreviation: "сер" },
 ];
 
 function catalogProfile(

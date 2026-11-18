@@ -9,6 +9,8 @@ export interface ColorSpec {
   /** Каноническое написание: его показываем и по нему узнаём вариант из книги учёта. */
   name: string;
   hex: string;
+  /** Короткая подпись из справочника: «сер», «брз»; у цвета веера — его код. */
+  abbreviation: string;
 }
 
 const UNKNOWN_COLOR_HEX = "#9CA3AF";
@@ -74,12 +76,14 @@ function matchColor(colors: readonly ColorSpec[], written: string): ColorSpec | 
 }
 
 /**
- * Короткая подпись цвета без кода: первые три буквы названия. Для старых
- * названий это привычные «сер», «шам», «чер». Справочник из API аббревиатур
- * не хранит: у цвета с кодом подпись — сам код.
+ * Короткая подпись цвета — из справочника: «сер», «брз», у цвета веера — код.
+ * Пустая подпись из API не должна оставлять ячейку без текста: тогда остаются
+ * код или первые три буквы названия.
  */
 function colorLabel(color: ColorSpec): string {
-  return color.code?.trim() || color.name.toLowerCase().trim().slice(0, 3);
+  return (
+    color.abbreviation.trim() || color.code?.trim() || color.name.toLowerCase().trim().slice(0, 3)
+  );
 }
 
 /** Цвета нет в справочнике: показываем первые четыре символа из книги, как раньше. */
@@ -105,7 +109,7 @@ export function colorHex(colors: readonly ColorSpec[], written: string): string 
   return matchColor(colors, written)?.hex ?? UNKNOWN_COLOR_HEX;
 }
 
-/** Подпись цвета в тесной ячейке: код справочника, у цвета без кода — аббревиатура. */
+/** Подпись цвета в тесной ячейке — из справочника; у неизвестного — из книги. */
 export function colorAbbreviation(colors: readonly ColorSpec[], written: string): string {
   const color = matchColor(colors, written);
   return color ? colorLabel(color) : writtenLabel(written);
@@ -113,10 +117,12 @@ export function colorAbbreviation(colors: readonly ColorSpec[], written: string)
 
 /**
  * Код цвета для ячейки дашборда. Если у найденного цвета кода нет, остаётся
- * текущая аббревиатура — так «серебро» показывает «сер», как раньше.
+ * подпись из справочника — так «серебро» показывает «сер», как раньше.
  */
 export function colorCode(colors: readonly ColorSpec[], written: string): string {
-  return colorAbbreviation(colors, written);
+  const color = matchColor(colors, written);
+  if (!color) return writtenLabel(written);
+  return color.code?.trim() || colorLabel(color);
 }
 
 function hexToRgba(hex: string, alpha: number): string {
