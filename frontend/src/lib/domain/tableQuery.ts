@@ -64,7 +64,7 @@ export function sortRows<T, Field extends string>(
 ): T[] {
   if (sorts.length === 0) return [...rows];
 
-  return [...rows].sort((left, right) => {
+  return rows.toSorted((left, right) => {
     for (const config of sorts) {
       const read = sortDefs.get(config.field);
       if (!read) continue;

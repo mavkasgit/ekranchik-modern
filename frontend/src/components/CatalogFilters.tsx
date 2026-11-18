@@ -180,7 +180,7 @@ export function CatalogFilterChips<Field extends string>({
       });
     }
 
-    const values = [...bound.selectedValues].sort((left, right) =>
+    const values = Array.from(bound.selectedValues).toSorted((left, right) =>
       column.valueLabel
         ? valueLabel(left).localeCompare(valueLabel(right), "ru")
         : left.localeCompare(right, "ru"),
