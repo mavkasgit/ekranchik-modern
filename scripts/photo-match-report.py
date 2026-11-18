@@ -6,6 +6,10 @@
 (``catalog_service.get_profiles_photos_batch``), поэтому отчёт не расходится
 с экраном.
 
+Второй блок — «Длины»: сколько строк несут длину, какими написаниями, что
+длиной не является (миллиметры, размеры заготовок) и сколько чисел с «м»
+осталось неразобранными. Те же данные уходят в JSON под ключом ``lengths``.
+
 Сравнение «до/после» — через ``--compare-ref``: код каталога берётся из
 указанного коммита (``git show``), а строки книги читаются один раз, так что
 оба прогона видят одни и те же данные.
@@ -26,6 +30,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -184,6 +189,82 @@ def row_metrics(rows, photo_names: set[str]) -> dict[str, int]:
     return metrics
 
 
+# Признаки чисел, которые длиной профиля не являются: миллиметры и размеры.
+_MM = re.compile(r"\d\s*мм", re.IGNORECASE)
+_DIMENSIONS = re.compile(r"\d+\s*[хx×*]\s*\d+", re.IGNORECASE)
+# Число с «м» рядом — кандидат в метры; всё, что им не стало, попадает в
+# «не разобралось». Кандидат без объяснения означает дыру в правиле.
+_METERS_CANDIDATE = re.compile(r"\d\s*[.,]?\d*\s*м", re.IGNORECASE)
+
+
+def collect_lengths(rows) -> dict:
+    """Длины книги: строки, написания и что длиной не считается.
+
+    Считается по строкам листа, а не по числу сегментов: ячейка может нести
+    два профиля, и тогда у каждого своя длина, но строка одна.
+    """
+    from app.services.profile_name import split_profiles
+
+    spellings: dict[str, dict] = {}
+    not_length: dict[str, dict] = {}
+    unparsed: dict[str, set] = {}
+    length_rows: set = set()
+
+    for row in rows:
+        for parsed in split_profiles(row.profile):
+            if parsed.length_m is not None:
+                entry = spellings.setdefault(
+                    parsed.raw,
+                    {
+                        "rows": 0,
+                        "article": parsed.name,
+                        "length_m": parsed.length_m,
+                        "length_text": parsed.length_text,
+                        "_sheet_rows": set(),
+                    },
+                )
+                entry["_sheet_rows"].add(row.sheet_row)
+                length_rows.add(row.sheet_row)
+                continue
+
+            raw = parsed.raw
+            why = None
+            if _MM.search(raw):
+                why = "мм, а не метры"
+            elif _DIMENSIONS.search(raw):
+                why = "размер, а не длина"
+            if why:
+                entry = not_length.setdefault(raw, {"rows": 0, "why": why})
+                entry["rows"] += 1
+            elif _METERS_CANDIDATE.search(raw):
+                unparsed.setdefault(raw, set()).add(row.sheet_row)
+
+    items = sorted(spellings.items(), key=lambda kv: (-len(kv[1]["_sheet_rows"]), kv[0].lower()))
+    return {
+        "rows": len(length_rows),
+        "spellings": len(spellings),
+        "items": [
+            {
+                "raw": raw,
+                "rows": len(entry["_sheet_rows"]),
+                "article": entry["article"],
+                "length_m": entry["length_m"],
+                "length_text": entry["length_text"],
+            }
+            for raw, entry in items
+        ],
+        "not_length": [
+            {"raw": raw, "rows": entry["rows"], "why": entry["why"]}
+            for raw, entry in sorted(not_length.items(), key=lambda kv: (-kv[1]["rows"], kv[0].lower()))
+        ],
+        "unparsed": [
+            {"raw": raw, "rows": len(sheet_rows)}
+            for raw, sheet_rows in sorted(unparsed.items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
+        ],
+    }
+
+
+
 def esc(value) -> str:
     return html.escape(str(value))
 
@@ -258,6 +339,76 @@ def bars(old: dict[str, int], new: dict[str, int]) -> str:
     return one("Было", old, "old") + one("Стало", new, "new")
 
 
+def length_section(lengths: dict, base: int) -> str:
+    """Блок «Длины»: сколько строк, какие написания и что длиной не является."""
+    share = lengths["rows"] / base * 100 if base else 0
+    items = lengths["items"]
+    main_rows = "\n".join(
+        "<tr class='ok'>"
+        f"<td class='mono'>{esc(item['raw'])}</td>"
+        f"<td class='num'>{item['rows']}</td>"
+        f"<td class='mono'>{esc(item['length_text'])}</td>"
+        f"<td class='mono dim'>{esc(item['article'])}</td>"
+        "</tr>"
+        for item in items
+    )
+    main = (
+        "<table class='grid'><thead><tr>"
+        "<th>Как записано в книге</th><th class='num'>Строк</th>"
+        "<th>Бейдж</th><th>Артикул</th>"
+        "</tr></thead><tbody>"
+        + main_rows
+        + "</tbody></table>"
+        if items
+        else "<p class='note'>Строк с длиной нет.</p>"
+    )
+
+    def other_table(entries: list[dict], reason: str, empty: str) -> str:
+        if not entries:
+            return f"<p class='note'>{esc(empty)}</p>"
+        shown = entries[:20]
+        rows = "\n".join(
+            "<tr class='no'>"
+            f"<td class='mono'>{esc(item['raw'])}</td>"
+            f"<td class='num'>{item['rows']}</td>"
+            f"<td class='dim'>{esc(item.get('why', reason))}</td>"
+            "</tr>"
+            for item in shown
+        )
+        rest = (
+            f"<p class='note'>… и ещё {len(entries) - len(shown)} — полный список в JSON (ключ "
+            "<code>lengths</code>).</p>"
+            if len(entries) > len(shown)
+            else ""
+        )
+        return (
+            "<table class='grid'><thead><tr>"
+            "<th>Как записано в книге</th><th class='num'>Строк</th><th>Почему не длина</th>"
+            "</tr></thead><tbody>" + rows + "</tbody></table>" + rest
+        )
+
+    return f"""
+  <h2>Длины</h2>
+  <p class="note">Длина пишется в той же ячейке, что и артикул: «ЮП-2083 2,75 метра»,
+    «ЮП-2083 (1.8)», «ЮП-1880 2.5м». Разбор выносит её в отдельные поля
+    <code>length_m</code>/<code>length_text</code> и убирает из имени (ADR 0012);
+    бейдж на дашборде показывает именно книжную длину.</p>
+  <div class="cards">
+    <div class="card"><div class="k">Строк с длиной</div><div class="v">{lengths["rows"]}</div>
+      <div class="d">{share:.1f}% строк с профилем · {lengths["spellings"]} написаний</div></div>
+    <div class="card"><div class="k">Не разобралось</div><div class="v">{len(lengths["unparsed"])}</div>
+      <div class="d">чисел с «м», оставшихся в имени</div></div>
+    <div class="card"><div class="k">Не длина</div><div class="v">{len(lengths["not_length"])}</div>
+      <div class="d">миллиметры и размеры — остаются в артикуле</div></div>
+  </div>
+  {main}
+  <h3>Не длина: миллиметры и размеры листов</h3>
+  {other_table(lengths["not_length"], "размер", "Таких нет.")}
+  <h3>Не разобралось</h3>
+  {other_table(lengths["unparsed"], "длина", "0 — все числа с «м» разобраны или объяснены: это миллиметры и размеры.")}
+"""
+
+
 def render_html(payload: dict, tables: dict[str, str]) -> str:
     rows, old, new = payload["rows"], payload["old"], payload["new"]
     return f"""<!doctype html>
@@ -279,6 +430,7 @@ def render_html(payload: dict, tables: dict[str, str]) -> str:
   h1 {{ font-size:22px; margin:0 0 4px; }}
   h2 {{ font-size:16px; margin:34px 0 8px; }}
   .sub {{ color:var(--dim); margin:0 0 20px; }}
+  h3 {{ font-size:14px; margin:18px 0 6px; }}
   .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }}
   .card {{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }}
   .card .k {{ color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }}
@@ -347,7 +499,7 @@ def render_html(payload: dict, tables: dict[str, str]) -> str:
       {payload["baseline"]}
     </p>
   </div>
-
+{length_section(payload["lengths"], new["total"] - new["no_profile"])}
   <h2>Что добавилось после правки</h2>
   <p class="note">В ячейке книги рядом с артикулом стоит размер или пометка: «ЮП-2083 2,75 метра»,
     «ЮП-1880 2.5м», «ЮП-2083 (1.8)». Каталог знает артикул без хвоста, поэтому раньше фото не находилось.</p>
@@ -456,6 +608,7 @@ async def run(args) -> int:
     )
 
     dates = [row.date for row in rows if row.date and row.date != "—"]
+    lengths = collect_lengths(rows)
     payload = {
         "generated_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
         "book": book,
@@ -464,6 +617,7 @@ async def run(args) -> int:
         "rows": metrics_new,
         "old": metrics_old,
         "new": metrics_new,
+        "lengths": lengths,
         "profiles": len(names),
         "old_profiles": len(photo_old),
         "new_profiles": len(photo_now),
@@ -517,6 +671,11 @@ async def run(args) -> int:
     )
     print(f"профилей с фото: {len(photo_old)} -> {len(photo_now)} (+{len(gained)} / -{len(lost)})")
     print(f"без фото: нет артикула {len(no_article)}, артикул без снимка {len(no_snapshot)}")
+    print(
+        f"длины: {lengths['rows']} строк / {lengths['spellings']} написаний, "
+        f"не разобралось: {len(lengths['unparsed'])}, "
+        f"не длина (мм/размеры): {len(lengths['not_length'])}"
+    )
     if no_snapshot:
         preview = ", ".join(f"{name} ({profiles[name]['rows']})" for name in no_snapshot[:8])
         print(f"  нет снимка: {preview}")
