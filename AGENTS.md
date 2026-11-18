@@ -11,6 +11,7 @@ npm run dev             # бэкенд :8013 + фронтенд :5173, рабо�
 npm run dev:sim         # то же + OPC UA симулятор и SIMULATION_ENABLED=true
 npm run dev:sim:fast    # то же, но симулятор в профиле fast: ~70 с на проход вместо ~25 мин
 npm run dev:kill        # освободить порты
+npm run report:photos   # сверка фото каталога по последним строкам книги → .scratch/
 ```
 
 Docker для dev не нужен: `predev` (`scripts/ensure-dev-ports.js`) только

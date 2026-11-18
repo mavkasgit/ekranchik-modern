@@ -92,6 +92,10 @@ export interface MatchedUnloadEvent {
     photo_thumb_version?: string | null;
     photo_full_version?: string | null;
     processing: string[];
+    /** Длина из книги, метры; null — её нет в ячейке. */
+    length_m?: number | null;
+    /** Готовая подпись бейджа: «2,75 м». */
+    length_text?: string | null;
   }>;
   color: string;
   lamels_qty: number | string;

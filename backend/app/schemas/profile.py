@@ -50,6 +50,10 @@ class ProfileInfo(BaseModel):
     name: str
     canonical_name: str | None = None
     processing: list[str] = Field(default_factory=list)
+    # Длина из ячейки книги — отдельный признак, не часть артикула (ADR 0012).
+    # Каталожная длина (`profiles.length`, мм) сюда не подставляется.
+    length_m: float | None = None
+    length_text: str | None = None
     has_photo: bool = False
     photo_thumb: str | None = None
     photo_full: str | None = None
