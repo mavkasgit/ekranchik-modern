@@ -10,7 +10,8 @@ interface ColorRow {
   code: string | null;
   name: string;
   hex: string;
-  abbreviation: string;
+  /** Колонка необязательная: у строки из синка подписи может не быть. */
+  abbreviation: string | null;
   operation_code: string | null;
   source: "ktm" | "local";
   updated_at: string;
@@ -25,7 +26,8 @@ export const colorsApi = {
       code: color.code,
       name: color.name,
       hex: color.hex,
-      abbreviation: color.abbreviation,
+      // Пустая подпись включает запасной путь colorLabel: код или первые буквы.
+      abbreviation: color.abbreviation ?? "",
     }));
   },
 };

@@ -2,9 +2,9 @@
 SQLAlchemy ORM Models
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, Float, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -44,3 +44,35 @@ class Profile(Base):
     def has_photo(self) -> bool:
         """Check if profile has any photo"""
         return bool(self.photo_thumb or self.photo_full)
+
+
+class Color(Base):
+    """Цвет покрытия — локальная копия операций анодирования KTM.
+
+    Ключ синка — ``operation_code``. Отображаемый ``code`` может быть пустым:
+    у старых ``ANOD_01…08`` кода в книге учёта нет. ``source`` говорит,
+    откуда строка пришла последней, ``updated_at`` — когда: синк перекрывает
+    строку, только если метка KTM строго новее (тикет 0023).
+    """
+
+    __tablename__ = "colors"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hex: Mapped[str] = mapped_column(String(7), nullable=False)
+    abbreviation: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    operation_code: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="local", server_default="local")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("source IN ('ktm', 'local')", name="ck_colors_source"),
+        Index("idx_colors_name", "name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Color(id={self.id}, code='{self.code}', name='{self.name}')>"

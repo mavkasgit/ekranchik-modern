@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import catalog_router, dashboard_router, journal_router, signal_router
+from app.api.routes import catalog_router, colors_router, dashboard_router, journal_router, signal_router
 from app.api.routes.opcua import router as opcua_router
 from app.api.websockets import router as websocket_router
 from app.core.config import settings
@@ -201,6 +201,7 @@ app.add_middleware(
 # Include API routers
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(catalog_router, prefix="/api")
+app.include_router(colors_router, prefix="/api")
 app.include_router(signal_router, prefix="/api")
 app.include_router(opcua_router, prefix="/api")
 app.include_router(websocket_router)
