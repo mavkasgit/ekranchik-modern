@@ -112,8 +112,9 @@ S120-0, S120-2, C31, C32, C33, C34, C41, C44, C51, C54) нет ни в KTM, ни
 ### Справочник в Экранчике
 
 - Новая таблица цветов: `code` (отображаемый код, может быть пустым),
-  `name`, `hex`, `operation_code` (ключ синка, уникальный, может быть пустым),
-  `source` (`ktm` или `local`), `updated_at`, `created_at`.
+  `name`, `abbreviation`, `hex`, `operation_code` (ключ синка, уникальный,
+  может быть пустым), `source` (`ktm` или `local`), `updated_at`,
+  `created_at`.
 - Засев: десять текущих названий + двенадцать цветов веера. У текущих
   названий `source=local`; у веера `source=local` до первого синка.
   `Rose Gold`, `Rose Bronze` и `растрав` получают локальные коды `RG`, `RB`,
@@ -156,7 +157,7 @@ S120-0, S120-2, C31, C32, C33, C34, C41, C44, C51, C54) нет ни в KTM, ни
   `attributes.customer="ГорКомплекс"`,
   `attributes.pack={"sets_per_hanger":4,"pieces_per_set":2}`,
   `attributes.hanger_mode="manual"`,
-  `attributes.quantity_per_hanger={"default":{"manual":8}}`.
+  `attributes.quantity_per_hanger={"default":{"auto":null,"manual":8}}`.
   Наименование: «Урны, комплект 2 шт (корпус + крышка)».
 - Для `volume` разрешается ручная норма с ключом `default`; для `length`
   поведение не меняется. Синк читает `default` у безразмерных продуктов.

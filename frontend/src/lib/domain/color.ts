@@ -1,82 +1,128 @@
-// Цвет подвеса: имя цвета из книги учёта → каноническое написание, hex, аббревиатура
-// и стиль ячейки. Единственный владелец правила: раньше жило копиями в Dashboard и
-// BathForecastTable.
+// Цвет подвеса: имя цвета из книги учёта → код, название, hex и аббревиатура.
+// Справочник приходит из API (`useColors`) и передаётся первым аргументом: зашитого
+// списка цветов у панели нет. Единственный владелец правила: раньше жило копиями
+// в Dashboard и BathForecastTable.
 
 export interface ColorSpec {
-  /** Каноническое написание: его показываем и по нему узнаём любой вариант из книги учёта. */
+  /** Отображаемый код справочника: `C32`, `RG`. У старых операций кода нет. */
+  code: string | null;
+  /** Каноническое написание: его показываем и по нему узнаём вариант из книги учёта. */
   name: string;
   hex: string;
+  /** Короткая подпись из справочника: «сер», «брз»; у цвета веера — его код. */
   abbreviation: string;
 }
 
-/** Справочник цветов: один пункт на цвет, «Rose Bronze» и «RoseBronze» — один. */
-export const COLOR_CATALOG: ColorSpec[] = [
-  { name: "серебро", hex: "#C0C0C0", abbreviation: "сер" },
-  { name: "черный", hex: "#1C1C1C", abbreviation: "чер" },
-  { name: "золото", hex: "#FFD700", abbreviation: "зол" },
-  { name: "шампань", hex: "#F7E7CE", abbreviation: "шам" },
-  { name: "титан", hex: "#878681", abbreviation: "тит" },
-  { name: "бронза", hex: "#8B5A2B", abbreviation: "брз" },
-  { name: "медь", hex: "#CD5C5C", abbreviation: "мед" },
-  { name: "растрав", hex: "#D3D3D3", abbreviation: "рст" },
-  { name: "Rose Gold", hex: "#B76E79", abbreviation: "RG" },
-  { name: "Rose Bronze", hex: "#800020", abbreviation: "RB" },
-];
-
 const UNKNOWN_COLOR_HEX = "#9CA3AF";
 
-/** Ключ сопоставления: регистр, пробелы, дефисы и подчёркивания не различают цвета. */
+/** Ключ названия: регистр, пробелы, дефисы и подчёркивания не различают цвета. */
 function normalizeColorName(colorName: string): string {
   return colorName.toLowerCase().replace(/[\s\-_]/g, "");
 }
 
-/** Один пункт на цвет: «Rose Bronze» и «RoseBronze» — один и тот же цвет, не два. */
-const COLORS: ColorSpec[] = COLOR_CATALOG.filter((color, index) => {
-  const key = normalizeColorName(color.name);
-  const firstIndex = COLOR_CATALOG.findIndex((other) => normalizeColorName(other.name) === key);
-  return firstIndex === index;
-});
+/**
+ * Ключ кода: то же самое плюс кириллическая `С`. В книге учёта код пишут
+ * кириллицей (`С32`), канон справочника — латиница (`C32`), это одна буква.
+ */
+const CYRILLIC_ES = /\u0441/g;
+
+function normalizeColorCode(code: string): string {
+  return code
+    .toLowerCase()
+    .replace(CYRILLIC_ES, "c")
+    .replace(/[\s\-_]/g, "");
+}
 
 /**
- * Ближайший по названию цвет. Сначала точное совпадение. Затем — только уточнения
- * записанного значения: «серебро матовое» содержит «серебро» и остаётся серебром.
- * Обратного вхождения нет намеренно: иначе «Bronze» (чужое название) подхватил бы
- * «Rose Bronze» и на экране оператора появился бы цвет, которого в книге учёта нет.
+ * Ближайший цвет справочника. Сначала точное совпадение по коду, затем по
+ * названию. Затем — только уточнения записанного значения: «серебро матовое»
+ * содержит «серебро» и остаётся серебром. Обратного вхождения нет намеренно:
+ * иначе «Bronze» (чужое название) подхватил бы «Rose Bronze».
+ *
+ * Старое название и цвет веера могут совпасть по названию («серебро» и `C0`
+ * «Серебро»): запись книги без кода остаётся за старым цветом, иначе строка
+ * с «серебро» неожиданно показывала бы `C0`.
  */
-function matchColor(colorName: string): ColorSpec | undefined {
-  const key = normalizeColorName(colorName);
-  if (!key) return undefined;
-
-  for (const color of COLORS) {
-    if (normalizeColorName(color.name) === key) return color;
+function matchColor(colors: readonly ColorSpec[], written: string): ColorSpec | undefined {
+  const codeKey = normalizeColorCode(written);
+  if (codeKey) {
+    const byCode = colors.find((color) => color.code && normalizeColorCode(color.code) === codeKey);
+    if (byCode) return byCode;
   }
 
+  const key = normalizeColorName(written);
+  if (!key) return undefined;
+
+  let exact: ColorSpec | undefined;
+  for (const color of colors) {
+    if (normalizeColorName(color.name) !== key) continue;
+    if (!exact || (exact.code && !color.code)) exact = color;
+  }
+  if (exact) return exact;
+
   let best: ColorSpec | undefined;
-  for (const color of COLORS) {
+  let bestLength = 0;
+  for (const color of colors) {
     const name = normalizeColorName(color.name);
     if (!key.includes(name)) continue;
-    if (!best || name.length > normalizeColorName(best.name).length) best = color;
+    const better =
+      name.length > bestLength || (name.length === bestLength && best?.code && !color.code);
+    if (better) {
+      best = color;
+      bestLength = name.length;
+    }
   }
   return best;
 }
 
 /**
- * Название цвета для показа. Записи, где цвет уже записан в книге учёта иначе
- * («RoseBronze», «rose bronze»), показываем канонически; неизвестные цвета — как есть.
+ * Короткая подпись цвета — из справочника: «сер», «брз», у цвета веера — код.
+ * Пустая подпись из API не должна оставлять ячейку без текста: тогда остаются
+ * код или первые три буквы названия.
  */
-export function colorName(colorName: string): string {
+function colorLabel(color: ColorSpec): string {
   return (
-    COLORS.find((color) => normalizeColorName(color.name) === normalizeColorName(colorName))
-      ?.name ?? colorName.trim()
+    color.abbreviation.trim() || color.code?.trim() || color.name.toLowerCase().trim().slice(0, 3)
   );
 }
 
-export function colorHex(colorName: string): string {
-  return matchColor(colorName)?.hex ?? UNKNOWN_COLOR_HEX;
+/** Цвета нет в справочнике: показываем первые четыре символа из книги, как раньше. */
+function writtenLabel(written: string): string {
+  return written.toLowerCase().trim().slice(0, 4) || "—";
 }
 
-export function colorAbbreviation(colorName: string): string {
-  return matchColor(colorName)?.abbreviation ?? (colorName.toLowerCase().trim().slice(0, 4) || "—");
+/**
+ * Название цвета для подсказки. Код `C32` и любое написание названия
+ * показываются канонически; уточнение («серебро матовое») остаётся как в книге.
+ */
+export function colorName(colors: readonly ColorSpec[], written: string): string {
+  const color = matchColor(colors, written);
+  if (!color) return written.trim();
+
+  if (color.code && normalizeColorCode(color.code) === normalizeColorCode(written))
+    return color.name;
+  if (normalizeColorName(color.name) === normalizeColorName(written)) return color.name;
+  return written.trim();
+}
+
+export function colorHex(colors: readonly ColorSpec[], written: string): string {
+  return matchColor(colors, written)?.hex ?? UNKNOWN_COLOR_HEX;
+}
+
+/** Подпись цвета в тесной ячейке — из справочника; у неизвестного — из книги. */
+export function colorAbbreviation(colors: readonly ColorSpec[], written: string): string {
+  const color = matchColor(colors, written);
+  return color ? colorLabel(color) : writtenLabel(written);
+}
+
+/**
+ * Код цвета для ячейки дашборда. Если у найденного цвета кода нет, остаётся
+ * подпись из справочника — так «серебро» показывает «сер», как раньше.
+ */
+export function colorCode(colors: readonly ColorSpec[], written: string): string {
+  const color = matchColor(colors, written);
+  if (!color) return writtenLabel(written);
+  return color.code?.trim() || colorLabel(color);
 }
 
 function hexToRgba(hex: string, alpha: number): string {
