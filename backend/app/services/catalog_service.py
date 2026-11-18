@@ -336,27 +336,16 @@ class CatalogService:
                         digits_lookup[digits] = []
                     digits_lookup[digits].append(photo_info)
 
-            # Match input names to profiles using 4-stage search
-            result_dict = {}
-            for name in profile_names:
-                if not name or name == "—":
-                    continue
-
-                # Чистое имя — единый разбор (app.services.profile_name)
-                clean_name = parse_profile(name).name
-                if not clean_name:
-                    continue
-
+            def _lookup(clean_name: str) -> dict | None:
+                """Найти фото по чистому имени: от точного совпадения к цифрам."""
                 # Stage 1: Exact match
                 if clean_name.lower() in exact_lookup:
-                    result_dict[name] = exact_lookup[clean_name.lower()]
-                    continue
+                    return exact_lookup[clean_name.lower()]
 
                 # Stage 2: Normalized match
                 norm_input = normalize_text(clean_name)
                 if norm_input in normalized_lookup:
-                    result_dict[name] = normalized_lookup[norm_input]
-                    continue
+                    return normalized_lookup[norm_input]
 
                 # Stage 3: Prefix + digits match (most specific)
                 match = re.match(r"^([А-Яа-яA-Za-z]+)(\d+)", clean_name)
@@ -364,8 +353,7 @@ class CatalogService:
                     prefix = normalize_text(match.group(1))  # Normalize prefix
                     digits = match.group(2)
                     if (prefix, digits) in prefix_digits_lookup:
-                        result_dict[name] = prefix_digits_lookup[(prefix, digits)]
-                        continue
+                        return prefix_digits_lookup[(prefix, digits)]
 
                 # Stage 4: Digits match (LAST RESORT - only if unique AND profile doesn't exist in DB)
                 # This prevents false positives: if ПТ80 exists in DB, don't match it to СРЛ80
@@ -382,7 +370,34 @@ class CatalogService:
                         input_norm = normalize_text(clean_name)
                         # Check if this exact profile name exists in DB
                         if input_lower not in all_profile_names and input_norm not in all_profile_names_normalized:
-                            result_dict[name] = matches[0]
+                            return matches[0]
+
+                return None
+
+            # Match input names to profiles using 4-stage search
+            result_dict = {}
+            for name in profile_names:
+                if not name or name == "—":
+                    continue
+
+                # Чистое имя — единый разбор (app.services.profile_name)
+                clean_name = parse_profile(name).name
+                if not clean_name:
+                    continue
+
+                photo = _lookup(clean_name)
+
+                # В книге размер пишут рядом с артикулом: «ЮП-2083 2,75 метра».
+                # Каталог знает артикул «ЮП-2083», поэтому вторым заходом ищем
+                # по ведущему слову. Запасной путь, а не замена: точное имя
+                # вроде «Кр.труба 10мм» должно побеждать без него.
+                if photo is None:
+                    article = clean_name.split(maxsplit=1)[0]
+                    if article != clean_name:
+                        photo = _lookup(article)
+
+                if photo is not None:
+                    result_dict[name] = photo
 
             return result_dict
 

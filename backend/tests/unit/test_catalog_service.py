@@ -80,3 +80,72 @@ async def test_search_profiles_breaks_ties_by_name_not_usage_count(images_dir, d
     results = await catalog_service.search_profiles("юп", session=db_session)
 
     assert [result.name for result in results] == ["ЮП-100", "ЮП-200"]
+
+
+async def test_photo_lookup_finds_article_with_size_note(images_dir, db_session):
+    """Размер рядом с артикулом не мешает фото: «ЮП-2083 2,75 метра» → «ЮП-2083».
+
+    В книге учёта размер пишут в той же ячейке, что и артикул. Каталог хранит
+    артикул без размера, поэтому фото искалось по полной строке и не находилось:
+    дашборд показывал заглушку вместо снимка профиля.
+    """
+    (images_dir / "ЮП-2083-thumb.jpg").write_bytes(b"thumb")
+    db_session.add(
+        Profile(
+            name="ЮП-2083",
+            photo_thumb="images/ЮП-2083-thumb.jpg",
+            photo_full="images/ЮП-2083.jpg",
+        )
+    )
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(
+        ["ЮП-2083 2,75 метра", "ЮП-2083 1,8 метра"], session=db_session
+    )
+
+    assert set(photos) == {"ЮП-2083 2,75 метра", "ЮП-2083 1,8 метра"}
+    assert {photo["name"] for photo in photos.values()} == {"ЮП-2083"}
+
+
+async def test_photo_lookup_prefers_exact_multiword_name(images_dir, db_session):
+    """Артикул с пробелом находится целиком: запасной путь по слову его не подменяет."""
+    (images_dir / "Кр.труба-10мм-thumb.jpg").write_bytes(b"thumb")
+    db_session.add(
+        Profile(
+            name="Кр.труба 10мм",
+            photo_thumb="images/Кр.труба-10мм-thumb.jpg",
+            photo_full="images/Кр.труба-10мм.jpg",
+        )
+    )
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(["Кр.труба 10мм"], session=db_session)
+
+    assert photos["Кр.труба 10мм"]["name"] == "Кр.труба 10мм"
+
+
+async def test_photo_lookup_real_book_cells(images_dir, db_session):
+    """Живые написания ячейки «Профиль»: размер и пометки не мешают артикулу."""
+    articles = ["ЮП-1880", "ЮП-2083", "ЮП-1401", "ЮП-2900"]
+    for article in articles:
+        (images_dir / f"{article}-thumb.jpg").write_bytes(b"thumb")
+        db_session.add(
+            Profile(
+                name=article,
+                photo_thumb=f"images/{article}-thumb.jpg",
+                photo_full=f"images/{article}.jpg",
+            )
+        )
+    await db_session.flush()
+
+    cells = {
+        "ЮП-1880 2.5м": "ЮП-1880",
+        "ЮП-2083 (1.8)": "ЮП-2083",
+        "ЮП-2083 2,75 метра": "ЮП-2083",
+        "юп-2083 1,85м": "ЮП-2083",
+        "ЮП-1401 (3.05м)": "ЮП-1401",
+        "ЮП-2900 окно (381)": "ЮП-2900",
+    }
+    photos = await catalog_service.get_profiles_photos_batch(list(cells), session=db_session)
+
+    assert {cell: photos[cell]["name"] for cell in cells} == cells
