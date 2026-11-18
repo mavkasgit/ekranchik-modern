@@ -27,16 +27,6 @@ interface FullscreenElementOptions {
   onError?: (error: unknown) => void;
 }
 
-/** Webkit-префиксы Fullscreen API: Safari и старые сборки Chromium. */
-interface WebkitFullscreenElement extends Element {
-  webkitRequestFullscreen?: () => Promise<void> | void;
-}
-
-interface WebkitFullscreenDocument extends Document {
-  webkitFullscreenElement?: Element | null;
-  webkitExitFullscreen?: () => Promise<void> | void;
-}
-
 interface FullscreenElementHandle<T extends Element> {
   /**
    * Callback-ref, а не `useRef`: Radix монтирует портал после первого эффекта,
@@ -54,33 +44,22 @@ interface FullscreenElementHandle<T extends Element> {
   toggle: () => Promise<void>;
 }
 
-const FULLSCREEN_EVENTS = ["fullscreenchange", "webkitfullscreenchange"] as const;
-
-/** Текущий фуллскрин-элемент с учётом webkit-префикса. */
+/** Текущий фуллскрин-элемент. */
 export function currentFullscreenElement(): Element | null {
   if (typeof document === "undefined") return null;
-  const doc = document as WebkitFullscreenDocument;
-  return doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+  return document.fullscreenElement;
 }
 
-function requestFullscreen(target: Element): Promise<void> | void {
-  if (typeof target.requestFullscreen === "function") {
-    return target.requestFullscreen(); // reactuse-ok: обёртка Fullscreen API — enter() ReactUse не возвращает промис (upstream #516)
+function requestFullscreen(target: Element): Promise<void> {
+  if (typeof target.requestFullscreen !== "function") {
+    throw new Error("Браузер не поддерживает Fullscreen API");
   }
-  const webkit = target as WebkitFullscreenElement;
-  if (typeof webkit.webkitRequestFullscreen === "function") {
-    return webkit.webkitRequestFullscreen(); // reactuse-ok: обёртка Fullscreen API — enter() ReactUse не возвращает промис (upstream #516)
-  }
-  throw new Error("Браузер не поддерживает Fullscreen API");
+  return target.requestFullscreen(); // reactuse-ok: обёртка Fullscreen API — enter() ReactUse не возвращает промис (upstream #516)
 }
 
 function exitFullscreen(): Promise<void> | void {
-  const doc = document as WebkitFullscreenDocument;
-  if (typeof doc.exitFullscreen === "function") {
-    return doc.exitFullscreen(); // reactuse-ok: обёртка Fullscreen API — exit() ReactUse не возвращает промис (upstream #516)
-  }
-  if (typeof doc.webkitExitFullscreen === "function") {
-    return doc.webkitExitFullscreen(); // reactuse-ok: обёртка Fullscreen API — exit() ReactUse не возвращает промис (upstream #516)
+  if (typeof document.exitFullscreen === "function") {
+    return document.exitFullscreen(); // reactuse-ok: обёртка Fullscreen API — exit() ReactUse не возвращает промис (upstream #516)
   }
 }
 
@@ -111,11 +90,8 @@ export function useFullscreenElement<T extends Element = HTMLElement>(
   const subscribe = useCallback(
     (onChange: () => void) => {
       if (!element || typeof document === "undefined") return () => {};
-      const doc = document as WebkitFullscreenDocument;
-      for (const event of FULLSCREEN_EVENTS) doc.addEventListener(event, onChange);
-      return () => {
-        for (const event of FULLSCREEN_EVENTS) doc.removeEventListener(event, onChange);
-      };
+      document.addEventListener("fullscreenchange", onChange);
+      return () => document.removeEventListener("fullscreenchange", onChange);
     },
     [element],
   );
@@ -125,7 +101,6 @@ export function useFullscreenElement<T extends Element = HTMLElement>(
     [element],
   );
 
-  // Подписка на оба события сразу — Safari до сих пор шлёт только webkit-вариант.
   const value = useSyncExternalStore(subscribe, getSnapshot, () => false);
 
   const previousValue = useRef(value);
