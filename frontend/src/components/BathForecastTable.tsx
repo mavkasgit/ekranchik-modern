@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLineStatus } from "@/hooks/useLineStatus";
-import { colorAbbreviation, colorCellStyle, colorHex, colorName } from "@/lib/domain/color";
+import {
+  colorAbbreviation,
+  colorCellStyle,
+  colorHex,
+  colorName,
+  type ColorSpec,
+} from "@/lib/domain/color";
 import { hangerKey } from "@/lib/domain/hanger";
 import { profileText } from "@/lib/domain/profile";
 import {
@@ -24,6 +30,8 @@ interface BathForecastItem {
 
 interface BathForecastProps {
   hangerMetaByNumber?: HangerMetaByNumber;
+  /** Справочник цветов из API: аббревиатура в карточке, название в подсказке. */
+  colors: readonly ColorSpec[];
   /** Прогон витрины вместо состояния линии: на стенде симулятора нет. */
   testRun?: RunState;
 }
@@ -131,7 +139,7 @@ function buildRunForecast(run: RunState): Map<number, BathForecastItem> {
   return forecast;
 }
 
-export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastProps) {
+export function BathForecast({ hangerMetaByNumber = {}, colors, testRun }: BathForecastProps) {
   const { data: lineStatus, dataUpdatedAt } = useLineStatus();
   const lastKnownHangerByBathRef = useRef<Map<number, number>>(new Map());
 
@@ -194,6 +202,7 @@ export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastP
       {bath34Item && (
         <UnloadCard
           item={bath34Item}
+          colors={colors}
           hangerMetaByNumber={runMetaByNumber}
           isCompact={isCompact}
           unloadTimeStr={unloadTimeStr}
@@ -209,7 +218,12 @@ export function BathForecast({ hangerMetaByNumber = {}, testRun }: BathForecastP
       <div className="flex items-stretch flex-1 min-w-0 overflow-hidden gap-1">
         {sortedBaths.length > 0
           ? sortedBaths.map((item) => (
-              <BathCard key={item.bathNum} item={item} hangerMetaByNumber={runMetaByNumber} />
+              <BathCard
+                key={item.bathNum}
+                item={item}
+                colors={colors}
+                hangerMetaByNumber={runMetaByNumber}
+              />
             ))
           : null}
       </div>
@@ -233,6 +247,7 @@ function cardTime(seconds: number): string {
 function bathCardFields(
   item: BathForecastItem,
   hangerMetaByNumber: HangerMetaByNumber | undefined,
+  colors: readonly ColorSpec[],
 ) {
   const meta = hangerMetaByNumber?.[hangerKey(item.hangerNumber)];
   const profile = pickMetaValue(item.article, meta?.profile);
@@ -241,17 +256,19 @@ function bathCardFields(
   return {
     hangerLabel: item.hangerNumber > 0 ? `№${item.hangerNumber}` : "№—",
     profileDigits: profileText(profile),
-    colorAbbr: colorAbbreviation(color),
-    colorTitle: colorName(color),
-    fillStyle: colorCellStyle(colorHex(color)),
+    colorAbbr: colorAbbreviation(colors, color),
+    colorTitle: colorName(colors, color),
+    fillStyle: colorCellStyle(colorHex(colors, color)),
   };
 }
 
 function BathCard({
   item,
+  colors,
   hangerMetaByNumber,
 }: {
   item: BathForecastItem;
+  colors: readonly ColorSpec[];
   hangerMetaByNumber: HangerMetaByNumber | undefined;
 }) {
   const timeStr = cardTime(item.remainingTime);
@@ -259,6 +276,7 @@ function BathCard({
   const { hangerLabel, profileDigits, colorAbbr, colorTitle, fillStyle } = bathCardFields(
     item,
     hangerMetaByNumber,
+    colors,
   );
 
   let timeColor = "text-green-600";
@@ -293,11 +311,13 @@ function BathCard({
 
 function UnloadCard({
   item,
+  colors,
   hangerMetaByNumber,
   isCompact,
   unloadTimeStr,
 }: {
   item: BathForecastItem;
+  colors: readonly ColorSpec[];
   hangerMetaByNumber: HangerMetaByNumber | undefined;
   isCompact: boolean;
   unloadTimeStr: string;
@@ -305,6 +325,7 @@ function UnloadCard({
   const { hangerLabel, profileDigits, colorAbbr, colorTitle, fillStyle } = bathCardFields(
     item,
     hangerMetaByNumber,
+    colors,
   );
 
   return (
