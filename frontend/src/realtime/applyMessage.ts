@@ -28,7 +28,7 @@ export function applyRealtimeMessage(client: QueryClient, message: WebSocketMess
 
 /**
  * Сообщение линии несёт только счётчики ванн; данные из HTTP (`article`, `color`,
- * `power_supply`, `free`, `d_time`) сохраняем, иначе они пропадут из состояния
+ * `power_supply`, `d_time`) сохраняем, иначе они пропадут из состояния
  * линии — `article` и `color` показывает таблица прогноза.
  */
 function mergeLineUpdate(previous: LineStatus | undefined, payload: LineUpdatePayload): LineStatus {
