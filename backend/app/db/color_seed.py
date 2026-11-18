@@ -39,32 +39,31 @@ _CURRENT_COLORS: tuple[dict[str, str | None], ...] = (
 # Двенадцать цветов веера ClassicELOX: кодов в KTM ещё нет, операция заводится
 # сразу с прямым кодом C0…C54 (T-378).
 _FAN_COLORS: tuple[dict[str, str | None], ...] = (
-    {"code": "C0", "name": "Серебро", "hex": "#C9CCCE", "abbreviation": "C0", "operation_code": "C0"},
-    {"code": "C35", "name": "Чёрный", "hex": "#2A2A2A", "abbreviation": "C35", "operation_code": "C35"},
-    {"code": "S120-0", "name": "Золото", "hex": "#D4AF37", "abbreviation": "S120-0", "operation_code": "S120-0"},
-    {"code": "S120-2", "name": "Старое золото", "hex": "#B08D57", "abbreviation": "S120-2", "operation_code": "S120-2"},
-    {
-        "code": "C31",
-        "name": "Светлая шампань",
-        "hex": "#E9D9BC",
-        "abbreviation": "C31",
-        "operation_code": "C31",
-    },
-    {"code": "C32", "name": "Тёмная шампань", "hex": "#C8B184", "abbreviation": "C32", "operation_code": "C32"},
-    {"code": "C33", "name": "Светлая бронза", "hex": "#B0895C", "abbreviation": "C33", "operation_code": "C33"},
-    {"code": "C34", "name": "Тёмная бронза", "hex": "#7B5A38", "abbreviation": "C34", "operation_code": "C34"},
-    {"code": "C41", "name": "Медь", "hex": "#B87333", "abbreviation": "C41", "operation_code": "C41"},
-    {"code": "C44", "name": "Тёмная медь", "hex": "#8C5230", "abbreviation": "C44", "operation_code": "C44"},
-    {"code": "C51", "name": "Нержавеющая сталь", "hex": "#A8A9AD", "abbreviation": "C51", "operation_code": "C51"},
-    {"code": "C54", "name": "Тёмный титан", "hex": "#5C5D60", "abbreviation": "C54", "operation_code": "C54"},
+    {"code": "C0", "name": "Серебро", "hex": "#C2CAD3", "abbreviation": "C0", "operation_code": "C0"},
+    {"code": "C35", "name": "Чёрный", "hex": "#4E4E52", "abbreviation": "C35", "operation_code": "C35"},
+    {"code": "S120-0", "name": "Золото", "hex": "#E1DDB0", "abbreviation": "S120-0", "operation_code": "S120-0"},
+    {"code": "S120-2", "name": "Старое золото", "hex": "#AD9E77", "abbreviation": "S120-2", "operation_code": "S120-2"},
+    {"code": "C31", "name": "Светлая шампань", "hex": "#CFD4D5", "abbreviation": "C31", "operation_code": "C31"},
+    {"code": "C32", "name": "Тёмная шампань", "hex": "#AEA895", "abbreviation": "C32", "operation_code": "C32"},
+    {"code": "C33", "name": "Светлая бронза", "hex": "#716C62", "abbreviation": "C33", "operation_code": "C33"},
+    {"code": "C34", "name": "Тёмная бронза", "hex": "#595655", "abbreviation": "C34", "operation_code": "C34"},
+    {"code": "C41", "name": "Медь", "hex": "#A0837E", "abbreviation": "C41", "operation_code": "C41"},
+    {"code": "C44", "name": "Тёмная медь", "hex": "#715C5F", "abbreviation": "C44", "operation_code": "C44"},
+    {"code": "C51", "name": "Нержавеющая сталь", "hex": "#A9968E", "abbreviation": "C51", "operation_code": "C51"},
+    {"code": "C54", "name": "Тёмный титан", "hex": "#766D6D", "abbreviation": "C54", "operation_code": "C54"},
 )
+
+# Метка засева — заведомо старая: правка в KTM новее, поэтому первый синк
+# перекрывает локальную строку, а не проигрывает ей. Ручная правка (PATCH)
+# ставит текущее UTC-время и снова выигрывает у KTM по правилу «новее — правильнее».
+SEED_UPDATED_AT = "2000-01-01 00:00:00.000000"
 
 SEED_COLORS: tuple[dict[str, str | None], ...] = _CURRENT_COLORS + _FAN_COLORS
 
 _INSERT_MISSING = text(
     """
-    INSERT INTO colors (code, name, hex, operation_code, source)
-    SELECT :code, :name, :hex, :operation_code, 'local'
+    INSERT INTO colors (code, name, hex, operation_code, source, updated_at)
+    SELECT :code, :name, :hex, :operation_code, 'local', :updated_at
     WHERE NOT EXISTS (SELECT 1 FROM colors WHERE name = :name)
     """
 )
@@ -79,7 +78,7 @@ def seed_missing_colors(connection: Connection) -> int:
     """
     inserted = 0
     for color in SEED_COLORS:
-        result = connection.execute(_INSERT_MISSING, color)
+        result = connection.execute(_INSERT_MISSING, {**color, "updated_at": SEED_UPDATED_AT})
         inserted += result.rowcount or 0
     return inserted
 
@@ -107,5 +106,36 @@ def fill_seed_abbreviations(connection: Connection) -> int:
     updated = 0
     for color in SEED_COLORS:
         result = connection.execute(_UPDATE_ABBREVIATION, color)
+        updated += result.rowcount or 0
+    return updated
+
+
+# Строка не тронута с момента засева, если её updated_at всё ещё равен
+# created_at: PATCH и синк двигают только updated_at. Это и есть граница
+# «администратор ещё не правил» — чужие правки миграция не перезаписывает.
+_RESET_UNTOUCHED_SEED = text(
+    """
+    UPDATE colors SET hex = :hex, updated_at = :updated_at
+    WHERE source = 'local'
+      AND updated_at = created_at
+      AND (
+        (:operation_code IS NOT NULL AND operation_code = :operation_code)
+        OR (:operation_code IS NULL AND :code IS NOT NULL AND code = :code)
+      )
+    """
+)
+
+
+def reset_untouched_seed_colors(connection: Connection) -> int:
+    """Вернуть нетронутым строкам засева актуальный hex и старую метку времени.
+
+    Миграция ``003`` успела засеять базы со старыми значениями и
+    ``CURRENT_TIMESTAMP``: без этой правки засев всегда был бы новее KTM и
+    первый синк не перекрывал бы его. Правленые строки (``updated_at`` уже
+    отличается от ``created_at``) и строки из KTM не трогаются.
+    """
+    updated = 0
+    for color in SEED_COLORS:
+        result = connection.execute(_RESET_UNTOUCHED_SEED, {**color, "updated_at": SEED_UPDATED_AT})
         updated += result.rowcount or 0
     return updated

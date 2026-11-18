@@ -11,6 +11,7 @@
 """
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -140,6 +141,71 @@ async def test_migration_seeds_full_color_dictionary(tmp_path, monkeypatch):
     assert by_name["Rose Gold"]["abbreviation"] == "RG"
     assert by_code["C32"]["abbreviation"] == "C32"
     assert all(row["abbreviation"] for row in rows), "у каждой строки засева есть аббревиатура"
+
+
+async def test_seed_has_old_updated_at_and_ktm_fan_hex(tmp_path, monkeypatch):
+    """Засев не новее KTM: метка старая, hex веера совпадает с T-378."""
+    import sqlite3
+
+    from app.db.startup import run_startup_migrations
+
+    _migrate_to_temp_db(tmp_path, monkeypatch)
+    await run_startup_migrations()
+
+    with sqlite3.connect(tmp_path / "colors.db") as conn:
+        conn.row_factory = sqlite3.Row
+        rows = [dict(row) for row in conn.execute("SELECT * FROM colors")]
+
+    now = datetime.now(UTC)
+    for row in rows:
+        stamp = datetime.fromisoformat(row["updated_at"])
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        # CURRENT_TIMESTAMP сделал бы засев новее KTM, и первый синк бы проиграл.
+        assert stamp <= datetime(2000, 1, 1, tzinfo=UTC), row
+        assert stamp < now, row
+
+    by_code = {row["code"]: row for row in rows if row["code"]}
+    assert by_code["C31"]["hex"] == "#CFD4D5"
+    assert by_code["C32"]["hex"] == "#AEA895"
+
+
+def _upgrade_db(url: str, revision: str) -> None:
+    """Применить миграции до указанной ревизии на временной базе."""
+    from alembic.config import Config
+
+    from alembic import command
+
+    backend_dir = Path(__file__).resolve().parents[2]
+    cfg = Config()
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, revision)
+
+
+def test_migration_005_fixes_only_untouched_seed_rows(tmp_path, monkeypatch):
+    """На уже засеянной базе 005 меняет hex и метку, но не затирает правку."""
+    import sqlite3
+
+    url = _migrate_to_temp_db(tmp_path, monkeypatch)
+    _upgrade_db(url, "004")
+
+    db_file = tmp_path / "colors.db"
+    with sqlite3.connect(db_file) as conn:
+        # Так выглядит локальная правка после PATCH: updated_at ушёл от created_at.
+        conn.execute("UPDATE colors SET hex = '#111111', updated_at = '2026-01-01 00:00:00' WHERE code = 'C31'")
+        conn.commit()
+
+    _upgrade_db(url, "head")
+
+    with sqlite3.connect(db_file) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = {row["code"]: dict(row) for row in conn.execute("SELECT * FROM colors") if row["code"]}
+
+    assert rows["C32"]["hex"] == "#AEA895"
+    assert rows["C32"]["updated_at"] == "2000-01-01 00:00:00.000000"
+    assert rows["C31"]["hex"] == "#111111"
+    assert rows["C31"]["updated_at"] == "2026-01-01 00:00:00"
 
 
 async def test_repeated_startup_does_not_duplicate_seed(tmp_path, monkeypatch):
