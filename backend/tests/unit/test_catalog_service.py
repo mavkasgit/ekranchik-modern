@@ -154,9 +154,11 @@ async def test_photo_lookup_real_book_cells(images_dir, db_session):
 async def test_photo_lookup_finds_article_after_length_is_removed(images_dir, db_session):
     """Длина ушла из имени (ADR 0012) — фото ищется по чистому артикулу.
 
-    До разбора длины ячейка ``ЮП-2083 2,75 метра`` находилась только запасным
-    проходом по ведущему слову. Теперь имя — сам артикул, поэтому совпадение
-    точное.
+    Многословный артикул доказывает именно точное совпадение: у
+    ``Профиль RE7444 3м`` после снятия длины имя ровно ``Профиль RE7444``, а
+    запасной проход по ведущему слову ``Профиль`` не нашёл бы ничего. Остальные
+    ячейки — реальные записи книги; они подтверждают, что длина не мешает
+    поиску, но не все проходят именно точной ступенью.
     """
     (images_dir / "ЮП-2083-thumb.jpg").write_bytes(b"thumb")
     db_session.add(
@@ -166,16 +168,25 @@ async def test_photo_lookup_finds_article_after_length_is_removed(images_dir, db
             photo_full="images/ЮП-2083.jpg",
         )
     )
+    (images_dir / "RE7444-thumb.jpg").write_bytes(b"thumb")
+    db_session.add(
+        Profile(
+            name="Профиль RE7444",
+            photo_thumb="images/RE7444-thumb.jpg",
+            photo_full="images/RE7444.jpg",
+        )
+    )
     await db_session.flush()
 
-    cells = ["ЮП-2083 2,75 метра", "ЮП-2083(1.8м)", "профиль ЮП-2083 (2.7)"]
-    photos = await catalog_service.get_profiles_photos_batch(cells, session=db_session)
-
-    assert {cell: photos[cell]["name"] for cell in cells} == {
+    cells = {
         "ЮП-2083 2,75 метра": "ЮП-2083",
         "ЮП-2083(1.8м)": "ЮП-2083",
         "профиль ЮП-2083 (2.7)": "ЮП-2083",
+        "Профиль RE7444 3м": "Профиль RE7444",
     }
+    photos = await catalog_service.get_profiles_photos_batch(list(cells), session=db_session)
+
+    assert {cell: photos[cell]["name"] for cell in cells} == cells
 
 
 async def test_photo_lookup_keeps_fallback_for_other_tails(images_dir, db_session):

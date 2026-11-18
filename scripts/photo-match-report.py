@@ -193,8 +193,9 @@ def row_metrics(rows, photo_names: set[str]) -> dict[str, int]:
 _MM = re.compile(r"\d\s*мм", re.IGNORECASE)
 _DIMENSIONS = re.compile(r"\d+\s*[хx×*]\s*\d+", re.IGNORECASE)
 # Число с «м» рядом — кандидат в метры; всё, что им не стало, попадает в
-# «не разобралось». Кандидат без объяснения означает дыру в правиле.
-_METERS_CANDIDATE = re.compile(r"\d\s*[.,]?\d*\s*м", re.IGNORECASE)
+# «не разобралось». Кандидат без объяснения означает дыру в правиле. Буква
+# перед числом (``А5М``, ``АМг2М``) кандидатом не считается: это марка.
+_METERS_CANDIDATE = re.compile(r"(?<![а-яa-z\d.,])\d\s*[.,]?\d*\s*м", re.IGNORECASE)
 
 
 def collect_lengths(rows) -> dict:
@@ -234,8 +235,8 @@ def collect_lengths(rows) -> dict:
             elif _DIMENSIONS.search(raw):
                 why = "размер, а не длина"
             if why:
-                entry = not_length.setdefault(raw, {"rows": 0, "why": why})
-                entry["rows"] += 1
+                entry = not_length.setdefault(raw, {"why": why, "_sheet_rows": set()})
+                entry["_sheet_rows"].add(row.sheet_row)
             elif _METERS_CANDIDATE.search(raw):
                 unparsed.setdefault(raw, set()).add(row.sheet_row)
 
@@ -254,15 +255,16 @@ def collect_lengths(rows) -> dict:
             for raw, entry in items
         ],
         "not_length": [
-            {"raw": raw, "rows": entry["rows"], "why": entry["why"]}
-            for raw, entry in sorted(not_length.items(), key=lambda kv: (-kv[1]["rows"], kv[0].lower()))
+            {"raw": raw, "rows": len(entry["_sheet_rows"]), "why": entry["why"]}
+            for raw, entry in sorted(
+                not_length.items(), key=lambda kv: (-len(kv[1]["_sheet_rows"]), kv[0].lower())
+            )
         ],
         "unparsed": [
             {"raw": raw, "rows": len(sheet_rows)}
             for raw, sheet_rows in sorted(unparsed.items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
         ],
     }
-
 
 
 def esc(value) -> str:
@@ -363,7 +365,7 @@ def length_section(lengths: dict, base: int) -> str:
         else "<p class='note'>Строк с длиной нет.</p>"
     )
 
-    def other_table(entries: list[dict], reason: str, empty: str) -> str:
+    def other_table(entries: list[dict], header: str, fallback: str, empty: str) -> str:
         if not entries:
             return f"<p class='note'>{esc(empty)}</p>"
         shown = entries[:20]
@@ -371,7 +373,7 @@ def length_section(lengths: dict, base: int) -> str:
             "<tr class='no'>"
             f"<td class='mono'>{esc(item['raw'])}</td>"
             f"<td class='num'>{item['rows']}</td>"
-            f"<td class='dim'>{esc(item.get('why', reason))}</td>"
+            f"<td class='dim'>{esc(item.get('why', fallback))}</td>"
             "</tr>"
             for item in shown
         )
@@ -383,7 +385,7 @@ def length_section(lengths: dict, base: int) -> str:
         )
         return (
             "<table class='grid'><thead><tr>"
-            "<th>Как записано в книге</th><th class='num'>Строк</th><th>Почему не длина</th>"
+            f"<th>Как записано в книге</th><th class='num'>Строк</th><th>{header}</th>"
             "</tr></thead><tbody>" + rows + "</tbody></table>" + rest
         )
 
@@ -403,9 +405,9 @@ def length_section(lengths: dict, base: int) -> str:
   </div>
   {main}
   <h3>Не длина: миллиметры и размеры листов</h3>
-  {other_table(lengths["not_length"], "размер", "Таких нет.")}
+  {other_table(lengths["not_length"], "Почему не длина", "размер", "Таких нет.")}
   <h3>Не разобралось</h3>
-  {other_table(lengths["unparsed"], "длина", "0 — все числа с «м» разобраны или объяснены: это миллиметры и размеры.")}
+  {other_table(lengths["unparsed"], "Что осталось", "число с «м» не разобралось", "0 — все числа с «м» разобраны или объяснены: это миллиметры, размеры и марки.")}
 """
 
 
