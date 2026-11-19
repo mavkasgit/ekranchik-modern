@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Цвета анодирования — справочник</title>
+    <title>Цвета — справочник и частота в книге</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -13,6 +13,7 @@
         --muted: #5c6470;
         --line: #d9dde3;
         --accent: #1f6feb;
+        --row: #E2E8F0;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -22,404 +23,759 @@
           --muted: #9aa3b2;
           --line: #2b303b;
           --accent: #6ea8ff;
+          --row: #2a3140;
         }
       }
-      * {
-        box-sizing: border-box;
-      }
+      * { box-sizing: border-box; }
       body {
         margin: 0;
         padding: 32px 20px 64px;
         background: var(--bg);
         color: var(--text);
-        font:
-          15px/1.5 system-ui,
-          -apple-system,
-          "Segoe UI",
-          Roboto,
-          sans-serif;
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       }
-      .wrap {
-        max-width: 1180px;
-        margin: 0 auto;
+      .wrap { max-width: 1180px; margin: 0 auto; }
+      h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.01em; }
+      .lead { margin: 0; color: var(--muted); max-width: 820px; }
+      .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 22px 0 6px; }
+      input[type="search"], select {
+        padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px;
+        background: var(--panel); color: var(--text); font: inherit;
       }
-      header {
-        margin-bottom: 24px;
-      }
-      h1 {
-        margin: 0 0 6px;
-        font-size: 26px;
-        letter-spacing: -0.01em;
-      }
-      .lead {
-        margin: 0;
-        color: var(--muted);
-        max-width: 780px;
-      }
-      .toolbar {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        align-items: center;
-        margin: 24px 0 8px;
-      }
-      input[type="search"] {
-        flex: 1 1 260px;
-        min-width: 200px;
-        padding: 9px 12px;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: var(--panel);
-        color: var(--text);
-        font: inherit;
-      }
-      input[type="search"]:focus {
-        outline: 2px solid var(--accent);
-        outline-offset: 1px;
-      }
-      .count {
-        color: var(--muted);
-        font-size: 13px;
-        white-space: nowrap;
-      }
-      section {
-        margin-top: 28px;
-      }
-      h2 {
-        margin: 0 0 4px;
-        font-size: 17px;
-      }
-      .section-note {
-        margin: 0 0 14px;
-        color: var(--muted);
-        font-size: 13px;
-      }
+      input[type="search"] { flex: 1 1 260px; min-width: 200px; }
+      .count { color: var(--muted); font-size: 13px; }
       .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-        gap: 12px;
+        display: grid; gap: 14px; margin-top: 16px;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
       }
-      article {
-        display: flex;
-        gap: 14px;
-        padding: 12px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--panel);
+      .card {
+        border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+        background: var(--panel); display: flex; flex-direction: column;
       }
-      article[hidden] {
-        display: none;
-      }
-      .swatch {
-        flex: 0 0 64px;
-        height: 64px;
-        border-radius: 10px;
-        border: 1px solid rgb(0 0 0 / 0.14);
-        box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28);
-      }
-      .info {
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        gap: 2px;
-      }
+      .strip { height: 46px; border-bottom: 1px solid var(--line); }
+      .card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+      .card-head { display: flex; align-items: baseline; gap: 8px; }
       .code {
-        font:
-          600 15px/1.2 ui-monospace,
-          "Cascadia Mono",
-          Consolas,
-          monospace;
-        letter-spacing: 0.02em;
+        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: var(--muted);
       }
-      .code.none {
-        color: var(--muted);
-        font-weight: 500;
+      .code.none { border-style: dashed; }
+      .name { font-weight: 600; }
+      .abbr { margin-left: auto; color: var(--muted); font-size: 11px; }
+      .hex-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .meta { font-size: 11px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .usage { color: var(--muted); font-size: 12px; }
+      .old { font-size: 12px; color: var(--muted); }
+      .old .delta { margin-left: 8px; }
+      .cell-preview {
+        background: var(--row); border-radius: 8px; padding: 8px;
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
       }
-      .name {
-        font-weight: 500;
+      .cell-name { font-size: 12px; }
+      .cell-bar {
+        display: block; width: 100%; height: 8px; border-radius: 999px;
+        box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
       }
-      .meta {
-        color: var(--muted);
-        font-size: 12px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px 10px;
+      .chip-preview {
+        border-radius: 8px; padding: 6px 10px; font-weight: 600; font-size: 12px;
+        color: #0f172a; display: flex; justify-content: space-between; gap: 12px;
       }
-      .meta code {
-        font-size: 12px;
-      }
-      .empty {
-        margin-top: 20px;
-        color: var(--muted);
-      }
-      footer {
-        margin-top: 40px;
-        padding-top: 16px;
-        border-top: 1px solid var(--line);
-        color: var(--muted);
-        font-size: 12.5px;
-      }
-      @media print {
-        body {
-          padding: 0;
-          background: #fff;
-          color: #000;
-        }
-        .toolbar {
-          display: none;
-        }
-        article {
-          break-inside: avoid;
-        }
-      }
+      .chip-time { opacity: 0.7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      footer { margin-top: 28px; color: var(--muted); font-size: 13px; max-width: 900px; }
+      footer code { font-size: 12px; }
+      .empty { margin-top: 20px; color: var(--muted); }
     </style>
   </head>
   <body>
     <div class="wrap">
       <header>
-        <h1>Цвета анодирования</h1>
+        <h1>Цвета: справочник и частота в книге</h1>
         <p class="lead">
-          Справочник «Экранчика»: 10 текущих названий и 12 цветов веера ClassicELOX с кодами. В
-          основной колонке панели показывается ровно то, что записано в книге учёта; этот справочник
-          нужен для плашки и подсказки.
+          Палитра киоска после ревизии: «семьи», которые книга не различает, получили один цвет
+          (шампань — #AEA895, чёрный — #1C1C1C, золото — #FFD700, серебро — #E7EBEE).
+          Рядом — как цвет выглядит полоской в ячейке «Цвет» и плашкой «Прогноз».
         </p>
       </header>
 
       <div class="toolbar">
-        <input
-          id="q"
-          type="search"
-          placeholder="Поиск по коду, названию или hex…"
-          autocomplete="off"
-          aria-label="Поиск по цветам"
-        />
+        <input type="search" id="q" placeholder="Поиск: код, название, hex" autocomplete="off" />
+        <select id="sort">
+          <option value="usage">По частоте в книге</option>
+          <option value="code">По коду</option>
+          <option value="name">По названию</option>
+        </select>
         <span class="count" id="count"></span>
       </div>
 
-      <section>
-        <h2>Веер ClassicELOX</h2>
-        <p class="section-note">Операции участка анодирования KTM с прямыми кодами.</p>
-        <div class="grid" id="fan">
-          <article data-search="c0 серебро #c2cad3 c0">
-            <div class="swatch" style="background: #c2cad3"></div>
-            <div class="info">
-              <div class="code">C0</div>
-              <div class="name">Серебро</div>
-              <div class="meta"><span>“C0”</span><code>#C2CAD3</code></div>
-            </div>
-          </article>
-          <article data-search="c35 чёрный черный #4e4e52 c35">
-            <div class="swatch" style="background: #4e4e52"></div>
-            <div class="info">
-              <div class="code">C35</div>
-              <div class="name">Чёрный</div>
-              <div class="meta"><span>“C35”</span><code>#4E4E52</code></div>
-            </div>
-          </article>
-          <article data-search="s120-0 золото #e1ddb0 s120-0">
-            <div class="swatch" style="background: #e1ddb0"></div>
-            <div class="info">
-              <div class="code">S120-0</div>
-              <div class="name">Золото</div>
-              <div class="meta"><span>“S120-0”</span><code>#E1DDB0</code></div>
-            </div>
-          </article>
-          <article data-search="s120-2 старое золото #ad9e77 s120-2">
-            <div class="swatch" style="background: #ad9e77"></div>
-            <div class="info">
-              <div class="code">S120-2</div>
-              <div class="name">Старое золото</div>
-              <div class="meta"><span>“S120-2”</span><code>#AD9E77</code></div>
-            </div>
-          </article>
-          <article data-search="c31 светлая шампань #cfd4d5 c31">
-            <div class="swatch" style="background: #cfd4d5"></div>
-            <div class="info">
-              <div class="code">C31</div>
-              <div class="name">Светлая шампань</div>
-              <div class="meta"><span>“C31”</span><code>#CFD4D5</code></div>
-            </div>
-          </article>
-          <article data-search="c32 тёмная темная шампань #aea895 c32">
-            <div class="swatch" style="background: #aea895"></div>
-            <div class="info">
-              <div class="code">C32</div>
-              <div class="name">Тёмная шампань</div>
-              <div class="meta"><span>“C32”</span><code>#AEA895</code></div>
-            </div>
-          </article>
-          <article data-search="c33 светлая бронза #716c62 c33">
-            <div class="swatch" style="background: #716c62"></div>
-            <div class="info">
-              <div class="code">C33</div>
-              <div class="name">Светлая бронза</div>
-              <div class="meta"><span>“C33”</span><code>#716C62</code></div>
-            </div>
-          </article>
-          <article data-search="c34 тёмная темная бронза #595655 c34">
-            <div class="swatch" style="background: #595655"></div>
-            <div class="info">
-              <div class="code">C34</div>
-              <div class="name">Тёмная бронза</div>
-              <div class="meta"><span>“C34”</span><code>#595655</code></div>
-            </div>
-          </article>
-          <article data-search="c41 медь #a0837e c41">
-            <div class="swatch" style="background: #a0837e"></div>
-            <div class="info">
-              <div class="code">C41</div>
-              <div class="name">Медь</div>
-              <div class="meta"><span>“C41”</span><code>#A0837E</code></div>
-            </div>
-          </article>
-          <article data-search="c44 тёмная темная медь #715c5f c44">
-            <div class="swatch" style="background: #715c5f"></div>
-            <div class="info">
-              <div class="code">C44</div>
-              <div class="name">Тёмная медь</div>
-              <div class="meta"><span>“C44”</span><code>#715C5F</code></div>
-            </div>
-          </article>
-          <article data-search="c51 нержавеющая сталь #a9968e c51">
-            <div class="swatch" style="background: #a9968e"></div>
-            <div class="info">
-              <div class="code">C51</div>
-              <div class="name">Нержавеющая сталь</div>
-              <div class="meta"><span>“C51”</span><code>#A9968E</code></div>
-            </div>
-          </article>
-          <article data-search="c54 тёмный темный титан #766d6d c54">
-            <div class="swatch" style="background: #766d6d"></div>
-            <div class="info">
-              <div class="code">C54</div>
-              <div class="name">Тёмный титан</div>
-              <div class="meta"><span>“C54”</span><code>#766D6D</code></div>
-            </div>
-          </article>
-        </div>
-      </section>
+      <p class="lead">
+        Всего цветов: <strong>22</strong>. Изменено в ревизии:
+        <strong>14</strong>. Строк книги просмотрено: <strong>10000</strong>
+        (файл <code>Учет КПЗ 2026.xlsm</code>), из них с цветом справочника:
+        <strong>9291</strong>. Без цвета или с неизвестным написанием: без цвета — 707, согласно образца — 2.
+      </p>
 
-      <section>
-        <h2>Текущие названия</h2>
-        <p class="section-note">
-          Привычные записи книги учёта. Аббревиатуры — только для бокового прогноза ванн.
-        </p>
-        <div class="grid" id="current">
-          <article data-search="серебро #c0c0c0 сер anod_01">
-            <div class="swatch" style="background: #c0c0c0"></div>
-            <div class="info">
-              <div class="code none">без кода</div>
-              <div class="name">серебро</div>
-              <div class="meta"><span>сер</span><span>ANOD_01</span><code>#C0C0C0</code></div>
-            </div>
-          </article>
-          <article data-search="черный чёрный #1c1c1c чер anod_05">
-            <div class="swatch" style="background: #1c1c1c"></div>
-            <div class="info">
-              <div class="code none">без кода</div>
-              <div class="name">черный</div>
-              <div class="meta"><span>чер</span><span>ANOD_05</span><code>#1C1C1C</code></div>
-            </div>
-          </article>
-          <article data-search="золото #ffd700 зол anod_02">
-            <div class="swatch" style="background: #ffd700"></div>
-            <div class="info">
-              <div class="code none">без кода</div>
-              <div class="name">золото</div>
-              <div class="meta"><span>зол</span><span>ANOD_02</span><code>#FFD700</code></div>
-            </div>
-          </article>
-          <article data-search="шампань #f7e7ce шам anod_06">
-            <div class="swatch" style="background: #f7e7ce"></div>
-            <div class="info">
-              <div class="code none">без кода</div>
-              <div class="name">шампань</div>
-              <div class="meta"><span>шам</span><span>ANOD_06</span><code>#F7E7CE</code></div>
-            </div>
-          </article>
-          <article data-search="титан #878681 тит anod_08">
-            <div class="swatch" style="background: #878681"></div>
-            <div class="info">
-              <div class="code none">без кода</div>
-              <div class="name">титан</div>
-              <div class="meta"><span>тит</span><span>ANOD_08</span><code>#878681</code></div>
-            </div>
-          </article>
-          <article data-search="бронза #8b5a2b брз anod_03">
-            <div class="swatch" style="background: #8b5a2b"></div>
-            <div class="info">
-              <div class="code none">без кода</div>
-              <div class="name">бронза</div>
-              <div class="meta"><span>брз</span><span>ANOD_03</span><code>#8B5A2B</code></div>
-            </div>
-          </article>
-          <article data-search="медь #cd5c5c мед anod_07">
-            <div class="swatch" style="background: #cd5c5c"></div>
-            <div class="info">
-              <div class="code none">без кода</div>
-              <div class="name">медь</div>
-              <div class="meta"><span>мед</span><span>ANOD_07</span><code>#CD5C5C</code></div>
-            </div>
-          </article>
-          <article data-search="растрав #d3d3d3 рст rst">
-            <div class="swatch" style="background: #d3d3d3"></div>
-            <div class="info">
-              <div class="code">RST</div>
-              <div class="name">растрав</div>
-              <div class="meta"><span>рст</span><code>#D3D3D3</code></div>
-            </div>
-          </article>
-          <article data-search="rose gold #b76e79 rg">
-            <div class="swatch" style="background: #b76e79"></div>
-            <div class="info">
-              <div class="code">RG</div>
-              <div class="name">Rose Gold</div>
-              <div class="meta"><span>RG</span><code>#B76E79</code></div>
-            </div>
-          </article>
-          <article data-search="rose bronze #800020 rb">
-            <div class="swatch" style="background: #800020"></div>
-            <div class="info">
-              <div class="code">RB</div>
-              <div class="name">Rose Bronze</div>
-              <div class="meta"><span>RB</span><code>#800020</code></div>
-            </div>
-          </article>
+      <div class="grid" id="grid">
+
+      <article class="card" data-usage="255" data-code="яя"
+               data-name="Бронза" data-search="бронза #8b5a2b брз">
+        <div class="strip" style="background: #8B5A2B"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code none">без кода</span>
+            <span class="name">Бронза</span>
+            <span class="abbr">брз</span>
+          </div>
+          <div class="hex-line">
+            <code>#8B5A2B</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              255 строк
+            </span>
+          </div>
+          <div class="meta">KTM ANOD_03 · ktm</div>
+          
+          <div class="cell-preview">
+            <span class="cell-name">бронза</span>
+            <span class="cell-bar" style="background: #8B5A2B"></span>
+          </div>
+          <div class="chip-preview" style="background: #8B5A2B; color: #ffffff">
+            <span>брз</span>
+            <span class="chip-time">09:04</span>
+          </div>
         </div>
-      </section>
+      </article>
+
+      <article class="card" data-usage="242" data-code="яя"
+               data-name="Золото" data-search="золото #ffd700 зол">
+        <div class="strip" style="background: #FFD700"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code none">без кода</span>
+            <span class="name">Золото</span>
+            <span class="abbr">зол</span>
+          </div>
+          <div class="hex-line">
+            <code>#FFD700</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              242 строки
+            </span>
+          </div>
+          <div class="meta">KTM ANOD_02 · ktm</div>
+          
+          <div class="cell-preview">
+            <span class="cell-name">золото</span>
+            <span class="cell-bar" style="background: #FFD700"></span>
+          </div>
+          <div class="chip-preview" style="background: #FFD700; color: #0f172a">
+            <span>зол</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="46" data-code="яя"
+               data-name="Медь" data-search="медь #ae5128 мед">
+        <div class="strip" style="background: #AE5128"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code none">без кода</span>
+            <span class="name">Медь</span>
+            <span class="abbr">мед</span>
+          </div>
+          <div class="hex-line">
+            <code>#AE5128</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              46 строк
+            </span>
+          </div>
+          <div class="meta">KTM ANOD_07 · local</div>
+          <div class="old">было <code>#CD5C5C</code><span class="delta">3.23 → 4.25</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">медь</span>
+            <span class="cell-bar" style="background: #AE5128"></span>
+          </div>
+          <div class="chip-preview" style="background: #AE5128; color: #ffffff">
+            <span>мед</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="3637" data-code="яя"
+               data-name="Серебро" data-search="серебро #e7ebee сер">
+        <div class="strip" style="background: #E7EBEE"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code none">без кода</span>
+            <span class="name">Серебро</span>
+            <span class="abbr">сер</span>
+          </div>
+          <div class="hex-line">
+            <code>#E7EBEE</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              3637 строк
+            </span>
+          </div>
+          <div class="meta">KTM ANOD_01 · local</div>
+          <div class="old">было <code>#C0C0C0</code><span class="delta">1.48 → 1.03</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">серебро</span>
+            <span class="cell-bar" style="background: #E7EBEE"></span>
+          </div>
+          <div class="chip-preview" style="background: #E7EBEE; color: #0f172a">
+            <span>сер</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="яя"
+               data-name="Титан" data-search="титан #878681 тит">
+        <div class="strip" style="background: #878681"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code none">без кода</span>
+            <span class="name">Титан</span>
+            <span class="abbr">тит</span>
+          </div>
+          <div class="hex-line">
+            <code>#878681</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM ANOD_08 · ktm</div>
+          
+          <div class="cell-preview">
+            <span class="cell-name">титан</span>
+            <span class="cell-bar" style="background: #878681"></span>
+          </div>
+          <div class="chip-preview" style="background: #878681; color: #0f172a">
+            <span>тит</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="914" data-code="яя"
+               data-name="Чёрный" data-search="чёрный #1c1c1c чер">
+        <div class="strip" style="background: #1C1C1C"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code none">без кода</span>
+            <span class="name">Чёрный</span>
+            <span class="abbr">чер</span>
+          </div>
+          <div class="hex-line">
+            <code>#1C1C1C</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              914 строк
+            </span>
+          </div>
+          <div class="meta">KTM ANOD_05 · ktm</div>
+          
+          <div class="cell-preview">
+            <span class="cell-name">чёрный</span>
+            <span class="cell-bar" style="background: #1C1C1C"></span>
+          </div>
+          <div class="chip-preview" style="background: #1C1C1C; color: #ffffff">
+            <span>чер</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="597" data-code="яя"
+               data-name="Шампань" data-search="шампань #aea895 шам">
+        <div class="strip" style="background: #AEA895"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code none">без кода</span>
+            <span class="name">Шампань</span>
+            <span class="abbr">шам</span>
+          </div>
+          <div class="hex-line">
+            <code>#AEA895</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              597 строк
+            </span>
+          </div>
+          <div class="meta">KTM ANOD_06 · local</div>
+          <div class="old">было <code>#F7E7CE</code><span class="delta">1.01 → 1.93</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">шампань</span>
+            <span class="cell-bar" style="background: #AEA895"></span>
+          </div>
+          <div class="chip-preview" style="background: #AEA895; color: #0f172a">
+            <span>шам</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="C0"
+               data-name="Серебро" data-search="c0 серебро #e7ebee c0">
+        <div class="strip" style="background: #E7EBEE"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C0</span>
+            <span class="name">Серебро</span>
+            <span class="abbr">C0</span>
+          </div>
+          <div class="hex-line">
+            <code>#E7EBEE</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM C0 · local</div>
+          <div class="old">было <code>#C2CAD3</code><span class="delta">1.34 → 1.03</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">серебро</span>
+            <span class="cell-bar" style="background: #E7EBEE"></span>
+          </div>
+          <div class="chip-preview" style="background: #E7EBEE; color: #0f172a">
+            <span>C0</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="4" data-code="C31"
+               data-name="Светлая шампань" data-search="c31 светлая шампань #dcd6bc c31">
+        <div class="strip" style="background: #DCD6BC"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C31</span>
+            <span class="name">Светлая шампань</span>
+            <span class="abbr">C31</span>
+          </div>
+          <div class="hex-line">
+            <code>#DCD6BC</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              4 строки
+            </span>
+          </div>
+          <div class="meta">KTM C31 · local</div>
+          <div class="old">было <code>#CFD4D5</code><span class="delta">1.21 → 1.18</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">светлая шампань</span>
+            <span class="cell-bar" style="background: #DCD6BC"></span>
+          </div>
+          <div class="chip-preview" style="background: #DCD6BC; color: #0f172a">
+            <span>C31</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="91" data-code="C32"
+               data-name="Тёмная шампань" data-search="c32 тёмная шампань #aea895 c32">
+        <div class="strip" style="background: #AEA895"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C32</span>
+            <span class="name">Тёмная шампань</span>
+            <span class="abbr">C32</span>
+          </div>
+          <div class="hex-line">
+            <code>#AEA895</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              91 строка
+            </span>
+          </div>
+          <div class="meta">KTM C32 · ktm</div>
+          
+          <div class="cell-preview">
+            <span class="cell-name">тёмная шампань</span>
+            <span class="cell-bar" style="background: #AEA895"></span>
+          </div>
+          <div class="chip-preview" style="background: #AEA895; color: #0f172a">
+            <span>C32</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="C33"
+               data-name="Светлая бронза" data-search="c33 светлая бронза #8f6f4a c33">
+        <div class="strip" style="background: #8F6F4A"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C33</span>
+            <span class="name">Светлая бронза</span>
+            <span class="abbr">C33</span>
+          </div>
+          <div class="hex-line">
+            <code>#8F6F4A</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM C33 · local</div>
+          <div class="old">было <code>#716C62</code><span class="delta">4.23 → 3.75</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">светлая бронза</span>
+            <span class="cell-bar" style="background: #8F6F4A"></span>
+          </div>
+          <div class="chip-preview" style="background: #8F6F4A; color: #ffffff">
+            <span>C33</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="C34"
+               data-name="Тёмная бронза" data-search="c34 тёмная бронза #8b5a2b c34">
+        <div class="strip" style="background: #8B5A2B"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C34</span>
+            <span class="name">Тёмная бронза</span>
+            <span class="abbr">C34</span>
+          </div>
+          <div class="hex-line">
+            <code>#8B5A2B</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM C34 · local</div>
+          <div class="old">было <code>#595655</code><span class="delta">5.90 → 4.74</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">тёмная бронза</span>
+            <span class="cell-bar" style="background: #8B5A2B"></span>
+          </div>
+          <div class="chip-preview" style="background: #8B5A2B; color: #ffffff">
+            <span>C34</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="C35"
+               data-name="Чёрный" data-search="c35 чёрный #1c1c1c c35">
+        <div class="strip" style="background: #1C1C1C"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C35</span>
+            <span class="name">Чёрный</span>
+            <span class="abbr">C35</span>
+          </div>
+          <div class="hex-line">
+            <code>#1C1C1C</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM C35 · local</div>
+          <div class="old">было <code>#4E4E52</code><span class="delta">6.72 → 13.82</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">чёрный</span>
+            <span class="cell-bar" style="background: #1C1C1C"></span>
+          </div>
+          <div class="chip-preview" style="background: #1C1C1C; color: #ffffff">
+            <span>C35</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="C41"
+               data-name="Медь" data-search="c41 медь #7f1d1d c41">
+        <div class="strip" style="background: #7F1D1D"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C41</span>
+            <span class="name">Медь</span>
+            <span class="abbr">C41</span>
+          </div>
+          <div class="hex-line">
+            <code>#7F1D1D</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM C41 · local</div>
+          <div class="old">было <code>#A0837E</code><span class="delta">2.82 → 8.13</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">медь</span>
+            <span class="cell-bar" style="background: #7F1D1D"></span>
+          </div>
+          <div class="chip-preview" style="background: #7F1D1D; color: #ffffff">
+            <span>C41</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="C44"
+               data-name="Тёмная медь" data-search="c44 тёмная медь #6e1616 c44">
+        <div class="strip" style="background: #6E1616"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C44</span>
+            <span class="name">Тёмная медь</span>
+            <span class="abbr">C44</span>
+          </div>
+          <div class="hex-line">
+            <code>#6E1616</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM C44 · local</div>
+          <div class="old">было <code>#715C5F</code><span class="delta">5.01 → 9.52</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">тёмная медь</span>
+            <span class="cell-bar" style="background: #6E1616"></span>
+          </div>
+          <div class="chip-preview" style="background: #6E1616; color: #ffffff">
+            <span>C44</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="C51"
+               data-name="Нержавеющая сталь" data-search="c51 нержавеющая сталь #a3b3c4 c51">
+        <div class="strip" style="background: #A3B3C4"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C51</span>
+            <span class="name">Нержавеющая сталь</span>
+            <span class="abbr">C51</span>
+          </div>
+          <div class="hex-line">
+            <code>#A3B3C4</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM C51 · local</div>
+          <div class="old">было <code>#A9968E</code><span class="delta">2.29 → 1.74</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">нержавеющая сталь</span>
+            <span class="cell-bar" style="background: #A3B3C4"></span>
+          </div>
+          <div class="chip-preview" style="background: #A3B3C4; color: #0f172a">
+            <span>C51</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="C54"
+               data-name="Тёмный титан" data-search="c54 тёмный титан #766d6d c54">
+        <div class="strip" style="background: #766D6D"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">C54</span>
+            <span class="name">Тёмный титан</span>
+            <span class="abbr">C54</span>
+          </div>
+          <div class="hex-line">
+            <code>#766D6D</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM C54 · ktm</div>
+          
+          <div class="cell-preview">
+            <span class="cell-name">тёмный титан</span>
+            <span class="cell-bar" style="background: #766D6D"></span>
+          </div>
+          <div class="chip-preview" style="background: #766D6D; color: #ffffff">
+            <span>C54</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="1044" data-code="RB"
+               data-name="Rose Bronze" data-search="rb rose bronze #800020 rb">
+        <div class="strip" style="background: #800020"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">RB</span>
+            <span class="name">Rose Bronze</span>
+            <span class="abbr">RB</span>
+          </div>
+          <div class="hex-line">
+            <code>#800020</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              1044 строки
+            </span>
+          </div>
+          <div class="meta">KTM — · local</div>
+          
+          <div class="cell-preview">
+            <span class="cell-name">rose bronze</span>
+            <span class="cell-bar" style="background: #800020"></span>
+          </div>
+          <div class="chip-preview" style="background: #800020; color: #ffffff">
+            <span>RB</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="2439" data-code="RG"
+               data-name="Rose Gold" data-search="rg rose gold #b76e79 rg">
+        <div class="strip" style="background: #B76E79"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">RG</span>
+            <span class="name">Rose Gold</span>
+            <span class="abbr">RG</span>
+          </div>
+          <div class="hex-line">
+            <code>#B76E79</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              2439 строк
+            </span>
+          </div>
+          <div class="meta">KTM — · local</div>
+          
+          <div class="cell-preview">
+            <span class="cell-name">rose gold</span>
+            <span class="cell-bar" style="background: #B76E79"></span>
+          </div>
+          <div class="chip-preview" style="background: #B76E79; color: #0f172a">
+            <span>RG</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="22" data-code="RST"
+               data-name="растрав" data-search="rst растрав #b8b8b8 рст">
+        <div class="strip" style="background: #B8B8B8"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">RST</span>
+            <span class="name">растрав</span>
+            <span class="abbr">рст</span>
+          </div>
+          <div class="hex-line">
+            <code>#B8B8B8</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              22 строки
+            </span>
+          </div>
+          <div class="meta">KTM — · local</div>
+          <div class="old">было <code>#D3D3D3</code><span class="delta">1.21 → 1.61</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">растрав</span>
+            <span class="cell-bar" style="background: #B8B8B8"></span>
+          </div>
+          <div class="chip-preview" style="background: #B8B8B8; color: #0f172a">
+            <span>рст</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="S120-0"
+               data-name="Золото" data-search="s120-0 золото #ffd700 s120-0">
+        <div class="strip" style="background: #FFD700"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">S120-0</span>
+            <span class="name">Золото</span>
+            <span class="abbr">S120-0</span>
+          </div>
+          <div class="hex-line">
+            <code>#FFD700</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM S120-0 · local</div>
+          <div class="old">было <code>#E1DDB0</code><span class="delta">1.12 → 1.14</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">золото</span>
+            <span class="cell-bar" style="background: #FFD700"></span>
+          </div>
+          <div class="chip-preview" style="background: #FFD700; color: #0f172a">
+            <span>S120-0</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-usage="0" data-code="S120-2"
+               data-name="Старое золото" data-search="s120-2 старое золото #d7c04b s120-2">
+        <div class="strip" style="background: #D7C04B"></div>
+        <div class="card-body">
+          <div class="card-head">
+            <span class="code">S120-2</span>
+            <span class="name">Старое золото</span>
+            <span class="abbr">S120-2</span>
+          </div>
+          <div class="hex-line">
+            <code>#D7C04B</code>
+            <span class="usage" title="Сколько строк книги с этим цветом">
+              0 строк
+            </span>
+          </div>
+          <div class="meta">KTM S120-2 · local</div>
+          <div class="old">было <code>#AD9E77</code><span class="delta">2.15 → 1.48</span></div>
+          <div class="cell-preview">
+            <span class="cell-name">старое золото</span>
+            <span class="cell-bar" style="background: #D7C04B"></span>
+          </div>
+          <div class="chip-preview" style="background: #D7C04B; color: #0f172a">
+            <span>S120-2</span>
+            <span class="chip-time">09:04</span>
+          </div>
+        </div>
+      </article>
+      </div>
 
       <p class="empty" id="empty" hidden>Ничего не найдено.</p>
 
       <footer>
-        Hex снят с фото веера и справочный: точный оттенок зависит от сплава и освещения. Всего
-        цветов — 22. Источник для синка — операции участка
-        <code>ANODIZING</code> в KTM; локальная копия живёт в <code>static/ekranchik.db</code>,
-        таблица <code>colors</code>.
+        Страница генерируется скриптом <code>scripts/colors-report.py</code>:
+        <code>npm run report:colors</code>. Данные — справочник <code>colors</code> в
+        <code>static/ekranchik.db</code> и книга учёта КПЗ; частота считается по последним
+        строкам книги и не хранится в базе.
       </footer>
     </div>
 
     <script>
+      const grid = document.getElementById("grid");
+      const cards = [...grid.querySelectorAll(".card")];
       const query = document.getElementById("q");
-      const cards = [...document.querySelectorAll("article[data-search]")];
+      const sort = document.getElementById("sort");
       const count = document.getElementById("count");
       const empty = document.getElementById("empty");
 
-      function applyFilter() {
+      function usage(card) { return Number(card.dataset.usage || 0); }
+
+      function apply() {
         const needle = query.value.trim().toLowerCase();
         let shown = 0;
         for (const card of cards) {
-          const haystack = card.dataset.search + " " + card.textContent.toLowerCase();
-          const match = !needle || haystack.includes(needle);
+          const match = !needle || card.dataset.search.includes(needle);
           card.hidden = !match;
           if (match) shown += 1;
         }
+        const mode = sort.value;
+        const sorted = [...cards].sort((a, b) => {
+          if (mode === "usage") return usage(b) - usage(a) || a.dataset.name.localeCompare(b.dataset.name, "ru");
+          if (mode === "code") return a.dataset.code.localeCompare(b.dataset.code, "ru");
+          return a.dataset.name.localeCompare(b.dataset.name, "ru");
+        });
+        for (const card of sorted) grid.appendChild(card);
         count.textContent = shown + " из " + cards.length;
         empty.hidden = shown !== 0;
       }
 
-      query.addEventListener("input", applyFilter);
-      applyFilter();
+      query.addEventListener("input", apply);
+      sort.addEventListener("change", apply);
+      apply();
     </script>
   </body>
 </html>

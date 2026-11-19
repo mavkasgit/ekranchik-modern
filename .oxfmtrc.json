@@ -10,6 +10,7 @@
     "static",
     "backend/.venv",
     "node_modules",
-    ".mise/locks"
+    ".mise/locks",
+    "docs/colors-reference.html"
   ]
 }
