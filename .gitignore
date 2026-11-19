@@ -42,6 +42,9 @@ static/app_settings.json
 # *.sqlite3
 # static/*.db
 static/ekranchik_backup_*.db
+# БД dev-стенда: локальные данные, в git не хранятся. На чистой машине её
+# создают миграции (alembic upgrade head), каталог наполняет синк из KTM.
+static/ekranchik.db
 # Снимок перед синком каталога (scripts/sync-ekranchik.py в ktm2000)
 static/ekranchik.db.bak-*
 # Резервные копии фото — локальное состояние, не данные репозитория
