@@ -129,6 +129,9 @@ async def test_migration_seeds_full_color_dictionary(tmp_path, monkeypatch):
     for name, expected_code in (("Rose Gold", "RG"), ("Rose Bronze", "RB"), ("растрав", "RST")):
         assert by_name[name]["code"] == expected_code
 
+    # Растрав — операция участка KTM, а не local-only строка: ключ синка задан.
+    assert by_name["растрав"]["operation_code"] == "RST"
+
     # Старые названия живут за старыми операциями KTM: синк найдёт их по ключу.
     assert by_name["серебро"]["operation_code"] == "ANOD_01"
     assert by_name["черный"]["operation_code"] == "ANOD_05"
