@@ -169,7 +169,7 @@ async def test_seed_has_old_updated_at_and_ktm_fan_hex(tmp_path, monkeypatch):
         assert stamp < now, row
 
     by_code = {row["code"]: row for row in rows if row["code"]}
-    assert by_code["C31"]["hex"] == "#CFD4D5"
+    assert by_code["C31"]["hex"] == "#DCD6BC"
     assert by_code["C32"]["hex"] == "#AEA895"
 
 

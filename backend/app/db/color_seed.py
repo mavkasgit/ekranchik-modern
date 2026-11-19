@@ -24,14 +24,14 @@ from sqlalchemy.engine import Connection
 # Десять текущих названий: их уже знает панель и книга учёта. Старые операции
 # KTM остаются без отображаемого кода, поэтому code=None.
 _CURRENT_COLORS: tuple[dict[str, str | None], ...] = (
-    {"code": None, "name": "серебро", "hex": "#C0C0C0", "abbreviation": "сер", "operation_code": "ANOD_01"},
+    {"code": None, "name": "серебро", "hex": "#E7EBEE", "abbreviation": "сер", "operation_code": "ANOD_01"},
     {"code": None, "name": "черный", "hex": "#1C1C1C", "abbreviation": "чер", "operation_code": "ANOD_05"},
     {"code": None, "name": "золото", "hex": "#FFD700", "abbreviation": "зол", "operation_code": "ANOD_02"},
-    {"code": None, "name": "шампань", "hex": "#F7E7CE", "abbreviation": "шам", "operation_code": "ANOD_06"},
+    {"code": None, "name": "шампань", "hex": "#AEA895", "abbreviation": "шам", "operation_code": "ANOD_06"},
     {"code": None, "name": "титан", "hex": "#878681", "abbreviation": "тит", "operation_code": "ANOD_08"},
     {"code": None, "name": "бронза", "hex": "#8B5A2B", "abbreviation": "брз", "operation_code": "ANOD_03"},
-    {"code": None, "name": "медь", "hex": "#CD5C5C", "abbreviation": "мед", "operation_code": "ANOD_07"},
-    {"code": "RST", "name": "растрав", "hex": "#D3D3D3", "abbreviation": "рст", "operation_code": None},
+    {"code": None, "name": "медь", "hex": "#AE5128", "abbreviation": "мед", "operation_code": "ANOD_07"},
+    {"code": "RST", "name": "растрав", "hex": "#B8B8B8", "abbreviation": "рст", "operation_code": None},
     {"code": "RG", "name": "Rose Gold", "hex": "#B76E79", "abbreviation": "RG", "operation_code": None},
     {"code": "RB", "name": "Rose Bronze", "hex": "#800020", "abbreviation": "RB", "operation_code": None},
 )
@@ -39,17 +39,17 @@ _CURRENT_COLORS: tuple[dict[str, str | None], ...] = (
 # Двенадцать цветов веера ClassicELOX: кодов в KTM ещё нет, операция заводится
 # сразу с прямым кодом C0…C54 (T-378).
 _FAN_COLORS: tuple[dict[str, str | None], ...] = (
-    {"code": "C0", "name": "Серебро", "hex": "#C2CAD3", "abbreviation": "C0", "operation_code": "C0"},
-    {"code": "C35", "name": "Чёрный", "hex": "#4E4E52", "abbreviation": "C35", "operation_code": "C35"},
-    {"code": "S120-0", "name": "Золото", "hex": "#E1DDB0", "abbreviation": "S120-0", "operation_code": "S120-0"},
-    {"code": "S120-2", "name": "Старое золото", "hex": "#AD9E77", "abbreviation": "S120-2", "operation_code": "S120-2"},
-    {"code": "C31", "name": "Светлая шампань", "hex": "#CFD4D5", "abbreviation": "C31", "operation_code": "C31"},
+    {"code": "C0", "name": "Серебро", "hex": "#E7EBEE", "abbreviation": "C0", "operation_code": "C0"},
+    {"code": "C35", "name": "Чёрный", "hex": "#1C1C1C", "abbreviation": "C35", "operation_code": "C35"},
+    {"code": "S120-0", "name": "Золото", "hex": "#FFD700", "abbreviation": "S120-0", "operation_code": "S120-0"},
+    {"code": "S120-2", "name": "Старое золото", "hex": "#D7C04B", "abbreviation": "S120-2", "operation_code": "S120-2"},
+    {"code": "C31", "name": "Светлая шампань", "hex": "#DCD6BC", "abbreviation": "C31", "operation_code": "C31"},
     {"code": "C32", "name": "Тёмная шампань", "hex": "#AEA895", "abbreviation": "C32", "operation_code": "C32"},
-    {"code": "C33", "name": "Светлая бронза", "hex": "#716C62", "abbreviation": "C33", "operation_code": "C33"},
-    {"code": "C34", "name": "Тёмная бронза", "hex": "#595655", "abbreviation": "C34", "operation_code": "C34"},
-    {"code": "C41", "name": "Медь", "hex": "#A0837E", "abbreviation": "C41", "operation_code": "C41"},
-    {"code": "C44", "name": "Тёмная медь", "hex": "#715C5F", "abbreviation": "C44", "operation_code": "C44"},
-    {"code": "C51", "name": "Нержавеющая сталь", "hex": "#A9968E", "abbreviation": "C51", "operation_code": "C51"},
+    {"code": "C33", "name": "Светлая бронза", "hex": "#8F6F4A", "abbreviation": "C33", "operation_code": "C33"},
+    {"code": "C34", "name": "Тёмная бронза", "hex": "#8B5A2B", "abbreviation": "C34", "operation_code": "C34"},
+    {"code": "C41", "name": "Медь", "hex": "#7F1D1D", "abbreviation": "C41", "operation_code": "C41"},
+    {"code": "C44", "name": "Тёмная медь", "hex": "#6E1616", "abbreviation": "C44", "operation_code": "C44"},
+    {"code": "C51", "name": "Нержавеющая сталь", "hex": "#A3B3C4", "abbreviation": "C51", "operation_code": "C51"},
     {"code": "C54", "name": "Тёмный титан", "hex": "#766D6D", "abbreviation": "C54", "operation_code": "C54"},
 )
 
