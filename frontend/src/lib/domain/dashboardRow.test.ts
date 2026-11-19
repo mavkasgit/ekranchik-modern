@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeHangerRow, isBlankRow, mergeHangerMeta } from "./dashboardRow";
+import { describeHangerRow, isBlankRow, mergeHangerMeta, profileCellInfo } from "./dashboardRow";
 import type { HangerData, ProfileInfo } from "@/types/dashboard";
 
 function row(overrides: Partial<HangerData> = {}): HangerData {
@@ -71,6 +71,47 @@ describe("describeHangerRow: профиль строки", () => {
   });
 });
 
+describe("profileCellInfo: ячейка «Профиль» в две строки", () => {
+  const info = (name: string, lengthText?: string, processing: string[] = []): ProfileInfo => ({
+    ...profileInfo(name),
+    length_text: lengthText ?? null,
+    processing,
+  });
+
+  it("длина уходит из артикула в бейдж", () => {
+    const cell = profileCellInfo(row({ profiles_info: [info("ЮП-2083 1,8 метра", "1,8 м")] }));
+
+    expect(cell).toEqual({ article: "ЮП-2083", processing: [], lengths: ["1,8 м"] });
+  });
+
+  it("длина в скобках с точкой тоже снимается", () => {
+    const cell = profileCellInfo(row({ profiles_info: [info("ЮП-2083 (1.8)", "1,8 м")] }));
+
+    expect(cell?.article).toBe("ЮП-2083");
+  });
+
+  it("несколько профилей идут через плюс, обработки не повторяются", () => {
+    const cell = profileCellInfo(
+      row({
+        profiles_info: [
+          info("АТ-7314 окно", undefined, ["окно"]),
+          info("ЮП-2972 паз", "2,75 м", ["паз", "окно"]),
+        ],
+      }),
+    );
+
+    expect(cell).toEqual({
+      article: "АТ-7314 окно + ЮП-2972 паз",
+      processing: ["окно", "паз"],
+      lengths: ["2,75 м"],
+    });
+  });
+
+  it("профилей нет — ячейка печатает подпись книги", () => {
+    expect(profileCellInfo(row({ profiles_info: [] }))).toBeNull();
+  });
+});
+
 describe("describeHangerRow: сколько строк занимает подвес", () => {
   it("больше двух профилей — фото уходят на второй ряд", () => {
     const meaning = describeHangerRow(
@@ -131,6 +172,14 @@ describe("describeHangerRow: пометки оператору", () => {
 
   it("строка без книги не помечается: пустая строка читается сама", () => {
     expect(describeHangerRow(row({ time_warning_code: "NO_ROW" })).badges).toEqual([]);
+  });
+
+  it("брак не дублируется, если код подбора тоже говорит о браке", () => {
+    // Бэкенд такого кода не шлёт, но два одинаковых бейджа оператору ничего
+    // не добавляют, а ключи в списке React ломают.
+    const badges = describeHangerRow(row({ is_defect: true, time_warning_code: "DEFECT" })).badges;
+
+    expect(badges.map((badge) => badge.code)).toEqual(["DEFECT"]);
   });
 
   it("неизвестный код не становится бейджем", () => {

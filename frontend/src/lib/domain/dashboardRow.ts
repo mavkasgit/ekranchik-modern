@@ -107,7 +107,11 @@ function rowBadges(hanger: HangerData): RowBadge[] {
   const badges: RowBadge[] = [];
   const badge = badgeFor(hanger.time_warning_code);
   if (badge) badges.push(badge);
-  if (hanger.is_defect) badges.push(BADGES.DEFECT);
+  // «Брак» — отдельный флаг книги. Код подбора его не присылает, но если
+  // пришлёт, второй такой же бейдж ничего не добавит оператору.
+  if (hanger.is_defect && !badges.some((item) => item.code === "DEFECT")) {
+    badges.push(BADGES.DEFECT);
+  }
   return badges;
 }
 
@@ -121,6 +125,49 @@ function profileLabel(hanger: HangerData): string {
   const hasProfile = Boolean(profile) && profile !== NO_VALUE;
   if (!hasProfile) return isSticksHanger(hanger) ? STICKS_LABEL : NO_VALUE;
   return profile.replace(/\+/g, "+ ");
+}
+
+/** Что показать в ячейке «Профиль»: артикул и бейджи под ним. */
+export interface ProfileCellInfo {
+  /** Артикулы строки без длины: «ЮП-2083» из «ЮП-2083 1,8 метра». */
+  article: string;
+  /** Обработки всех профилей строки без повторов. */
+  processing: string[];
+  /** Длины профилей строки в порядке следования. */
+  lengths: string[];
+}
+
+/**
+ * Длина в книге записана внутри сегмента («ЮП-2083 1,8 метра», «(1.8)»),
+ * а бэкенд уже вынес её в `length_text` (ADR 0012). Отрезаем хвост по
+ * известному значению, чтобы артикул не повторял бейдж под ним.
+ */
+function articleName(name: string, lengthText?: string | null): string {
+  if (!lengthText) return name;
+  const number = lengthText.replace(/[^\d,.]/g, "");
+  if (!number) return name;
+  const pattern = new RegExp(
+    `\\s*\\(?\\s*${number.replace(/[.,]/g, "[.,]")}\\s*(?:метр(?:а|ов)?|м)?\\.?\\s*\\)?\\s*$`,
+    "i",
+  );
+  return name.replace(pattern, "").trim() || name;
+}
+
+/**
+ * Ячейка «Профиль» по профилям строки. `null` — профилей нет (клюшки или
+ * строка без каталога): тогда печатается подпись книги как есть.
+ */
+export function profileCellInfo(hanger: HangerData): ProfileCellInfo | null {
+  const profiles = hanger.profiles_info ?? [];
+  if (profiles.length === 0) return null;
+
+  return {
+    article: profiles.map((profile) => articleName(profile.name, profile.length_text)).join(" + "),
+    processing: Array.from(new Set(profiles.flatMap((profile) => profile.processing))),
+    lengths: profiles
+      .map((profile) => profile.length_text)
+      .filter((length): length is string => Boolean(length)),
+  };
 }
 
 export function describeHangerRow(hanger: HangerData, index = 0): RowMeaning {

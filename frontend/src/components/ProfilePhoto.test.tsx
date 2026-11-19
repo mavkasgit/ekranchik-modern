@@ -68,7 +68,7 @@ describe("ProfilePhoto: длина из книги", () => {
     expect(markup).not.toContain("bg-indigo-100");
   });
 
-  it("у длинного артикула подпись усекается, а бейдж длины остаётся", () => {
+  it("у длинного артикула подпись переносится целиком, а бейдж длины остаётся", () => {
     const markup = renderToStaticMarkup(
       <ProfilePhoto
         profile={profile({ canonical_name: "ПТ80(юп-1880)", length_text: "2,7 м", length_m: 2.7 })}
@@ -77,8 +77,11 @@ describe("ProfilePhoto: длина из книги", () => {
     );
 
     expect(markup).toContain("ПТ80(юп-1880)");
-    expect(markup).toContain("truncate");
-    expect(markup).toContain("max-w-[70px]");
+    // Обрезка прятала хвост артикула без возможности его увидеть на киоске:
+    // подпись переносится, а ширина ограничена потолком.
+    expect(markup).not.toContain("truncate");
+    expect(markup).toContain("break-words");
+    expect(markup).toContain("max-w-[110px]");
     expect(markup).toContain("2,7 м");
   });
 });

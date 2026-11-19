@@ -43,7 +43,9 @@ export function ProfilePhoto({
       )}
       {!hideText && (
         <div className="flex flex-col justify-center min-w-0">
-          <p className="text-xs font-bold text-foreground truncate max-w-[70px]">
+          {/* Подпись под фото — полное имя: в ряду подвеса места хватает,
+              а обрезанный артикул оператор не восстановит. */}
+          <p className="text-xs font-bold text-foreground break-words max-w-[110px]">
             {profile.canonical_name || profile.name}
           </p>
           {hasBadges && (

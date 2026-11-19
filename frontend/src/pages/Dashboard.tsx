@@ -50,12 +50,13 @@ import { useRealtimeConnection } from "@/hooks/useRealtime";
 import { useTestRun } from "@/hooks/useTestRun";
 import { useColors } from "@/hooks/useColors";
 import { DASHBOARD_KEY } from "@/lib/queryKeys";
-import { SIDEBAR_ROW_LIMIT } from "@/config/limits";
+import { SIDEBAR_FETCH_LIMIT, SIDEBAR_ROW_LIMIT } from "@/config/limits";
 import { colorHex, colorName, type ColorSpec } from "@/lib/domain/color";
 import {
   describeHangerRow,
   isBlankRow,
   mergeHangerMeta,
+  profileCellInfo,
   rowClassName,
 } from "@/lib/domain/dashboardRow";
 import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
@@ -495,24 +496,17 @@ function PhotoCell({
   if (profilesInfo.length > 0) {
     return (
       <div
-        className="flex flex-nowrap gap-2 items-center justify-start overflow-x-auto py-1 px-0.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 dark:[&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-thumb]:rounded-full"
+        className="flex w-full flex-nowrap gap-2 items-center justify-start overflow-x-auto py-1 px-0.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 dark:[&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-thumb]:rounded-full"
         style={{ maxWidth: "350px" }}
       >
+        {/* Артикул и длина уже стоят в «Профиле»: подпись под фото только
+            дублировала их и обрезалась первой, когда колонка узкая. */}
         {profilesInfo.map((prof, idx) => (
-          <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} />
+          <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} hideText />
         ))}
       </div>
     );
   }
-
-  // Helper to render profile name next to photo
-  const ProfileName = () => (
-    <div className="flex flex-col justify-center min-w-0 ml-2 text-left">
-      <p className="text-xs font-bold text-foreground truncate max-w-[70px]">
-        {hanger.canonical_name || hanger.profile}
-      </p>
-    </div>
-  );
 
   const thumbUrl = photoUrl(hanger.profile_photo_thumb, hanger.profile_photo_thumb_version);
   if (thumbUrl) {
@@ -535,7 +529,6 @@ function PhotoCell({
               )
             }
           />
-          <ProfileName />
         </div>
       </div>
     );
@@ -547,7 +540,6 @@ function PhotoCell({
         <div className="w-10 h-10 bg-muted rounded flex items-center justify-center flex-shrink-0">
           <Image className="w-5 h-5 text-muted-foreground" />
         </div>
-        <ProfileName />
       </div>
     </div>
   );
@@ -681,6 +673,47 @@ function ClockInline() {
 }
 
 // Data table
+/**
+ * Содержимое ячейки «Профиль»: артикул строкой, под ним длина и обработки
+ * бейджами. Профилей нет (клюшки, старая строка) — печатаем подпись книги и
+ * переносим её, а не обрезаем: на киоске нет наведения, спрятанный хвост
+ * оператор не восстановит.
+ */
+function ProfileCell({ hanger, label }: { hanger: HangerData; label: string }) {
+  const info = profileCellInfo(hanger);
+  if (!info) {
+    return <span className="min-w-0 break-words">{label}</span>;
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col justify-center leading-tight">
+      <span className="break-words font-semibold" title={label}>
+        {info.article}
+      </span>
+      {(info.processing.length > 0 || info.lengths.length > 0) && (
+        <div className="mt-0.5 flex flex-wrap items-center gap-1">
+          {info.processing.map((proc) => (
+            <Badge
+              key={proc}
+              className="px-1 py-0 text-[10px] bg-yellow-400 text-yellow-900 hover:bg-yellow-500"
+            >
+              {proc}
+            </Badge>
+          ))}
+          {info.lengths.map((length) => (
+            <Badge
+              key={length}
+              className="whitespace-nowrap border-indigo-300 bg-indigo-100 px-1 py-0 text-[10px] text-indigo-900 hover:bg-indigo-200"
+            >
+              {length}
+            </Badge>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DataTable({
   data,
   colors,
@@ -714,11 +747,12 @@ function DataTable({
         aria-label={ariaLabel}
         style={{ gridTemplateColumns }}
       >
-        {/* Шапка таблицы */}
+        {/* Шапка таблицы. Строки — subgrid: иначе каждая строка считает ширину
+            колонок сама, и «Профиль» по содержимому сдвигает фото в своей строке. */}
         <div
           role="row"
           className="sticky top-0 bg-muted z-20 text-[14px] font-semibold text-foreground/85 tracking-tight border-b border-slate-300 dark:border-slate-700 grid col-span-full"
-          style={{ gridTemplateColumns, display: "grid" }}
+          style={{ gridTemplateColumns: "subgrid", display: "grid" }}
         >
           <div
             role="columnheader"
@@ -804,7 +838,7 @@ function DataTable({
               key={`${hanger.number}-${idx}`}
               role="row"
               className={`grid col-span-full border-b border-slate-200 dark:border-slate-800 group ${meaning.className}`}
-              style={{ gridTemplateColumns, display: "grid" }}
+              style={{ gridTemplateColumns: "subgrid", display: "grid" }}
             >
               {/* Дата и Время (с вертикальным объединением) */}
               {showEntryExit ? (
@@ -905,7 +939,7 @@ function DataTable({
                   style={{ gridColumn: "profile / lamels", gridRow: "1" }}
                   title={hanger.profile}
                 >
-                  <span className="truncate font-bold text-foreground">{meaning.profileLabel}</span>
+                  <ProfileCell hanger={hanger} label={meaning.profileLabel} />
                 </div>
               ) : (
                 <>
@@ -916,7 +950,7 @@ function DataTable({
                     style={{ gridColumn: "profile", gridRow: "1" }}
                     title={hanger.profile}
                   >
-                    <span className="truncate">{meaning.profileLabel}</span>
+                    <ProfileCell hanger={hanger} label={meaning.profileLabel} />
                   </div>
                   <div
                     role="cell"
@@ -962,9 +996,11 @@ function DataTable({
                   <span className="text-sm leading-tight text-center break-words">
                     {hanger.color}
                   </span>
+                  {/* Обводка держит край светлых цветов (серебро, шампань) на
+                      светлой строке: без неё полоска сливается с фоном. */}
                   <div
-                    className="w-full h-1.5 rounded-full mt-0.5"
-                    style={{ backgroundColor: colorHex(colors, hanger.color), minWidth: "50px" }}
+                    className="w-full h-2 rounded-full mt-1 ring-1 ring-inset ring-black/30 dark:ring-white/40"
+                    style={{ backgroundColor: colorHex(colors, hanger.color), minWidth: "56px" }}
                   />
                 </div>
               </div>
@@ -1039,11 +1075,13 @@ function SidebarQueueTable({
       (h) => h.time && h.time.trim() !== "—" && h.time.trim() !== "",
     );
 
-    // Ограничиваем планируемые/активные (без времени) до 6 ближайших к выгрузке
+    // Ограничиваем планируемые/активные (без времени) до 6 ближайших к выгрузке:
+    // остальные вытеснили бы историю.
     const recentWithoutTime = withoutTime.slice(-6);
 
-    // Выгруженные (со временем) оставляем полностью
-    return [...recentWithoutTime, ...withTime];
+    // Потолок карточки держим по числу строк, а не по ответу API: строки без
+    // времени иначе оставляли внизу карточки просвет вместо строк.
+    return [...recentWithoutTime, ...withTime].slice(0, SIDEBAR_ROW_LIMIT);
   }, [data]);
 
   return (
@@ -1071,12 +1109,11 @@ function SidebarQueueTable({
                 {filteredData.map((hanger, idx) => {
                   const meaning = describeHangerRow(hanger, idx);
                   // Боковая очередь узкая: «Клюшки» уже короткие, остальное
-                  // сжимаем до цифр книги, как и раньше.
-                  const cleanedProfile = meaning.sticks
+                  // сжимаем до цифр книги. Режет CSS, а не `slice`: восемь
+                  // символов обрезали даже «2083(1.8)», влезающее в ячейку.
+                  const displayProfile = meaning.sticks
                     ? meaning.profileLabel
                     : profileText(hanger.profile);
-                  const displayProfile =
-                    cleanedProfile.length > 8 ? cleanedProfile.slice(0, 8) + ".." : cleanedProfile;
                   return (
                     <TableRow
                       key={`sidebar-${hanger.number}-${idx}`}
@@ -1097,7 +1134,7 @@ function SidebarQueueTable({
                             hanger.color.trim() !== "—" &&
                             hanger.color.trim() !== "" && (
                               <span
-                                className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-black/15 dark:border-white/15"
+                                className="w-3 h-3 rounded-full inline-block shrink-0 ring-1 ring-inset ring-black/30 dark:ring-white/40"
                                 style={{ backgroundColor: colorHex(colors, hanger.color) }}
                                 title={colorName(colors, hanger.color)}
                               />
@@ -1399,7 +1436,7 @@ export default function Dashboard() {
     isLoading: isLoadingAll,
     refetch: refetchRecentAll,
     isFetching: isRecentAllFetching,
-  } = useDashboard(7, SIDEBAR_ROW_LIMIT, false);
+  } = useDashboard(7, SIDEBAR_FETCH_LIMIT, false);
   const { data: fileStatus } = useFileStatus();
   const { data: matchedEvents } = useOPCUAMatchedUnloadEvents(filters.realtimeLimit);
   // Справочник цветов: пока он грузится или упал, панель не блокируется —
