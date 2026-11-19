@@ -15,9 +15,17 @@ export interface ColorSpec {
 
 const UNKNOWN_COLOR_HEX = "#9CA3AF";
 
-/** Ключ названия: регистр, пробелы, дефисы и подчёркивания не различают цвета. */
+/**
+ * Ключ названия: регистр, пробелы, дефисы и подчёркивания не различают цвета.
+ * `ё` и `е` — одна буква: книга учёта пишет «черный», справочник — «Чёрный».
+ */
+const CYRILLIC_YO = /\u0451/g;
+
 function normalizeColorName(colorName: string): string {
-  return colorName.toLowerCase().replace(/[\s\-_]/g, "");
+  return colorName
+    .toLowerCase()
+    .replace(CYRILLIC_YO, "\u0435")
+    .replace(/[\s\-_]/g, "");
 }
 
 /**

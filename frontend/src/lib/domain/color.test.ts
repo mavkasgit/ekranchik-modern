@@ -60,6 +60,15 @@ describe("colorName", () => {
     expect(colorName(CATALOG, "C32")).toBe("Тёмная шампань");
     expect(colorName(CATALOG, CYRILLIC_C32)).toBe("Тёмная шампань");
   });
+
+  it("книжное «черный» находит справочное «Чёрный»: ё и е — одна буква", () => {
+    const withYo: ColorSpec[] = [
+      { code: null, name: "Чёрный", hex: "#1C1C1C", abbreviation: "чер" },
+    ];
+
+    expect(colorName(withYo, "черный")).toBe("Чёрный");
+    expect(colorHex(withYo, "ЧЁРНЫЙ")).toBe("#1C1C1C");
+  });
 });
 
 describe("colorHex / colorAbbreviation", () => {
