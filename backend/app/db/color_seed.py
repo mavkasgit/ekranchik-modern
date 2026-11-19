@@ -31,7 +31,7 @@ _CURRENT_COLORS: tuple[dict[str, str | None], ...] = (
     {"code": None, "name": "титан", "hex": "#878681", "abbreviation": "тит", "operation_code": "ANOD_08"},
     {"code": None, "name": "бронза", "hex": "#8B5A2B", "abbreviation": "брз", "operation_code": "ANOD_03"},
     {"code": None, "name": "медь", "hex": "#AE5128", "abbreviation": "мед", "operation_code": "ANOD_07"},
-    {"code": "RST", "name": "растрав", "hex": "#B8B8B8", "abbreviation": "рст", "operation_code": None},
+    {"code": "RST", "name": "растрав", "hex": "#B8B8B8", "abbreviation": "рст", "operation_code": "RST"},
     {"code": "RG", "name": "Rose Gold", "hex": "#B76E79", "abbreviation": "RG", "operation_code": None},
     {"code": "RB", "name": "Rose Bronze", "hex": "#800020", "abbreviation": "RB", "operation_code": None},
 )
