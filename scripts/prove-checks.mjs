@@ -56,6 +56,13 @@ function withinRepo(relativePath) {
   return absolute === ROOT || absolute.startsWith(ROOT + path.sep);
 }
 
+/** Дата в прошлом (вчера и раньше): `expires` — жёсткий срок, а не пожелание. */
+function isPast(value) {
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Date.parse(`${value}T00:00:00Z`) < today;
+}
+
 function porcelain() {
   const result = spawnSync("git", ["status", "--porcelain", "-z"], {
     cwd: ROOT,
@@ -195,8 +202,22 @@ function main() {
     if (typeof entry.reason !== "string" || entry.reason.trim() === "") {
       failures.push(`exempt ${label}: без reason — исключение без причины не считается`);
     }
+    if (!DATE_RE.test(entry.reviewed ?? "")) {
+      failures.push(`exempt ${label}: reviewed должен быть YYYY-MM-DD`);
+    } else {
+      const age = (Date.now() - new Date(`${entry.reviewed}T00:00:00Z`).getTime()) / 86_400_000;
+      if (age > MAX_AGE_DAYS) {
+        console.log(
+          `prove-checks: ! exempt ${label}: обзор не подтверждали ${Math.floor(age)} дней (${entry.reviewed})`,
+        );
+      }
+    }
     if (!DATE_RE.test(entry.expires ?? "")) {
       failures.push(`exempt ${label}: expires должен быть YYYY-MM-DD`);
+    } else if (isPast(entry.expires)) {
+      failures.push(
+        `exempt ${label}: срок истёк ${entry.expires} — автоматизируйте рецепт или продлите осознанно`,
+      );
     }
   }
 

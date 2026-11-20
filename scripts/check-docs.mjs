@@ -18,6 +18,20 @@ const PROVEN = path.join(ROOT, "docs/quality/proven-checks.json");
 const START = "<!-- gate-steps:start -->";
 const END = "<!-- gate-steps:end -->";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const FRESH_DAYS = 180;
+const DAY_MS = 86_400_000;
+
+/** Доказательство или исключение не пересматривали дольше FRESH_DAYS — warn. */
+function isStale(value) {
+  return Date.now() - Date.parse(`${value}T00:00:00Z`) > FRESH_DAYS * DAY_MS;
+}
+
+/** Дата в прошлом (вчера и раньше): `expires` — жёсткий срок, а не пожелание. */
+function isPast(value) {
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Date.parse(`${value}T00:00:00Z`) < today;
+}
 
 function reportOk(message) {
   console.log(`docs-sync: ok — ${message}`);
@@ -54,7 +68,7 @@ function parseDoc(text, errors) {
 }
 
 /** Доказательства: записи в proven-checks.json и явные исключения с датой. */
-function readProofs(errors) {
+function readProofs(errors, warns) {
   const empty = { proven: new Map(), exempt: new Map() };
   if (!fs.existsSync(PROVEN)) {
     errors.push("docs/quality/proven-checks.json отсутствует — доказательств нет ни у одного шага");
@@ -67,7 +81,9 @@ function readProofs(errors) {
     errors.push(`proven-checks.json не парсится: ${error.message}`);
     return empty;
   }
-  // Поддерживаем и старый массив записей, и контракт { steps, exempt }.
+  // Схема — осознанный вариант контракта harness: { steps, exempt } вместо
+  // { checks, kind }. Те же два класса (исполняемое нарушение / исключение),
+  // но данные проекта уже были в этой форме; почему — docs/quality/gates.md.
   const proofs = Array.isArray(parsed) ? parsed : parsed?.steps;
   if (!Array.isArray(proofs)) {
     errors.push("proven-checks.json: ожидается массив записей или объект { steps, exempt }");
@@ -83,6 +99,10 @@ function readProofs(errors) {
     }
     if (!DATE_RE.test(proof.reviewed ?? "")) {
       errors.push(`proven-checks.json: у \`${proof.step}\` reviewed должен быть YYYY-MM-DD`);
+    } else if (isStale(proof.reviewed)) {
+      warns.push(
+        `\`${proof.step}\`: доказательство не пересматривали ${FRESH_DAYS}+ дней (${proof.reviewed})`,
+      );
     }
     if (proven.has(proof.step)) {
       errors.push(`proven-checks.json: шаг \`${proof.step}\` доказан дважды`);
@@ -101,9 +121,17 @@ function readProofs(errors) {
     }
     if (!DATE_RE.test(entry.reviewed ?? "")) {
       errors.push(`proven-checks.json: exempt \`${entry.step}\`: reviewed должен быть YYYY-MM-DD`);
+    } else if (isStale(entry.reviewed)) {
+      warns.push(
+        `exempt \`${entry.step}\`: обзор старше ${FRESH_DAYS} дней (${entry.reviewed}) — подтвердите причину или автоматизируйте`,
+      );
     }
     if (!DATE_RE.test(entry.expires ?? "")) {
       errors.push(`proven-checks.json: exempt \`${entry.step}\`: expires должен быть YYYY-MM-DD`);
+    } else if (isPast(entry.expires)) {
+      errors.push(
+        `proven-checks.json: exempt \`${entry.step}\`: срок истёк ${entry.expires} — автоматизируйте рецепт или продлите осознанно`,
+      );
     }
     if (exempt.has(entry.step)) {
       errors.push(`proven-checks.json: \`${entry.step}\` в exempt дважды`);
@@ -123,7 +151,8 @@ function main() {
   const errors = [];
   const documented = parseDoc(fs.readFileSync(DOC, "utf8"), errors);
   const code = new Map(STEPS.map((step) => [step.name, step]));
-  const { proven, exempt } = readProofs(errors);
+  const warns = [];
+  const { proven, exempt } = readProofs(errors, warns);
 
   for (const [name, step] of code) {
     if (typeof step.ci !== "string" || step.ci.trim() === "") {
@@ -177,6 +206,7 @@ function main() {
     }
   }
 
+  for (const warn of warns) console.warn(`docs-sync: ! ${warn}`);
   if (errors.length) {
     for (const error of errors) reportFail(error);
     console.error(
@@ -185,7 +215,8 @@ function main() {
     process.exit(1);
   }
   reportOk(
-    `${code.size} шагов совпадают с картой; доказательства: ${proven.size} записей, ${exempt.size} exempt`,
+    `${code.size} шагов совпадают с картой; доказательства: ${proven.size} записей, ${exempt.size} exempt` +
+      (warns.length ? `, ${warns.length} warn` : ""),
   );
 }
 
