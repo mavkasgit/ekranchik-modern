@@ -79,11 +79,9 @@ describe("buildTestRows", () => {
   it("в режиме цветов даёт ровно одну строку на каждый цвет справочника", () => {
     const rows = buildTestRows(CATALOG, "colors", COLORS, seededRandom(7));
 
-    // Тестовая витрина показывает обе части справочника: `C31 — Светлая
-    // шампань`. У старых цветов кода нет — остаётся название.
-    expect(rows.map((row) => row.color)).toEqual(
-      COLORS.map((color) => (color.code ? `${color.code} — ${color.name}` : color.name)),
-    );
+    // Подпись витрины — код справочника; у старого цвета без кода — название.
+    // Полное название остаётся алиасом и показывается в подсказке.
+    expect(rows.map((row) => row.color)).toEqual(COLORS.map((color) => color.code ?? color.name));
     // Число строк задаёт справочник, а не зашитый список фронтенда.
     expect(rows).toHaveLength(COLORS.length);
   });

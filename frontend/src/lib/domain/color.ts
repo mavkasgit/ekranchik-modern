@@ -42,6 +42,21 @@ function normalizeColorCode(code: string): string {
 }
 
 /**
+ * Код в начале подписи: `C0 — Серебро`, `C31 Светлая шампань`. Код по канону
+ * стоит первым, остальное — алиас названия. Без границы по символу код `C3`
+ * перехватил бы `C31`, поэтому следующий символ не должен быть буквой/цифрой.
+ */
+function matchCodePrefix(colors: readonly ColorSpec[], codeKey: string): ColorSpec | undefined {
+  for (const color of colors) {
+    const key = color.code ? normalizeColorCode(color.code) : "";
+    if (!key || !codeKey.startsWith(key)) continue;
+    const next = codeKey[key.length];
+    if (next === undefined || !/[a-zа-я0-9]/i.test(next)) return color;
+  }
+  return undefined;
+}
+
+/**
  * Ближайший цвет справочника. Сначала точное совпадение по коду, затем по
  * названию. Затем — только уточнения записанного значения: «серебро матовое»
  * содержит «серебро» и остаётся серебром. Обратного вхождения нет намеренно:
@@ -56,6 +71,9 @@ function matchColor(colors: readonly ColorSpec[], written: string): ColorSpec | 
   if (codeKey) {
     const byCode = colors.find((color) => color.code && normalizeColorCode(color.code) === codeKey);
     if (byCode) return byCode;
+
+    const byPrefix = matchCodePrefix(colors, codeKey);
+    if (byPrefix) return byPrefix;
   }
 
   const key = normalizeColorName(written);
@@ -136,12 +154,14 @@ export function colorCode(colors: readonly ColorSpec[], written: string): string
 }
 
 /**
- * Подпись для витрины «Все цвета»: код и название вместе (`C31 — Светлая
- * шампань`), чтобы тестовая строка показывала обе части справочника. У старых
- * цветов кода нет — остаётся одно название.
+ * Подпись цвета в ячейке дашборда. Приоритет — код справочника: `C34` и
+ * «Тёмная бронза» из книги дают один и тот же `C34`, название остаётся
+ * алиасом для поиска и уходит в подсказку. У старого цвета без кода
+ * остаётся запись книги как есть: «серебро» не превращается в «сер».
  */
-export function colorOptionLabel(color: ColorSpec): string {
-  return color.code ? `${color.code} — ${color.name}` : color.name;
+export function colorCellText(colors: readonly ColorSpec[], written: string): string {
+  const code = matchColor(colors, written)?.code?.trim();
+  return code || written.trim() || "—";
 }
 
 function hexToRgba(hex: string, alpha: number): string {

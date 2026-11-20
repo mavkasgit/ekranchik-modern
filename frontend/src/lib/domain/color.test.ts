@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   colorAbbreviation,
+  colorCellText,
   colorCode,
   colorHex,
   colorName,
-  colorOptionLabel,
   type ColorSpec,
 } from "./color";
 
@@ -13,6 +13,7 @@ import {
 // привычные «сер»/«брз», у цветов веера — код. Порядок — сначала коды, затем названия.
 const CATALOG: ColorSpec[] = [
   { code: "C0", name: "Серебро", hex: "#C0C0C0", abbreviation: "C0" },
+  { code: "C35", name: "Чёрный", hex: "#1C1C1C", abbreviation: "C35" },
   { code: "C31", name: "Светлая шампань", hex: "#E8D5A3", abbreviation: "C31" },
   { code: "C32", name: "Тёмная шампань", hex: "#C9A24B", abbreviation: "C32" },
   { code: "C41", name: "Медь", hex: "#B87333", abbreviation: "C41" },
@@ -166,20 +167,28 @@ describe("код цвета", () => {
   });
 });
 
-describe("colorOptionLabel", () => {
-  it("в витрине «Все цвета» код и название идут вместе", () => {
-    expect(colorOptionLabel(CATALOG[1])).toBe("C31 — Светлая шампань");
-    expect(colorOptionLabel(CATALOG[2])).toBe("C32 — Тёмная шампань");
+describe("colorCellText", () => {
+  it("в ячейке дашборда код, а полное название — алиас", () => {
+    expect(colorCellText(CATALOG, "C44")).toBe("C44");
+    expect(colorCellText(CATALOG, "\u042144")).toBe("C44");
+    expect(colorCellText(CATALOG, "Тёмная медь")).toBe("C44");
+    expect(colorCellText(CATALOG, "C44 — Тёмная медь")).toBe("C44");
   });
 
-  it("у цвета без кода остаётся одно название", () => {
-    expect(colorOptionLabel(CATALOG[8])).toBe("серебро");
-    expect(colorOptionLabel(CATALOG[9])).toBe("бронза");
+  it("код в подписи важнее совпадения по старому названию", () => {
+    expect(colorCellText(CATALOG, "C0 — Серебро")).toBe("C0");
+    expect(colorCellText(CATALOG, "C35 — Чёрный")).toBe("C35");
+    expect(colorCellText(CATALOG, "C41 — Медь")).toBe("C41");
   });
 
-  it("подпись витрины по-прежнему находится справочником: плашка и hex цветные", () => {
-    const label = colorOptionLabel(CATALOG[1]);
+  it("у старого цвета без кода остаётся запись книги, а не аббревиатура", () => {
+    expect(colorCellText(CATALOG, "серебро")).toBe("серебро");
+    expect(colorCellText(CATALOG, "шампань")).toBe("шампань");
+  });
 
-    expect(colorHex(CATALOG, label)).toBe("#E8D5A3");
+  it("неизвестный цвет и пустая ячейка не теряют текст", () => {
+    expect(colorCellText(CATALOG, "RAL 9016")).toBe("RAL 9016");
+    expect(colorCellText(CATALOG, "   ")).toBe("—");
+    expect(colorCellText([], "C32")).toBe("C32");
   });
 });

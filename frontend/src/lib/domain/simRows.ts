@@ -4,7 +4,7 @@
 // «Фото» у такой строки — обычное дело. Номер подвеса и время ставит прогон,
 // когда подвес встаёт на линию.
 
-import { colorOptionLabel, type ColorSpec } from "@/lib/domain/color";
+import { type ColorSpec } from "@/lib/domain/color";
 import { formatLocalized } from "@/lib/domain/time";
 import type { HangerData } from "@/types/dashboard";
 import type { Profile } from "@/types/profile";
@@ -85,9 +85,10 @@ export function buildTestRows(
   if (mode === "colors") {
     return colors.map((color, index) => {
       const profile = ordered[index % ordered.length];
-      // В тестовой витрине показываем обе части справочника: код и название.
-      // Боевая строка книги остаётся как записана — подмены там нет.
-      return toRow(profile, colorOptionLabel(color), index + 1, now);
+      // В витрине подпись — код справочника: название остаётся алиасом для
+      // поиска и уходит в подсказку. У старого цвета без кода — название.
+      // Боевая строка книги остаётся как записана.
+      return toRow(profile, color.code?.trim() || color.name, index + 1, now);
     });
   }
 

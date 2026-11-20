@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
-import { colorName } from "../../frontend/src/lib/domain/color";
+import { colorCellText, type ColorSpec } from "../../frontend/src/lib/domain/color";
 
 const BASE_URL = process.env.E2E_BASE_URL || "http://127.0.0.1:5173";
 const API_URL = process.env.E2E_API_URL || `${BASE_URL}/api`;
@@ -58,6 +58,29 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Справочник цветов из API: в ячейке дашборда стоит код, а книга может писать
+ * полное название, поэтому ожидаемый текст вычисляется тем же правилом, что и
+ * на панели.
+ */
+async function colorCatalog(page: Page): Promise<ColorSpec[]> {
+  const response = await page.request.get(`${API_URL}/colors`);
+  if (!response.ok()) return [];
+
+  const rows = (await response.json()) as Array<{
+    code: string | null;
+    name: string;
+    hex: string;
+    abbreviation: string | null;
+  }>;
+  return rows.map((row) => ({
+    code: row.code,
+    name: row.name,
+    hex: row.hex,
+    abbreviation: row.abbreviation ?? "",
+  }));
+}
+
 /** Ожидаемый текст ячейки профиля: плюсы книги на экране разделяются пробелом. */
 function profileCellText(profile: string): RegExp | string {
   const trimmed = profile?.trim() ?? "";
@@ -111,6 +134,7 @@ test.describe("OPC UA Hanger Realtime Live Demo", () => {
       .not.toBeNull();
 
     const pass = (await matchedPass(page, hangerNumber))!;
+    const colors = await colorCatalog(page);
 
     await page.goto(`${BASE_URL}/`);
     await leaveKioskMode(page);
@@ -131,7 +155,9 @@ test.describe("OPC UA Hanger Realtime Live Demo", () => {
     await expect(unloadRow.locator('[data-column="profile"]')).toHaveText(
       profileCellText(pass.profile),
     );
-    await expect(unloadRow.locator('[data-column="color"]')).toHaveText(colorName(pass.color));
+    await expect(unloadRow.locator('[data-column="color"]')).toHaveText(
+      colorCellText(colors, pass.color),
+    );
 
     console.log(`🎉 Подвес ${hangerNumber} выгружен и показан на дашборде`);
 
