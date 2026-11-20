@@ -1,4 +1,4 @@
-# Единый файл тулчейна: его читают и разработчик, и CI (см. docs/quality-gates.md).
+# Единый файл тулчейна: его читают и разработчик, и CI (см. docs/quality/gates.md).
 # Версии CLI и рантаймов меняются только здесь; фактическое состояние — mise.lock.
 # JS-зависимости (oxlint, oxfmt, knip, commitlint, playwright) — в package.json,
 # Python-зависимости — в backend/requirements.txt. mise отвечает за интерпретатор
@@ -75,5 +75,5 @@ description = "Безопасные автофиксы hk; после — пер
 run = "hk fix --all"
 
 [tasks.hooks]
-description = "Один раз на клон: git-хуки pre-commit/pre-push/commit-msg"
-run = "hk install"
+description = "Один раз на клон: core.hooksPath=.githooks (pre-commit/pre-push/commit-msg)"
+run = "git config core.hooksPath .githooks"

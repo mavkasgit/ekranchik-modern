@@ -1,0 +1,220 @@
+{
+  "reviewed": "2026-11-20",
+  "tools": [
+    {
+      "name": "hk",
+      "version": "2.12.0",
+      "pinned_in": "mise.toml",
+      "runs_in": [
+        "ruff",
+        "oxfmt",
+        "oxlint",
+        "betterleaks",
+        "shellcheck",
+        "hadolint",
+        "jactionlint",
+        "knip",
+        "tsc",
+        "modern-web",
+        "reactuse-diff",
+        "pre-commit",
+        "pre-push",
+        "commit-msg",
+        "ci"
+      ],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://github.com/jdx/hk",
+      "why": "запускает статические шаги hk.pkl: один рецепт для локального гейта, pre-commit, pre-push и CI",
+      "limitations": "версия закреплена дважды — в mise.toml и в amends-URL hk.pkl; расхождение ловит review, а не registry-check. В .githooks/ хуки делегируют в `hk run <hook> --from-hook`."
+    },
+    {
+      "name": "ruff",
+      "version": "0.17.4",
+      "pinned_in": "mise.toml",
+      "runs_in": ["ruff", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://docs.astral.sh/ruff/",
+      "why": "линтер Python шага ruff: E4/E7/E9/F/I/UP/B/C4/SIM по backend и scripts",
+      "limitations": "формат проверяется отдельным вызовом через hk; правила и исключения — backend/ruff.toml и ruff.toml"
+    },
+    {
+      "name": "oxfmt",
+      "version": "0.78.0",
+      "pinned_in": "mise.toml",
+      "runs_in": ["oxfmt", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://oxc.rs/docs/guide/usage/formatter",
+      "why": "формат js/ts/markdown/yaml/toml/json/html/css: расхождение не доходит до review",
+      "limitations": "гейт только читает; правки — `npm run fix`"
+    },
+    {
+      "name": "oxlint",
+      "version": "1.93.0",
+      "pinned_in": "mise.toml",
+      "runs_in": ["oxlint", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://oxc.rs/docs/guide/usage/linter",
+      "why": "категория correctness и no-unused-vars в JS/TS до запуска тестов",
+      "limitations": "правила React Compiler отключены точечно в .oxlintrc.json до отдельного рефакторинга"
+    },
+    {
+      "name": "betterleaks",
+      "version": "1.10.0",
+      "pinned_in": "mise.toml",
+      "runs_in": ["betterleaks", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://github.com/betterleaks/betterleaks",
+      "why": "закоммиченный секрет: ключ, токен или пароль в отслеживаемых файлах",
+      "limitations": "ловит только известные форматы секретов; правила обновляются сканером, а не репозиторием"
+    },
+    {
+      "name": "shellcheck",
+      "version": "0.11.0",
+      "pinned_in": "mise.toml",
+      "runs_in": ["shellcheck", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://www.shellcheck.net/",
+      "why": "ошибки и переносимость shell-скриптов",
+      "limitations": "в репозитории нет собственных *.sh: шаг ловит только будущие скрипты"
+    },
+    {
+      "name": "hadolint",
+      "version": "2.15.1",
+      "pinned_in": "mise.toml",
+      "runs_in": ["hadolint", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://github.com/hadolint/hadolint",
+      "why": "практики Dockerfile в backend/ и frontend/",
+      "limitations": "DL3008 и DL3015 скрыты до ревизии 2027-05-01 (.hadolint.yaml)"
+    },
+    {
+      "name": "jactionlint",
+      "version": "2.5.0",
+      "pinned_in": "mise.toml",
+      "runs_in": ["jactionlint", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://github.com/jdx/jactionlint",
+      "why": "корректность, security и policy GitHub Actions, включая dependabot-cooldown",
+      "limitations": "8 правил release-full-installer.yml скрыты до ревизии 2027-05-01 (.github/jactionlint.yaml)"
+    },
+    {
+      "name": "knip",
+      "version": "^6.44.2",
+      "pinned_in": "package.json",
+      "runs_in": ["knip", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://knip.dev/",
+      "why": "неиспользуемые файлы, экспорты и dev-зависимости JS/TS",
+      "limitations": "сгенерированные shadcn/ui-компоненты исключены в knip.json; версия объявлена диапазоном ^, реестр сверяет объявленный пин, а не node_modules"
+    },
+    {
+      "name": "typescript",
+      "version": "~7.0.2",
+      "pinned_in": "frontend/package.json",
+      "runs_in": ["tsc", "pre-push"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://www.typescriptlang.org/",
+      "why": "tsc --noEmit в strict-режиме: ошибка типов во фронтенде до сборки",
+      "limitations": "версия объявлена тильдой ~; реестр сверяет объявленный пин, а не установленный node_modules"
+    },
+    {
+      "name": "commitlint",
+      "version": "^21.2.4",
+      "pinned_in": "package.json",
+      "pinned_as": "@commitlint/cli",
+      "runs_in": ["commit-msg", "ci"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://commitlint.js.org/",
+      "why": "Conventional Commits в хуке commit-msg и в CI: формат сообщения проверяется до появления коммита",
+      "limitations": "обходится `git commit --no-verify`; авто-мержи хук не проходят, источник правды — CI. Версия — диапазон ^, конфиг — @commitlint/config-conventional"
+    },
+    {
+      "name": "playwright",
+      "version": "^1.65.0",
+      "pinned_in": "package.json",
+      "pinned_as": "@playwright/test",
+      "runs_in": ["e2e-playwright"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://playwright.dev/",
+      "why": "e2e-шаг: пользовательские пути в браузере на живом стенде",
+      "limitations": "шаг печатается как missing без стенда :8013/:5173 и Chrome с CDP :9222"
+    },
+    {
+      "name": "pytest",
+      "version": "9.2.0",
+      "pinned_in": "backend/requirements.txt",
+      "pinned_pattern": "^pytest==([^\\s]+)$",
+      "runs_in": ["backend-tests"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://docs.pytest.org/",
+      "why": "backend-тесты шага backend-tests: регрессия API, БД и сервисов",
+      "limitations": "ставится в backend/.venv из requirements.txt, а не через mise; Python-версия пинуется отдельно (backend/Dockerfile)"
+    },
+    {
+      "name": "vitest",
+      "version": "^5.1.0",
+      "pinned_in": "frontend/package.json",
+      "runs_in": ["frontend-unit"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://vitest.dev/",
+      "why": "frontend-unit: регрессия компонентов и хуков без браузера",
+      "limitations": "версия — диапазон ^; запуск через frontend/package.json"
+    },
+    {
+      "name": "vite",
+      "version": "^8.3.6",
+      "pinned_in": "frontend/package.json",
+      "runs_in": ["frontend-build"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://vite.dev/",
+      "why": "frontend-build: production-сборка падает на битом импорте или конфиге",
+      "limitations": "типы проверяет отдельный шаг tsc; версия — диапазон ^"
+    },
+    {
+      "name": "node",
+      "version": "26.13.0",
+      "pinned_in": "mise.toml",
+      "runs_in": [
+        "docs-sync",
+        "registry-check",
+        "backend-tests",
+        "frontend-unit",
+        "frontend-build",
+        "prove-checks",
+        "ci"
+      ],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://nodejs.org/",
+      "why": "рантайм гейта и npm-скриптов: gate.mjs, check-docs.mjs, check-registry.mjs, prove-checks.mjs, run-python.js",
+      "limitations": "npm наследует версию от node и отдельно не пинуется"
+    },
+    {
+      "name": "python",
+      "version": "3.14",
+      "pinned_in": "backend/Dockerfile",
+      "pinned_pattern": "^FROM python:([0-9.]+)-slim$",
+      "runs_in": ["backend-tests"],
+      "blocking": true,
+      "reviewed": "2026-11-20",
+      "source": "https://www.python.org/",
+      "why": "интерпретатор backend: pytest, uvicorn и alembic работают на Python 3.14",
+      "limitations": "dev-venv создаётся системным Python 3.14 (scripts/setup-python.js, TARGET_PYTHON); пин в Dockerfile — продовый образ, setup-python.js должен обновляться вместе с ним"
+    }
+  ]
+}

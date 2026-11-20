@@ -1,0 +1,12 @@
+#!/bin/sh
+# pre-commit: те же статические шаги hk, что и раньше, но хук версионируется
+# в .githooks и включается `mise run hooks` (core.hooksPath).
+# `hk run pre-commit` работает по staged-файлам; правки — только из hk.pkl.
+if [ "${HK:-1}" = "0" ]; then
+  exit 0
+fi
+
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec -- hk run pre-commit --from-hook "$@"
+fi
+exec hk run pre-commit --from-hook "$@"

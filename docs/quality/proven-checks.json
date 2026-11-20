@@ -6,39 +6,27 @@
       "apply": [
         {
           "replace": {
-            "path": "docs/quality-gates.md",
-            "find": "| `oxlint` | fast |",
-            "replace": "| `oxlint-broken` | fast |"
+            "path": "docs/quality/gates.md",
+            "find": "| `oxlint`",
+            "replace": "| `oxlint-broken`"
           }
         }
       ],
-      "reviewed": "2026-11-03"
+      "reviewed": "2026-11-20"
     },
     {
-      "step": "betterleaks",
-      "violation": "ключ AWS в конце VERSION (ключ генерируется на месте, в репозитории его нет)",
+      "step": "registry-check",
+      "violation": "в docs/quality/tools.json поставить ruff версию 0.0.0: она расходится с пином mise.toml",
       "apply": [
         {
-          "append": {
-            "path": "VERSION",
-            "content": "\naws_secret_access_key = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n"
+          "replace": {
+            "path": "docs/quality/tools.json",
+            "find": "\"version\": \"0.17.4\"",
+            "replace": "\"version\": \"0.0.0\""
           }
         }
       ],
-      "reviewed": "2026-11-03"
-    },
-    {
-      "step": "oxfmt",
-      "violation": "неформатированная markdown-таблица в конце GLOSSARY.md",
-      "apply": [
-        {
-          "append": {
-            "path": "GLOSSARY.md",
-            "content": "\n|a|b|\n|-|-|\n|1|2|\n"
-          }
-        }
-      ],
-      "reviewed": "2026-11-03"
+      "reviewed": "2026-11-20"
     },
     {
       "step": "ruff",
@@ -51,7 +39,72 @@
           }
         }
       ],
-      "reviewed": "2026-11-03"
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "oxfmt",
+      "violation": "неформатированная markdown-таблица в конце GLOSSARY.md",
+      "apply": [
+        {
+          "append": {
+            "path": "GLOSSARY.md",
+            "content": "\n|a|b|\n|-|-|\n|1|2|\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "oxlint",
+      "violation": "новый файл frontend/src/__prove_oxlint.ts с неиспользуемой переменной: no-unused-vars имеет уровень error",
+      "apply": [
+        {
+          "write": {
+            "path": "frontend/src/__prove_oxlint.ts",
+            "content": "const unusedProofValue = 1;\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "betterleaks",
+      "violation": "синтетический (ненастоящий) ключ AWS в конце VERSION: сканер обязан его найти",
+      "apply": [
+        {
+          "append": {
+            "path": "VERSION",
+            "content": "\naws_secret_access_key = \"kR7vQ2mN9pX4sT8wY3zA6bC1dE5fG0hJ2kL4mN6p\"\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "shellcheck",
+      "violation": "временный prove-shellcheck.sh с непроцитированной переменной ($1 без кавычек): SC2086",
+      "apply": [
+        {
+          "write": {
+            "path": "prove-shellcheck.sh",
+            "content": "#!/bin/sh\necho $1\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "hadolint",
+      "violation": "временный Dockerfile.prove с непромеченным базовым образом (FROM ubuntu без версии): DL3006",
+      "apply": [
+        {
+          "write": {
+            "path": "Dockerfile.prove",
+            "content": "FROM ubuntu\nRUN echo ok\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
     },
     {
       "step": "jactionlint",
@@ -64,7 +117,20 @@
           }
         }
       ],
-      "reviewed": "2026-11-03"
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "knip",
+      "violation": "новый файл frontend/src/__prove_knip.ts с экспортом, который нигде не импортируется: неиспользуемый файл",
+      "apply": [
+        {
+          "write": {
+            "path": "frontend/src/__prove_knip.ts",
+            "content": "export const proveKnipUnusedExport = 1;\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
     },
     {
       "step": "tsc",
@@ -77,67 +143,72 @@
           }
         }
       ],
-      "reviewed": "2026-11-03"
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "reactuse-diff",
+      "violation": "новый файл frontend/src/__prove_reactuse.ts с ручным IntersectionObserver вместо useIntersectionObserver",
+      "apply": [
+        {
+          "write": {
+            "path": "frontend/src/__prove_reactuse.ts",
+            "content": "export function proveReactuse() {\n  return new IntersectionObserver(() => undefined);\n}\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "backend-tests",
+      "violation": "временный backend/tests/test_prove_failure.py с assert False: pytest обязан упасть (in-memory sqlite, стенд не нужен)",
+      "apply": [
+        {
+          "write": {
+            "path": "backend/tests/test_prove_failure.py",
+            "content": "def test_prove_failure():\n    assert False, \"prove-checks: намеренное нарушение\"\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "frontend-unit",
+      "violation": "временный frontend/src/__prove_unit.test.ts с заведомо ложным ожиданием: vitest обязан упасть",
+      "apply": [
+        {
+          "write": {
+            "path": "frontend/src/__prove_unit.test.ts",
+            "content": "import { expect, test } from \"vitest\";\n\ntest(\"prove-checks violation\", () => {\n  expect(1).toBe(2);\n});\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
+    },
+    {
+      "step": "frontend-build",
+      "violation": "entry-модуль в frontend/index.html ссылается на несуществующий /src/__prove_missing.tsx: vite build падает",
+      "apply": [
+        {
+          "replace": {
+            "path": "frontend/index.html",
+            "find": "<script type=\"module\" src=\"/src/main.tsx\"></script>",
+            "replace": "<script type=\"module\" src=\"/src/__prove_missing.tsx\"></script>"
+          }
+        }
+      ],
+      "reviewed": "2026-11-20"
     }
   ],
   "exempt": [
     {
-      "step": "oxlint",
-      "reason": "рецепт — файл с нарушением correctness в frontend/src; исполнителя prove-checks.mjs в проекте ещё нет, шаг внесён вместе с гейтом",
-      "reviewed": "2026-11-20",
-      "expires": "2027-05-01"
-    },
-    {
-      "step": "shellcheck",
-      "reason": "в репозитории нет собственных *.sh: шаг ловит только будущие, нарушение пишется временным файлом; исполнителя нет",
-      "reviewed": "2026-11-20",
-      "expires": "2027-05-01"
-    },
-    {
-      "step": "hadolint",
-      "reason": "Dockerfile живёт в релизном пайплайне, временный Dockerfile* надо подбирать под контекст сборки; исполнителя нет",
-      "reviewed": "2026-11-20",
-      "expires": "2027-05-01"
-    },
-    {
-      "step": "knip",
-      "reason": "рецепт — неиспользуемый файл в frontend/src; исполнителя prove-checks.mjs нет",
-      "reviewed": "2026-11-20",
-      "expires": "2027-05-01"
-    },
-    {
       "step": "modern-web",
-      "reason": "нужен сетевой сканер modern-web-guidance@latest: красный ход невоспроизводим офлайн, проверяется вручную",
-      "reviewed": "2026-11-20",
-      "expires": "2027-05-01"
-    },
-    {
-      "step": "reactuse-diff",
-      "reason": "нужен дифф с origin/main: нарушение вводится правкой отслеживаемого файла, исполнителя нет",
-      "reviewed": "2026-11-20",
-      "expires": "2027-05-01"
-    },
-    {
-      "step": "backend-tests",
-      "reason": "363 теста: красный ход — заведомо падающий тест, но прогон на грязном дереве недопустим; исполнителя нет",
-      "reviewed": "2026-11-20",
-      "expires": "2027-05-01"
-    },
-    {
-      "step": "frontend-unit",
-      "reason": "красный ход — заведомо падающий vitest-файл в frontend/src; исполнителя prove-checks.mjs нет",
-      "reviewed": "2026-11-20",
-      "expires": "2027-05-01"
-    },
-    {
-      "step": "frontend-build",
-      "reason": "нарушение — ссылка entry-модуля на несуществующий файл в frontend/index.html; исполнителя нет",
+      "reason": "сканер modern-web-guidance@latest запускается через npx и требует сети; доказательство станет возможным, когда сканер появится в mise.toml с пином и офлайн-кэшем (или отдельным сетевым шагом в CI)",
       "reviewed": "2026-11-20",
       "expires": "2027-05-01"
     },
     {
       "step": "e2e-playwright",
-      "reason": "нужен живой стенд (:8013/:5173) и Chrome с CDP :9222: доказательство — прогон на отдельном стенде",
+      "reason": "нужен живой стенд :8013/:5173 и Chrome с CDP :9222; доказательство станет возможным, когда в workspace появится слот heavy, который сам поднимает `npm run dev:sim:fast` и Chrome до шага",
       "reviewed": "2026-11-20",
       "expires": "2027-05-01"
     }
