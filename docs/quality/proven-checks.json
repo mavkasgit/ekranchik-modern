@@ -1,0 +1,145 @@
+{
+  "steps": [
+    {
+      "step": "docs-sync",
+      "violation": "переименовать шаг oxlint только в карте защит",
+      "apply": [
+        {
+          "replace": {
+            "path": "docs/quality-gates.md",
+            "find": "| `oxlint` | fast |",
+            "replace": "| `oxlint-broken` | fast |"
+          }
+        }
+      ],
+      "reviewed": "2026-11-03"
+    },
+    {
+      "step": "betterleaks",
+      "violation": "ключ AWS в конце VERSION (ключ генерируется на месте, в репозитории его нет)",
+      "apply": [
+        {
+          "append": {
+            "path": "VERSION",
+            "content": "\naws_secret_access_key = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-03"
+    },
+    {
+      "step": "oxfmt",
+      "violation": "неформатированная markdown-таблица в конце CONTEXT.md",
+      "apply": [
+        {
+          "append": {
+            "path": "CONTEXT.md",
+            "content": "\n|a|b|\n|-|-|\n|1|2|\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-03"
+    },
+    {
+      "step": "ruff",
+      "violation": "неиспользуемый импорт в конце backend/app/main.py",
+      "apply": [
+        {
+          "append": {
+            "path": "backend/app/main.py",
+            "content": "\nimport os\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-03"
+    },
+    {
+      "step": "jactionlint",
+      "violation": "неизвестный ключ workflow в конце .github/workflows/check.yml",
+      "apply": [
+        {
+          "append": {
+            "path": ".github/workflows/check.yml",
+            "content": "\nbogus-key: true\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-03"
+    },
+    {
+      "step": "tsc",
+      "violation": "ошибка типа в конце frontend/src/main.tsx",
+      "apply": [
+        {
+          "append": {
+            "path": "frontend/src/main.tsx",
+            "content": "\nconst broken: number = \"no\";\nconsole.log(broken);\n"
+          }
+        }
+      ],
+      "reviewed": "2026-11-03"
+    }
+  ],
+  "exempt": [
+    {
+      "step": "oxlint",
+      "reason": "рецепт — файл с нарушением correctness в frontend/src; исполнителя prove-checks.mjs в проекте ещё нет, шаг внесён вместе с гейтом",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "shellcheck",
+      "reason": "в репозитории нет собственных *.sh: шаг ловит только будущие, нарушение пишется временным файлом; исполнителя нет",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "hadolint",
+      "reason": "Dockerfile живёт в релизном пайплайне, временный Dockerfile* надо подбирать под контекст сборки; исполнителя нет",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "knip",
+      "reason": "рецепт — неиспользуемый файл в frontend/src; исполнителя prove-checks.mjs нет",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "modern-web",
+      "reason": "нужен сетевой сканер modern-web-guidance@latest: красный ход невоспроизводим офлайн, проверяется вручную",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "reactuse-diff",
+      "reason": "нужен дифф с origin/main: нарушение вводится правкой отслеживаемого файла, исполнителя нет",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "backend-tests",
+      "reason": "363 теста: красный ход — заведомо падающий тест, но прогон на грязном дереве недопустим; исполнителя нет",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "frontend-unit",
+      "reason": "красный ход — заведомо падающий vitest-файл в frontend/src; исполнителя prove-checks.mjs нет",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "frontend-build",
+      "reason": "нарушение — ссылка entry-модуля на несуществующий файл в frontend/index.html; исполнителя нет",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    },
+    {
+      "step": "e2e-playwright",
+      "reason": "нужен живой стенд (:8013/:5173) и Chrome с CDP :9222: доказательство — прогон на отдельном стенде",
+      "reviewed": "2026-11-20",
+      "expires": "2027-05-01"
+    }
+  ]
+}

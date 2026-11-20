@@ -31,7 +31,8 @@ mise trust && mise install   # один раз на клон: инструмен
 mise run install             # npm ci + frontend ci + backend/.venv
 mise run dev                 # локальный стенд :8013 + :5173
 mise run test                # pytest + vitest
-mise run check               # полный гейт, ровно как в CI
+mise run check               # быстрый ярус гейта (алиас npm run gate:fast)
+npm run gate                 # полный гейт; ровно это запускает CI
 ```
 
 Проверка изменения — бэкенд:
@@ -56,12 +57,13 @@ E2E (`npm run test:e2e`) требует запуска фронтенда и Chr
 ## Проверки перед сдачей
 
 ```bash
-mise run check     # полный гейт; то же запускает CI (.github/workflows/check.yml)
-mise run fix       # безопасные автофиксы, затем перечитать дифф
+npm run gate       # полный гейт; то же запускает CI (.github/workflows/check.yml)
+npm run gate:fast  # быстрый ярус: статика по репозиторию, офлайн, ≤ 60 с
+npm run fix        # безопасные автофиксы, затем перечитать дифф
 mise run hooks     # один раз на клон: git-хуки pre-commit/pre-push/commit-msg
 ```
 
-`mise run check` должен быть зелёным до конца работы — это условие «изменение
+`npm run gate` должен быть зелёным до конца работы — это условие «изменение
 готово», а не пожелание. Детали, бейзлайны и исключения — в
 [`docs/quality-gates.md`](docs/quality-gates.md).
 
@@ -85,7 +87,7 @@ playbook — [`docs/dependabot.md`](docs/dependabot.md), коротко:
 - связанные пакеты (react + типы, vite + plugin-react, pandas + dateutil,
   pytest + pytest-asyncio, pydantic + pydantic-settings, typescript + tsconfig,
   tailwind + postcss) обновляются одной веткой, а не по одному PR;
-- после обновлений локально: `mise run check`, backend pytest, frontend
+- после обновлений локально: `npm run gate`, backend pytest, frontend
   `npx vitest run` и `npm run build`;
 - CI смотреть через `gh run watch <id> --exit-status`, а не «на глаз».
 

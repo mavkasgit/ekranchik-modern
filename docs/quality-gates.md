@@ -7,31 +7,87 @@
 ## Команды
 
 ```bash
-mise install       # поставить инструменты из mise.toml (та же версия, что в CI)
-mise run install   # npm ci + frontend ci + backend/.venv
-mise run hooks     # один раз на клон: поставить git-хуки hk
-mise run check     # все статические проверки — ровно это запускает CI
-mise run lint      # только линтеры/форматтеры (pre-commit-набор)
-mise run test      # backend pytest + frontend vitest
-mise run e2e       # Playwright (нужен запущенный стенд)
-mise run fix       # безопасные автофиксы (ruff, oxfmt, jactionlint); дифф перечитать
+mise install        # поставить инструменты из mise.toml (та же версия, что в CI)
+mise run install    # npm ci + frontend ci + backend/.venv
+mise run hooks      # один раз на клон: поставить git-хуки hk
+
+npm run gate:fast   # ярус fast: статика по всему репозиторию, офлайн (бюджет 60 с)
+npm run gate        # полный гейт: fast + pytest + vitest + vite build + ратчеты; ровно это запускает CI
+npm run gate:e2e    # полный гейт + Playwright; нужен живой стенд и Chrome с CDP :9222
+npm run doctor      # PATH, инструменты, docs-sync, чистота рабочего дерева
+npm run check:docs  # только сверка карты защит с шагами гейта
+npm run fix         # безопасные автофиксы (ruff, oxfmt, jactionlint); дифф перечитать
 ```
 
-`mise run check` — агрегатная команда (`hk check --all`). Другого «полного»
-способа нет: CI вызывает ровно её, поэтому хук и CI не расходятся.
+`npm run gate` — один вход: его вызывает CI, на него же смотрит агент перед
+ответом «готово». Быстрый ярус — отдельная команда `npm run gate:fast`; `gate`
+и `gate:e2e` накопительные. `mise run check` / `mise run gate` — тонкие алиасы
+этих команд, чтобы привычка не расходилась с контрактом.
 
 ## Три уровня
 
-| Уровень      | Когда                             | Что запускается                                                                                                     |
-| ------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `pre-commit` | `git commit`, только staged-файлы | ruff, oxfmt, oxlint, betterleaks, shellcheck, hadolint, jactionlint; форматтеры правят и докладывают файлы в индекс |
-| `pre-push`   | `git push`, весь проект           | те же проверки + knip + `tsc --noEmit`                                                                              |
-| CI           | push в `main`, PR, понедельник    | `mise run check`, `mise run test`, OSV-скан по расписанию                                                           |
+| Уровень | Команда             | Когда                         | Что запускается                                                                                        | Бюджет          |
+| ------- | ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------ | --------------- |
+| `fast`  | `npm run gate:fast` | быстрый цикл, `pre-push`      | ruff, oxfmt, oxlint, betterleaks, shellcheck, hadolint, jactionlint, knip, tsc, docs-sync — всё офлайн | ≤ 60 с          |
+| `gate`  | `npm run gate`      | CI на push/PR, перед «готово» | `fast` + modern-web, reactuse-diff, pytest, vitest, `vite build`                                       | минуты          |
+| `e2e`   | `npm run gate:e2e`  | вручную или ночью             | `gate` + Playwright (нужен стенд :8013/:5173 и Chrome CDP :9222)                                       | отдельный стенд |
 
-Хук — удобство, а не гейт: проверка, которая есть только в хуке, не enforced.
-`commitlint` вызывается и из `commit-msg`, и в CI: в PR проверяется весь
-диапазон `base..head`, при push в `main` — последний коммит. История до
-внедрения гейта (2026-11-03) не переписана и служит бейзлайном.
+Список статических шагов не дублируется в JS: хозяин — `hk.pkl`, а `gate.mjs`
+запускает `hk check --all --step <имя>`. Поэтому новый линтер добавляется в
+`hk.pkl`, а в `STEPS` — только строка с его именем.
+
+Без `mise install` инструменты (`hk`, `ruff`, `oxlint`…) не в PATH: шаг с
+ненайденным инструментом печатается как `missing` с подсказкой, а не падает
+«команда не найдена». `missing` — видимое «не проверено»; краснеет он только с
+`--strict`. В `gate` нет шагов, которым нужен инструмент, отсутствующий на
+чистой машине после `mise install`, кроме `modern-web` (сеть) и
+`reactuse-diff` (нужен `origin/main`).
+
+Хуки — удобство, а не гейт: `pre-commit` (`hk`) проверяет staged-файлы и умеет
+`--fix` — это допустимо как ускоритель обратной связи; гейт же только читает.
+`pre-push` гоняет набор `hk` целиком (включая `modern-web`/`reactuse-diff`),
+`commit-msg` — `commitlint`. CI вызывает `npm run gate`, а не свою копию
+шагов. `commitlint` в PR проверяет весь диапазон `base..head`, при push в
+`main` — последний коммит: история до внедрения гейта (2026-11-03) не
+переписана и служит бейзлайном.
+
+## Карта шагов
+
+Список между маркерами сверяется с `STEPS` из [`scripts/gate.mjs`](../scripts/gate.mjs)
+машинно (`npm run check:docs`, шаг `docs-sync`): имя, ярус, CI и колонка
+«Доказано падает». Добавили шаг — внесите строку; убрали — уберите.
+
+<!-- gate-steps:start -->
+
+| Шаг              | Ярус | Что ловит                                                        | CI                                                      | Блокирует                                                    | Доказано падает                                  |
+| ---------------- | ---- | ---------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| `docs-sync`      | fast | шаг в коде без строки в карте и наоборот, шаг без доказательства | check.yml                                               | да                                                           | `proven-checks.json#docs-sync`                   |
+| `ruff`           | fast | ошибки Python (E4/E7/E9/F/I/UP/B/C4/SIM)                         | check.yml                                               | да                                                           | `proven-checks.json#ruff`                        |
+| `oxfmt`          | fast | расхождение формата js/ts/md/yaml/toml/json/html/css             | check.yml                                               | да                                                           | `proven-checks.json#oxfmt`                       |
+| `oxlint`         | fast | категория correctness и `no-unused-vars` в JS/TS                 | check.yml                                               | да                                                           | exempt: рецепт и исполнитель — следующий заход   |
+| `betterleaks`    | fast | закоммиченный секрет                                             | check.yml                                               | да                                                           | `proven-checks.json#betterleaks`                 |
+| `shellcheck`     | fast | ошибки и переносимость shell                                     | check.yml                                               | да                                                           | exempt: в репозитории нет своих `*.sh`           |
+| `hadolint`       | fast | практики Dockerfile                                              | check.yml                                               | да                                                           | exempt: Dockerfile живёт в релизном пайплайне    |
+| `jactionlint`    | fast | корректность, security и policy GitHub Actions                   | check.yml                                               | да                                                           | `proven-checks.json#jactionlint`                 |
+| `knip`           | fast | неиспользуемые файлы, экспорты и dev-зависимости                 | check.yml                                               | да                                                           | exempt: рецепт и исполнитель — следующий заход   |
+| `tsc`            | fast | ошибка типов TypeScript (`--noEmit`, strict)                     | check.yml                                               | да                                                           | `proven-checks.json#tsc`                         |
+| `modern-web`     | gate | новый legacy-паттерн веб-платформы сверх бейзлайна               | check.yml                                               | да; `missing` (сканер/сеть недоступны) — только с `--strict` | exempt: нужен сетевой сканер                     |
+| `reactuse-diff`  | gate | новый ручной `matchMedia`/observers/clipboard вместо ReactUse    | check.yml                                               | да; `missing` (нет `origin/main`) — только с `--strict`      | exempt: нужен дифф с `origin/main`               |
+| `backend-tests`  | gate | регрессия backend (pytest, in-memory sqlite)                     | check.yml                                               | да                                                           | exempt: 363 теста, красный ход — следующий заход |
+| `frontend-unit`  | gate | регрессия frontend (vitest run)                                  | check.yml                                               | да                                                           | exempt: красный ход — следующий заход            |
+| `frontend-build` | gate | production-сборка (`vite build`, без повторного `tsc -b`)        | check.yml                                               | да                                                           | exempt: рецепт — порча entry в `index.html`      |
+| `e2e-playwright` | e2e  | сломан пользовательский путь (smoke, catalog, live_demo)         | missing: e2e требует живого стенда и Chrome с CDP :9222 | да, если стенд жив; `missing` — только с `--strict`          | exempt: нужен живой стенд                        |
+
+<!-- gate-steps:end -->
+
+Колонка «CI» — не проза: `docs-sync` сверяет её с полем `ci` в `STEPS`.
+`check.yml` значит «шаг живёт в CI-прогоне `npm run gate`»; `missing: причина`
+— шаг в CI намеренно не выполняется, пока нет стенда.
+
+Доказательства и исключения — [`docs/quality/proven-checks.json`](quality/proven-checks.json):
+`reviewed` — когда рецепт проверяли, `expires` — когда его надо пересмотреть.
+Рецепты в `steps` перенесены из раздела «Как проверить, что гейт падает»
+(проверены 2026-11-03) и будут автоматизированы `prove-checks.mjs`.
 
 ## Что проверяется
 
@@ -104,36 +160,37 @@ OSV-скан намеренно не блокирует PR: новая advisory 
 ## Как проверить, что гейт падает
 
 Проверка, которую не видели падающей, не работает. На чистом дереве
-`mise run check` даёт exit 0; по одному нарушению на каждый класс проверок —
-exit 1:
+`npm run gate:fast` даёт exit 0; по одному нарушению на каждый класс проверок —
+exit 1. Быстрее — только упавший шаг: `npm run gate:fast -- --only ruff`.
 
 ```bash
 # секрет: betterleaks (ключ генерируется на месте, в файле его нет)
 KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(24))')
 printf 'aws_secret_access_key = "%s"\n' "$KEY" >> VERSION
-mise run check          # betterleaks: leaks found: 1 → exit 1
+npm run gate:fast          # betterleaks: leaks found: 1 → exit 1
 git checkout -- VERSION
 
 # формат: oxfmt
 printf '\n|a|b|\n|-|-|\n|1|2|\n' >> CONTEXT.md
-mise run check          # oxfmt: format issues found → exit 1
+npm run gate:fast          # oxfmt: format issues found → exit 1
 git checkout -- CONTEXT.md
 
 # линтер: ruff
 printf 'import os\n' >> backend/app/main.py
-mise run check          # ruff: E402 → exit 1
+npm run gate:fast          # ruff: F401 → exit 1
 git checkout -- backend/app/main.py
 
 # workflow: jactionlint
 printf 'bogus-key: true\n' >> .github/workflows/check.yml
-mise run check          # jactionlint: unexpected key → exit 1
+npm run gate:fast          # jactionlint: unexpected key → exit 1
 git checkout -- .github/workflows/check.yml
 
 # типы: tsc
 printf 'const broken: number = "no";\nconsole.log(broken);\n' >> frontend/src/main.tsx
-mise run check          # tsc: Type 'string' is not assignable to type 'number' → exit 1
+npm run gate:fast          # tsc: Type 'string' is not assignable to type 'number' → exit 1
 git checkout -- frontend/src/main.tsx
 ```
 
-Эти пять нарушений проверены 2026-11-03; полный прогон каждого занимает
-около 20 секунд.
+Эти пять нарушений проверены 2026-11-03 и записаны в
+[`docs/quality/proven-checks.json`](quality/proven-checks.json) как рецепты
+`steps`; полный прогон каждого — десятки секунд.

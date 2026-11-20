@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreBinaries": ["oxlint", "start"],
+  "ignoreBinaries": ["oxlint", "start", "hk", "mise"],
   "workspaces": {
     ".": {
       "entry": ["scripts/*.js", "e2e/tests/*.spec.mts"]

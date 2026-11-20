@@ -1,5 +1,6 @@
-# Именной workflow: главный гейт dev-quality-gates — агрегатная проверка hk
-# (mise run check) + тесты. Дешёвый джоб падает раньше дорогих зависимостей.
+# Именной workflow: главный гейт — `npm run gate` (тот же вход, что локально):
+# статика hk + pytest + vitest + vite build одним вызовом. OSV-скан — по
+# расписанию, отдельным неблокирующим джобом.
 name: check
 
 on:
@@ -18,15 +19,15 @@ concurrency:
 
 jobs:
   gate:
-    name: quality gates (hk check --all)
+    name: quality gates (npm run gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0 # commitlint читает диапазон коммитов
+          fetch-depth: 0 # commitlint читает диапазон коммитов, reactuse-diff — origin/main
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5
       - name: project dependencies
         run: mise run install
@@ -43,24 +44,8 @@ jobs:
           else
             npx --no-install commitlint --last --verbose
           fi
-      - name: aggregate check
-        run: mise run check
-
-  tests:
-    name: backend pytest + frontend vitest
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5
-      - name: project dependencies
-        run: mise run install
-      - name: backend + frontend tests
-        run: mise run test
-      - name: frontend build
-        run: mise run build
+      - name: gate
+        run: npm run gate
 
   osv-scan:
     name: scheduled dependency scan (non-blocking, baseline 2026-11-03)

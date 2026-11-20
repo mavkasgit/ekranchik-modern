@@ -39,8 +39,16 @@ description = "Поставить node-зависимости и backend/.venv �
 run = ["npm ci", "npm --prefix frontend ci", "npm run setup:python"]
 
 [tasks.check]
-description = "Полный статический гейт; ровно это запускает CI (hk check --all)"
-run = "hk check --all"
+description = "Быстрый ярус гейта: статика по всему репозиторию, офлайн (алиас npm run gate:fast)"
+run = "npm run gate:fast"
+
+[tasks.gate]
+description = "Полный гейт: статика + pytest + vitest + vite build (алиас npm run gate)"
+run = "npm run gate"
+
+[tasks."gate:e2e"]
+description = "Полный гейт + Playwright; нужен стенд :8013/:5173 и Chrome с CDP :9222"
+run = "npm run gate:e2e"
 
 [tasks.dev]
 description = "Локальный стенд: бэкенд :8013 + фронтенд :5173"
