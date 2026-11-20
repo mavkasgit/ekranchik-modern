@@ -159,7 +159,11 @@ class CatalogService:
 
     async def get_profile(self, name: str, session: AsyncSession | None = None) -> ProfileResponse | None:
         """
-        Get a profile by exact name.
+        Карточка по имени: точное совпадение, затем числовой эквивалент кода.
+
+        Точное имя всегда побеждает. Если такого имени нет, чисто цифровой код
+        ищется по числу (``33`` → ``033``, тикет 0027). Когда на один числовой
+        ключ приходится несколько профилей, карточка не угадывает: ``None``.
 
         Args:
             name: Profile name
@@ -175,7 +179,18 @@ class CatalogService:
             profile = result.scalar_one_or_none()
             if profile:
                 return (await _responses_with_photo_versions([profile]))[0]
-            return None
+
+            numeric_key = self._numeric_profile_key(name)
+            if numeric_key is None:
+                return None
+
+            # Числовой ключ считается в Python: ведущие нули — не часть кода,
+            # и SQL по имени их не сравнит. Каталог — витрина на ~1000 строк.
+            result = await sess.execute(select(Profile))
+            matches = [p for p in result.scalars().all() if self._numeric_profile_key(p.name) == numeric_key]
+            if len(matches) != 1:
+                return None
+            return (await _responses_with_photo_versions([matches[0]]))[0]
 
         if session:
             return await _get(session)
@@ -249,16 +264,31 @@ class CatalogService:
         """Extract all digits from text."""
         return "".join(re.findall(r"\d", str(text)))
 
+    def _numeric_profile_key(self, name: str) -> str | None:
+        """Числовой ключ чисто цифрового кода: ``33`` и ``033`` — один код.
+
+        Ведущие нули не значимы только у имён из одних цифр (тикет 0027):
+        ``ЮП-033`` и ``033`` остаются разными кодами, поэтому ключа у первого
+        нет. Ключ — цифры без ведущих нулей; ``0`` и ``000`` тоже один код.
+        """
+        text = (name or "").strip()
+        if not text.isdigit():
+            return None
+        return text.lstrip("0") or "0"
+
     async def get_profiles_photos_batch(
         self, profile_names: list[str], session: AsyncSession | None = None
     ) -> dict[str, dict]:
         """
         Get photo URLs for multiple profiles at once (batch lookup).
 
-        Uses 3-stage matching like original app.py:
-        1. Exact match (case-insensitive)
-        2. Normalized match (Latin→Cyrillic)
-        3. Digits-only match (if unique)
+        Ступени поиска:
+        1. точное совпадение (без учёта регистра);
+        2. нормализованное (латиница → кириллица);
+        3. префикс + цифры;
+        4. числовой код без ведущих нулей (``33`` → ``033``) — только если на
+           числовой ключ приходится ровно один профиль во всём каталоге;
+        5. только цифры (последняя ступень, с той же защитой от неоднозначности).
 
         Args:
             profile_names: List of profile names from Excel
@@ -285,6 +315,7 @@ class CatalogService:
             exact_lookup = {}  # lowercase name → photo_info
             normalized_lookup = {}  # normalized name → photo_info
             prefix_digits_lookup = {}  # (prefix, digits) → photo_info
+            numeric_lookup = {}  # numeric key → [photo_info, ...]
             digits_lookup = {}  # digits → [photo_info, ...]
 
             # Track all profile names that exist in DB (with or without photos)
@@ -298,6 +329,14 @@ class CatalogService:
                 digits = self._extract_digits(profile.name)
                 if digits:
                     all_digits_count[digits] = all_digits_count.get(digits, 0) + 1
+
+            # Сколько профилей (с фото и без) приходится на числовой ключ.
+            # Два профиля «33» и «033» — неоднозначность: молча не выбираем.
+            all_numeric_count: dict[str, int] = {}
+            for profile in all_profiles:
+                key = self._numeric_profile_key(profile.name)
+                if key is not None:
+                    all_numeric_count[key] = all_numeric_count.get(key, 0) + 1
 
             versions = await asyncio.to_thread(
                 photo_file_versions,
@@ -329,6 +368,11 @@ class CatalogService:
                     digits = match.group(2)
                     prefix_digits_lookup[(prefix, digits)] = photo_info
 
+                # Числовой ключ (для кодов, которые в книге пишут без нулей)
+                key = self._numeric_profile_key(profile.name)
+                if key is not None:
+                    numeric_lookup.setdefault(key, []).append(photo_info)
+
                 # Digits only (for last resort fallback)
                 digits = self._extract_digits(profile.name)
                 if digits:
@@ -355,7 +399,17 @@ class CatalogService:
                     if (prefix, digits) in prefix_digits_lookup:
                         return prefix_digits_lookup[(prefix, digits)]
 
-                # Stage 4: Digits match (LAST RESORT - only if unique AND profile doesn't exist in DB)
+                # Stage 4: Number only — числовой код без ведущих нулей.
+                # В книге «33», в каталоге «033» (тикет 0027). Числовое
+                # совпадение допустимо, только если такой ключ во всём
+                # каталоге один: «33» и «033» вместе — неоднозначность.
+                key = self._numeric_profile_key(clean_name)
+                if key is not None and all_numeric_count.get(key) == 1:
+                    matches = numeric_lookup.get(key, [])
+                    if len(matches) == 1:
+                        return matches[0]
+
+                # Stage 5: Digits match (LAST RESORT - only if unique AND profile doesn't exist in DB)
                 # This prevents false positives: if ПТ80 exists in DB, don't match it to СРЛ80
                 # Also prevents "80" from matching when multiple profiles have "80" (ПТ80, СРЛ80, СРМ480, etc.)
                 digits = self._extract_digits(clean_name)
@@ -374,7 +428,7 @@ class CatalogService:
 
                 return None
 
-            # Match input names to profiles using 4-stage search
+            # Match input names to profiles using 5-stage search
             result_dict = {}
             for name in profile_names:
                 if not name or name == "—":

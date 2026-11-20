@@ -207,3 +207,109 @@ async def test_photo_lookup_keeps_fallback_for_other_tails(images_dir, db_sessio
     )
 
     assert photos["381 (ЮП-2900 окно)"]["name"] == "381"
+
+
+def _numeric_profile(images_dir, name: str, *, with_photo: bool = True) -> Profile:
+    """Профиль каталога; с фото — файл снимка тоже создаётся."""
+    if not with_photo:
+        return Profile(name=name)
+    (images_dir / f"{name}-thumb.jpg").write_bytes(b"thumb")
+    return Profile(
+        name=name,
+        photo_thumb=f"images/{name}-thumb.jpg",
+        photo_full=f"images/{name}.jpg",
+    )
+
+
+def test_numeric_key_only_for_plain_digits():
+    """Числовой ключ есть только у кода из одних цифр (тикет 0027)."""
+    assert catalog_service._numeric_profile_key("33") == "33"
+    assert catalog_service._numeric_profile_key("033") == "33"
+    assert catalog_service._numeric_profile_key(" 033 ") == "33"
+    assert catalog_service._numeric_profile_key("0") == "0"
+    assert catalog_service._numeric_profile_key("000") == "0"
+    assert catalog_service._numeric_profile_key("ЮП-033") is None
+    assert catalog_service._numeric_profile_key("033-ЮП") is None
+    assert catalog_service._numeric_profile_key("") is None
+
+
+async def test_photo_lookup_matches_numeric_code_with_leading_zeros(images_dir, db_session):
+    """Книга пишет `33`, каталог знает `033`: фото находится (тикет 0027)."""
+    db_session.add(_numeric_profile(images_dir, "033"))
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(["33"], session=db_session)
+
+    assert photos["33"]["name"] == "033"
+
+
+async def test_profile_card_matches_numeric_code_with_leading_zeros(images_dir, db_session):
+    """`GET /api/catalog/33` отдаёт карточку профиля `033`."""
+    db_session.add(_numeric_profile(images_dir, "033", with_photo=False))
+    await db_session.flush()
+
+    profile = await catalog_service.get_profile("33", session=db_session)
+
+    assert profile is not None
+    assert profile.name == "033"
+
+
+async def test_photo_lookup_keeps_code_without_leading_zeros(images_dir, db_session):
+    """`31` находит `31`: числовой шаг не мешает обычному коду."""
+    db_session.add(_numeric_profile(images_dir, "31"))
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(["31"], session=db_session)
+
+    assert photos["31"]["name"] == "31"
+
+
+async def test_numeric_twins_are_ambiguous(images_dir, db_session):
+    """Есть и `33`, и `033` — третье написание не угадывает, карточки нет.
+
+    Точное имя при этом побеждает: `33` и `033` в книге находят себя.
+    """
+    db_session.add(_numeric_profile(images_dir, "33"))
+    db_session.add(_numeric_profile(images_dir, "033"))
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(["0033", "33", "033"], session=db_session)
+
+    assert "0033" not in photos
+    assert photos["33"]["name"] == "33"
+    assert photos["033"]["name"] == "033"
+    assert await catalog_service.get_profile("0033", session=db_session) is None
+
+
+async def test_prefixed_code_is_not_a_numeric_match(images_dir, db_session):
+    """`ЮП-033` не путается с числовым кодом `33` и наоборот."""
+    db_session.add(_numeric_profile(images_dir, "33"))
+    db_session.add(_numeric_profile(images_dir, "ЮП-033"))
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(["ЮП-033", "33"], session=db_session)
+
+    assert photos["ЮП-033"]["name"] == "ЮП-033"
+    assert photos["33"]["name"] == "33"
+    assert await catalog_service.get_profile("ЮП-033", session=db_session) is not None
+
+
+async def test_prefixed_code_does_not_fall_back_to_numeric_key(images_dir, db_session):
+    """`ЮП-033` не становится `33`: префикс — часть кода, а не хвост записи."""
+    db_session.add(_numeric_profile(images_dir, "33"))
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(["ЮП-033"], session=db_session)
+
+    assert photos == {}
+    assert await catalog_service.get_profile("ЮП-033", session=db_session) is None
+
+
+async def test_numeric_match_keeps_profile_without_photo(images_dir, db_session):
+    """Числовое совпадение не выдумывает фото: у `033` файла нет — заглушка."""
+    db_session.add(_numeric_profile(images_dir, "033", with_photo=False))
+    await db_session.flush()
+
+    photos = await catalog_service.get_profiles_photos_batch(["33"], session=db_session)
+
+    assert photos == {}
