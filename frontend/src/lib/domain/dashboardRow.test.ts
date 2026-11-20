@@ -119,7 +119,6 @@ describe("describeHangerRow: сколько строк занимает подв
     );
 
     expect(meaning.photosBelow).toBe(true);
-    expect(meaning.detailRow).toBe(true);
     expect(meaning.rowSpan).toBe(2);
   });
 
@@ -127,18 +126,17 @@ describe("describeHangerRow: сколько строк занимает подв
     const meaning = describeHangerRow(row({ profiles_info: [profileInfo("a"), profileInfo("b")] }));
 
     expect(meaning.photosBelow).toBe(false);
-    expect(meaning.detailRow).toBe(false);
     expect(meaning.rowSpan).toBe(1);
   });
 
-  it("бейдж причины тоже добавляет второй ряд", () => {
+  it("бейдж причины второго ряда не добавляет: пометка стоит в ячейке «Тип»", () => {
     const meaning = describeHangerRow(
       row({ time_warning: "На линии 9.0ч", time_warning_code: "DELAY" }),
     );
 
     expect(meaning.photosBelow).toBe(false);
-    expect(meaning.detailRow).toBe(true);
-    expect(meaning.rowSpan).toBe(2);
+    expect(meaning.rowSpan).toBe(1);
+    expect(meaning.badges.map((badge) => badge.code)).toEqual(["DELAY"]);
   });
 });
 

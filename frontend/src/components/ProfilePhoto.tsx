@@ -1,8 +1,80 @@
+import { useState } from "react";
 import { Image } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { photoUrl } from "@/lib/domain/photo";
 import type { ProfileInfo } from "@/types/dashboard";
+
+/** Потолок снимка по высоте, px: строка дашборда не растёт из-за фото. */
+const PHOTO_HEIGHT = 40;
+
+/**
+ * Потолки снимка по ширине, px.
+ *
+ * Горизонталь ограничивает только слот, а не фиксированный размер снимка: в
+ * колонку «Фото» (150 px) пара должна влезать целиком (70 + 8 + 70 = 148),
+ * а одиночный снимок может занять всю колонку (148 px). Это важно для широких
+ * превью каталога: их аспект доходит до 8,7:1, и при потолке 70 px такой снимок
+ * сжимался до 70×8 — деталь по нему не разглядеть. Высота держится 40 px, а
+ * ширина берётся из аспекта, пока влезает в слот.
+ */
+export const PHOTO_SOLO_MAX_WIDTH = 148;
+export const PHOTO_PAIR_MAX_WIDTH = 70;
+
+/**
+ * Снимок профиля: потолок по высоте и обводка «сжат по ширине» в ?stress.
+ *
+ * `markShort` — инструмент проверки раскладки, а не операторский вид: обводит
+ * те снимки, у которых ширина слота отняла высоту, чтобы их было видно в сотне
+ * строк. В бою флаг не включается.
+ */
+export function PhotoImage({
+  src,
+  alt,
+  onClick,
+  solo = false,
+  markShort = false,
+}: {
+  src: string;
+  alt: string;
+  onClick?: () => void;
+  /** Снимок один в ячейке: ему доступна вся ширина колонки. */
+  solo?: boolean;
+  /** Обвести снимки, потерявшие высоту из-за потолка ширины (?stress). */
+  markShort?: boolean;
+}) {
+  const [short, setShort] = useState(false);
+  const maxWidth = solo ? PHOTO_SOLO_MAX_WIDTH : PHOTO_PAIR_MAX_WIDTH;
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      data-short-photo={short ? "1" : undefined}
+      title={short ? "Снимок сжат по ширине: высота меньше 40 px" : undefined}
+      className={`w-auto h-auto max-h-[40px] ${
+        solo ? "max-w-[148px]" : "max-w-[70px]"
+      } object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary flex-shrink-0 ${
+        short ? "ring-2 ring-rose-500 ring-offset-1" : ""
+      }`}
+      onLoad={(event) => {
+        if (!markShort) return;
+        const img = event.currentTarget;
+        const { naturalWidth: w, naturalHeight: h } = img;
+        // Рамка 1 px входит в потолок (box-sizing: border-box), поэтому
+        // содержимому остаётся (maxWidth − 2) × 38 px. Снимок теряет высоту,
+        // когда масштаб упирается в ширину: при 148/40 это аспект шире 3,7:1.
+        // Обводим только заметно сжатые (ниже 36 из 40 px): 38 px на глаз не
+        // отличить от 40, и такие снимки только шумели бы в сотне строк.
+        if (w && h) {
+          const scale = Math.min(1, (maxWidth - 2) / w, (PHOTO_HEIGHT - 2) / h);
+          setShort(2 + h * scale < PHOTO_HEIGHT - 4);
+        }
+      }}
+      onClick={onClick}
+    />
+  );
+}
 
 /**
  * Профиль в ячейке «Фото»: снимок или заглушка, артикул, обработки и длина.
@@ -15,25 +87,33 @@ export function ProfilePhoto({
   profile,
   onPhotoClick,
   hideText = false,
+  solo = false,
+  markShort = false,
 }: {
   profile: ProfileInfo;
   onPhotoClick: (url: string, name: string) => void;
   hideText?: boolean;
+  /** Снимок один в ячейке: ему доступна вся ширина колонки. */
+  solo?: boolean;
+  /** Обвести снимки, сжатые по ширине (?stress). */
+  markShort?: boolean;
 }) {
   const thumbUrl = photoUrl(profile.photo_thumb, profile.photo_thumb_version);
   const fullUrl = profile.photo_full
     ? photoUrl(profile.photo_full, profile.photo_full_version)
     : photoUrl(profile.photo_thumb, profile.photo_thumb_version);
-  const hasPhoto = profile.has_photo && thumbUrl;
+  /** Снимок к показу: нет файла или профиль без фото — заглушка. */
+  const thumbSrc = profile.has_photo ? thumbUrl : null;
   const hasBadges = Boolean(profile.length_text || profile.processing.length);
 
   return (
     <div className="flex items-center gap-2">
-      {hasPhoto ? (
-        <img
-          src={thumbUrl}
+      {thumbSrc ? (
+        <PhotoImage
+          src={thumbSrc}
           alt={profile.name}
-          className="w-auto h-auto max-h-[40px] max-w-[90px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary flex-shrink-0"
+          solo={solo}
+          markShort={markShort}
           onClick={() => onPhotoClick(fullUrl || "", profile.canonical_name || profile.name)}
         />
       ) : (

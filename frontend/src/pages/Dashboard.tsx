@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ClickableBookPath } from "@/components/ClickableBookPath";
-import { ProfilePhoto } from "@/components/ProfilePhoto";
+import { PhotoImage, ProfilePhoto } from "@/components/ProfilePhoto";
 import {
   Table,
   TableBody,
@@ -58,8 +58,10 @@ import {
   mergeHangerMeta,
   profileCellInfo,
   rowClassName,
+  type RowMeaning,
 } from "@/lib/domain/dashboardRow";
 import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
+import { buildStressRows } from "@/lib/domain/stressRows";
 import { emptyRun, waitingRows } from "@/lib/domain/testRun";
 import { photoUrl } from "@/lib/domain/photo";
 import { profileText } from "@/lib/domain/profile";
@@ -483,26 +485,56 @@ function PhotoModal({
   );
 }
 
-// Photo cell - wrapping layout, max 700px width, photos wrap to new rows
+/**
+ * Ширина колонки «Фото», px.
+ *
+ * Горизонталь колонки — единственный потолок снимка: пара занимает 70 + 8 + 70
+ * = 148 px, одиночный снимок — те же 148 px на всю колонку (потолки живут в
+ * `ProfilePhoto.tsx`, `PHOTO_SOLO_MAX_WIDTH`). Отсюда правило строки: пара
+ * остаётся в первой строке, три и больше уходят на второй ряд. Потолок диктует
+ * киоск: на экране 1024×768 таблица получает ~773 px (боковая очередь стоит
+ * рядом), и 170 px под фото уже отрезали «Цвет». Трек не тянется намеренно:
+ * строки — subgrid, и ширину по содержимому растянула бы одна широкая строка,
+ * а таблица дёргалась бы на её приходе.
+ */
+const PHOTO_COLUMN_WIDTH = 150;
+
+/** Сколько строк строить для `?stress` без числа: хватает, чтобы увидеть все случаи. */
+const STRESS_DEFAULT_COUNT = 100;
+
+// Ячейка «Фото»: потолок ширины — сама колонка (PHOTO_COLUMN_WIDTH), фото
+// центрируются; лишнего по ширине здесь уже не бывает — 3+ профиля уходят
+// на второй ряд.
 function PhotoCell({
   hanger,
   onPhotoClick,
+  markShortPhotos = false,
 }: {
   hanger: HangerData;
   onPhotoClick: (url: string, name: string) => void;
+  /** ?stress: обвести снимки, у которых ширина слота отняла высоту. */
+  markShortPhotos?: boolean;
 }) {
   const profilesInfo = hanger.profiles_info || [];
 
   if (profilesInfo.length > 0) {
     return (
-      <div
-        className="flex w-full flex-nowrap gap-2 items-center justify-start overflow-x-auto py-1 px-0.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 dark:[&::-webkit-scrollbar-thumb]:bg-slate-700 [&::-webkit-scrollbar-thumb]:rounded-full"
-        style={{ maxWidth: "350px" }}
-      >
+      // Центрируем содержимое в колонке: иначе узкий снимок липнет к левому
+      // краю под центрированным заголовком «Фото». Обрезки по ширине здесь нет
+      // намеренно: пара (148 px) и одиночный снимок (148 px) влезают целиком, а
+      // `overflow-x` съедал бы 6 px под полосу прокрутки от hover:scale.
+      <div className="flex w-full flex-nowrap items-center justify-center gap-2 py-1">
         {/* Артикул и длина уже стоят в «Профиле»: подпись под фото только
             дублировала их и обрезалась первой, когда колонка узкая. */}
         {profilesInfo.map((prof, idx) => (
-          <ProfilePhoto key={idx} profile={prof} onPhotoClick={onPhotoClick} hideText />
+          <ProfilePhoto
+            key={idx}
+            profile={prof}
+            onPhotoClick={onPhotoClick}
+            hideText
+            solo={profilesInfo.length === 1}
+            markShort={markShortPhotos}
+          />
         ))}
       </div>
     );
@@ -513,10 +545,11 @@ function PhotoCell({
     return (
       <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: "800px" }}>
         <div className="flex items-center">
-          <img
+          <PhotoImage
             src={thumbUrl}
             alt={hanger.profile}
-            className="w-auto h-auto max-h-[40px] max-w-[90px] object-contain rounded cursor-pointer hover:scale-105 transition-transform border border-border hover:border-primary"
+            solo
+            markShort={markShortPhotos}
             onClick={() =>
               onPhotoClick(
                 photoUrl(
@@ -537,7 +570,7 @@ function PhotoCell({
   return (
     <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: "800px" }}>
       <div className="flex items-center">
-        <div className="w-10 h-10 bg-muted rounded flex items-center justify-center flex-shrink-0">
+        <div className="w-12 h-12 bg-muted rounded flex items-center justify-center flex-shrink-0">
           <Image className="w-5 h-5 text-muted-foreground" />
         </div>
       </div>
@@ -714,6 +747,273 @@ function ProfileCell({ hanger, label }: { hanger: HangerData; label: string }) {
   );
 }
 
+/**
+ * Пометки строки: задержка, ошибка цикла, брак. Стоят в ячейке «Тип» рядом с
+ * видом детали — отдельная строка под пометку оставляла под текстом пустую
+ * полосу и делала строку выше соседних. У подвесов с 3+ профилями пометки и
+ * фото уезжают на второй ряд вместе.
+ */
+function RowBadges({ badges, hanger }: { badges: RowMeaning["badges"]; hanger: HangerData }) {
+  return (
+    <>
+      {badges.map((badge) => (
+        <span
+          key={badge.code}
+          className={`${badge.className} font-bold text-[10px] px-1 py-0.5 rounded whitespace-nowrap inline-block border`}
+          title={badge.code === "DEFECT" ? undefined : (hanger.time_warning ?? undefined)}
+        >
+          {badge.label}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function HangerRow({
+  hanger,
+  idx,
+  colors,
+  showEntryExit,
+  onPhotoClick,
+  markShortPhotos = false,
+}: {
+  hanger: HangerData;
+  idx: number;
+  colors: readonly ColorSpec[];
+  showEntryExit: boolean;
+  onPhotoClick: (url: string, name: string) => void;
+  /** ?stress: обводить снимки, у которых ширина слота отняла высоту. */
+  markShortPhotos?: boolean;
+}) {
+  const meaning = describeHangerRow(hanger, idx);
+  const profilesInfo = hanger.profiles_info || [];
+  // Четыре и больше снимков не влезают в симметричный запас вокруг
+  // центра «Фото»: такие группы раскладываются от правого края колонки.
+  const widePhotos = profilesInfo.length > 3;
+
+  return (
+    <div
+      role="row"
+      className={`grid col-span-full border-b border-slate-200 dark:border-slate-800 group ${meaning.className}`}
+      style={{ gridTemplateColumns: "subgrid", display: "grid" }}
+    >
+      {/* Дата и Время (с вертикальным объединением) */}
+      {showEntryExit ? (
+        <>
+          <div
+            role="cell"
+            data-column="date"
+            className="text-center py-1 text-sm flex items-center justify-center"
+            style={{
+              gridColumn: "date",
+              gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
+            }}
+          >
+            {formatDate(hanger.entry_date) === formatDate(hanger.exit_date) ? (
+              <span>{formatDate(hanger.entry_date)}</span>
+            ) : (
+              <div className="flex flex-col">
+                <span className="text-blue-600">{formatDate(hanger.entry_date)}</span>
+                <span className="text-green-600">{formatDate(hanger.exit_date)}</span>
+              </div>
+            )}
+          </div>
+          <div
+            role="cell"
+            data-column="time"
+            className="text-center py-1 text-sm flex items-center justify-center"
+            style={{
+              gridColumn: "time",
+              gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
+            }}
+          >
+            <div className="flex flex-col">
+              <span className="text-blue-600">{formatClock(hanger.entry_time)}</span>
+              <span className="text-green-600">{formatClock(hanger.exit_time)}</span>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div
+          role="cell"
+          data-column="date"
+          className="text-center py-1 flex items-center justify-center"
+          style={{
+            gridColumn: "date",
+            gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
+          }}
+        >
+          {hanger.date}
+        </div>
+      )}
+
+      {/* Номер вешалки */}
+      <div
+        role="cell"
+        data-column="num"
+        className="text-center font-bold py-1 flex items-center justify-center"
+        style={{
+          gridColumn: "num",
+          gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
+        }}
+      >
+        {hanger.number}
+      </div>
+
+      {/* Основные параметры детали (Тип, КПЗ, Клиент) */}
+      <div
+        role="cell"
+        data-column="type"
+        className="text-center py-1 flex flex-wrap items-center justify-center gap-1"
+        style={{ gridColumn: "type", gridRow: "1" }}
+      >
+        <span>{hanger.material_type}</span>
+        {/* У подвесов с 3+ профилями пометки уезжают на второй ряд
+                    вместе с фото: в первой строке там нет места. */}
+        {!meaning.photosBelow && <RowBadges badges={meaning.badges} hanger={hanger} />}
+      </div>
+      <div
+        role="cell"
+        data-column="kpz"
+        className="text-center py-1 flex items-center justify-center"
+        style={{ gridColumn: "kpz", gridRow: "1" }}
+      >
+        {hanger.kpz_number}
+      </div>
+      <div
+        role="cell"
+        data-column="client"
+        className="text-left py-1 flex items-center justify-start truncate min-w-0 px-1"
+        style={{ gridColumn: "client", gridRow: "1" }}
+        title={hanger.client}
+      >
+        {hanger.client}
+      </div>
+
+      {/* Профиль и Фото: много профилей — фото уходят на второй ряд */}
+      {meaning.photosBelow ? (
+        <div
+          role="cell"
+          data-column="profile"
+          className="text-left py-1 flex items-center justify-start min-w-0 px-1"
+          style={{ gridColumn: "profile / lamels", gridRow: "1" }}
+          title={hanger.profile}
+        >
+          <ProfileCell hanger={hanger} label={meaning.profileLabel} />
+        </div>
+      ) : (
+        <>
+          <div
+            role="cell"
+            data-column="profile"
+            className="text-left py-1 flex items-center justify-start min-w-0 px-1"
+            style={{ gridColumn: "profile", gridRow: "1" }}
+            title={hanger.profile}
+          >
+            <ProfileCell hanger={hanger} label={meaning.profileLabel} />
+          </div>
+          <div
+            role="cell"
+            data-column="photo"
+            className="py-1 flex items-center justify-center"
+            style={{ gridColumn: "photo", gridRow: `span ${meaning.rowSpan}` }}
+          >
+            <PhotoCell
+              hanger={hanger}
+              onPhotoClick={onPhotoClick}
+              markShortPhotos={markShortPhotos}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Ламели */}
+      <div
+        role="cell"
+        data-column="lamels"
+        className="text-center font-bold py-1 flex items-center justify-center"
+        style={{
+          gridColumn: "lamels",
+          gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
+        }}
+      >
+        {hanger.lamels_qty}
+      </div>
+
+      {/* Цвет */}
+      <div
+        role="cell"
+        data-column="color"
+        className="text-center py-1 flex items-center justify-center"
+        style={{
+          gridColumn: "color",
+          gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
+        }}
+      >
+        <div className="inline-flex flex-col items-center max-w-[150px]" title={hanger.color}>
+          <span className="text-sm leading-tight text-center break-words">{hanger.color}</span>
+          {/* Обводка держит край светлых цветов (серебро, шампань) на
+                      светлой строке: без неё полоска сливается с фоном. */}
+          <div
+            className="w-full h-2 rounded-full mt-1 ring-1 ring-inset ring-black/30 dark:ring-white/40"
+            style={{ backgroundColor: colorHex(colors, hanger.color), minWidth: "56px" }}
+          />
+        </div>
+      </div>
+
+      {/* Второй ряд подвеса: пометки слева и фото профилей (3+ профиля).
+                  Пока группа влезает в симметричный запас вокруг центра «Фото»
+                  (photo/2 + ламели + цвет ≈ 227 px вправо, столько же влево),
+                  она стоит по центру колонки. Четвёртый и пятый снимки в этот
+                  запас не влезают — тогда центрирование отменяется и группа
+                  прижимается правым краем к правому краю колонки, уходя влево:
+                  переносить фотографии на третью строку хуже, чем сдвинуть
+                  группу от центра. */}
+      {meaning.photosBelow && (
+        <div
+          role="cell"
+          data-column="detail"
+          className="py-1.5 grid"
+          style={{
+            gridRow: "2",
+            gridColumn: "1 / -1",
+            gridTemplateColumns: "subgrid",
+          }}
+        >
+          <div
+            className="flex items-center gap-1.5 px-1"
+            style={{ gridColumn: "type / photo", gridRow: "1" }}
+          >
+            <RowBadges badges={meaning.badges} hanger={hanger} />
+          </div>
+          <div
+            className="flex w-max flex-wrap items-center gap-x-4 gap-y-1.5"
+            style={{
+              gridColumn: "photo",
+              // 4+ снимков в симметричный запас не влезают: группа
+              // упирается правым краем в правый край колонки и уходит
+              // влево, а пометки переезжают на строку выше, чтобы
+              // снимки не наезжали на них.
+              gridRow: widePhotos ? "2" : "1",
+              justifySelf: widePhotos ? "end" : "center",
+            }}
+          >
+            {profilesInfo.map((prof, pIdx) => (
+              <ProfilePhoto
+                key={pIdx}
+                profile={prof}
+                onPhotoClick={onPhotoClick}
+                hideText={false}
+                markShort={markShortPhotos}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DataTable({
   data,
   colors,
@@ -721,6 +1021,7 @@ function DataTable({
   isFullscreen = false,
   showEntryExit = false,
   ariaLabel,
+  markShortPhotos = false,
 }: {
   data: HangerData[];
   /** Справочник цветов из API: код в ячейке, название в подсказке. */
@@ -730,10 +1031,20 @@ function DataTable({
   showEntryExit?: boolean;
   /** Имя таблицы: две таблицы дашборда различаются только содержимым. */
   ariaLabel?: string;
+  /** ?stress: обвести снимки, сжатые по ширине слота. */
+  markShortPhotos?: boolean;
 }) {
+  // Бюджет колонок считан под киоск 1024×768: таблице достаётся 773 px, и
+  // сумма треков не должна её превышать, иначе «Цвет» уезжает за край.
+  // «Клиент» и «Профиль» делят остаток: клиент обрезается, профиль переносится.
+  // Потолки подписей — «№ КПЗ» 47 px, «Ламели» 52 px, «Нержавеющая» 95 px,
+  // «ГорКомплекс» 86 px: ниже этих значений заголовок или слово не влезают.
+  const flexible = "[client] minmax(94px, 1fr) [profile] minmax(88px, 1fr)";
+  const fixed = `[photo] ${PHOTO_COLUMN_WIDTH}px [lamels] 52px [color] 100px`;
+  // «Тип» — 104px: в этой ячейке стоит и вид детали, и пометка оператору.
   const gridTemplateColumns = showEntryExit
-    ? "[date] 70px [time] 50px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] minmax(110px, 150px)"
-    : "[date] 70px [num] 25px [type] 70px [kpz] 50px [client] 100px [profile] fit-content(120px) [photo] minmax(120px, 1fr) [lamels] 45px [color] minmax(110px, 150px)";
+    ? `[date] 68px [time] 46px [num] 24px [type] 104px [kpz] 47px ${flexible} ${fixed}`
+    : `[date] 68px [num] 24px [type] 104px [kpz] 47px ${flexible} ${fixed}`;
 
   return (
     <div
@@ -793,14 +1104,14 @@ function DataTable({
           </div>
           <div
             role="columnheader"
-            className="text-left py-1.5 px-2 flex items-center justify-start"
+            className="text-left py-1.5 px-1 flex items-center justify-start"
             style={{ gridColumn: "client" }}
           >
             Клиент
           </div>
           <div
             role="columnheader"
-            className="text-left py-1.5 px-2 flex items-center justify-start"
+            className="text-left py-1.5 px-1 flex items-center justify-start"
             style={{ gridColumn: "profile" }}
           >
             Профиль
@@ -829,225 +1140,17 @@ function DataTable({
         </div>
 
         {/* Тело таблицы */}
-        {data.map((hanger, idx) => {
-          const meaning = describeHangerRow(hanger, idx);
-          const profilesInfo = hanger.profiles_info || [];
-
-          return (
-            <div
-              key={`${hanger.number}-${idx}`}
-              role="row"
-              className={`grid col-span-full border-b border-slate-200 dark:border-slate-800 group ${meaning.className}`}
-              style={{ gridTemplateColumns: "subgrid", display: "grid" }}
-            >
-              {/* Дата и Время (с вертикальным объединением) */}
-              {showEntryExit ? (
-                <>
-                  <div
-                    role="cell"
-                    data-column="date"
-                    className="text-center py-1 text-sm flex items-center justify-center"
-                    style={{
-                      gridColumn: "date",
-                      gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
-                    }}
-                  >
-                    {formatDate(hanger.entry_date) === formatDate(hanger.exit_date) ? (
-                      <span>{formatDate(hanger.entry_date)}</span>
-                    ) : (
-                      <div className="flex flex-col">
-                        <span className="text-blue-600">{formatDate(hanger.entry_date)}</span>
-                        <span className="text-green-600">{formatDate(hanger.exit_date)}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div
-                    role="cell"
-                    data-column="time"
-                    className="text-center py-1 text-sm flex items-center justify-center"
-                    style={{
-                      gridColumn: "time",
-                      gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
-                    }}
-                  >
-                    <div className="flex flex-col">
-                      <span className="text-blue-600">{formatClock(hanger.entry_time)}</span>
-                      <span className="text-green-600">{formatClock(hanger.exit_time)}</span>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div
-                  role="cell"
-                  data-column="date"
-                  className="text-center py-1 flex items-center justify-center"
-                  style={{
-                    gridColumn: "date",
-                    gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
-                  }}
-                >
-                  {hanger.date}
-                </div>
-              )}
-
-              {/* Номер вешалки */}
-              <div
-                role="cell"
-                data-column="num"
-                className="text-center font-bold py-1 flex items-center justify-center"
-                style={{
-                  gridColumn: "num",
-                  gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
-                }}
-              >
-                {hanger.number}
-              </div>
-
-              {/* Основные параметры детали (Тип, КПЗ, Клиент) */}
-              <div
-                role="cell"
-                data-column="type"
-                className="text-center py-1 flex items-center justify-center"
-                style={{ gridColumn: "type", gridRow: "1" }}
-              >
-                {hanger.material_type}
-              </div>
-              <div
-                role="cell"
-                data-column="kpz"
-                className="text-center py-1 flex items-center justify-center"
-                style={{ gridColumn: "kpz", gridRow: "1" }}
-              >
-                {hanger.kpz_number}
-              </div>
-              <div
-                role="cell"
-                data-column="client"
-                className="text-left py-1 flex items-center justify-start truncate min-w-0 px-2"
-                style={{ gridColumn: "client", gridRow: "1" }}
-                title={hanger.client}
-              >
-                {hanger.client}
-              </div>
-
-              {/* Профиль и Фото: много профилей — фото уходят на второй ряд */}
-              {meaning.photosBelow ? (
-                <div
-                  role="cell"
-                  data-column="profile"
-                  className="text-left py-1 flex items-center justify-start min-w-0 px-2"
-                  style={{ gridColumn: "profile / lamels", gridRow: "1" }}
-                  title={hanger.profile}
-                >
-                  <ProfileCell hanger={hanger} label={meaning.profileLabel} />
-                </div>
-              ) : (
-                <>
-                  <div
-                    role="cell"
-                    data-column="profile"
-                    className="text-left py-1 flex items-center justify-start min-w-0 px-2"
-                    style={{ gridColumn: "profile", gridRow: "1" }}
-                    title={hanger.profile}
-                  >
-                    <ProfileCell hanger={hanger} label={meaning.profileLabel} />
-                  </div>
-                  <div
-                    role="cell"
-                    data-column="photo"
-                    className="py-1 flex items-center justify-center"
-                    style={{
-                      gridColumn: "photo",
-                      gridRow: `span ${meaning.rowSpan}`,
-                    }}
-                  >
-                    <PhotoCell hanger={hanger} onPhotoClick={onPhotoClick} />
-                  </div>
-                </>
-              )}
-
-              {/* Ламели */}
-              <div
-                role="cell"
-                data-column="lamels"
-                className="text-center font-bold py-1 flex items-center justify-center"
-                style={{
-                  gridColumn: "lamels",
-                  gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
-                }}
-              >
-                {hanger.lamels_qty}
-              </div>
-
-              {/* Цвет */}
-              <div
-                role="cell"
-                data-column="color"
-                className="text-center py-1 flex items-center justify-center"
-                style={{
-                  gridColumn: "color",
-                  gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
-                }}
-              >
-                <div
-                  className="inline-flex flex-col items-center max-w-[150px]"
-                  title={hanger.color}
-                >
-                  <span className="text-sm leading-tight text-center break-words">
-                    {hanger.color}
-                  </span>
-                  {/* Обводка держит край светлых цветов (серебро, шампань) на
-                      светлой строке: без неё полоска сливается с фоном. */}
-                  <div
-                    className="w-full h-2 rounded-full mt-1 ring-1 ring-inset ring-black/30 dark:ring-white/40"
-                    style={{ backgroundColor: colorHex(colors, hanger.color), minWidth: "56px" }}
-                  />
-                </div>
-              </div>
-
-              {/* Вторая строка подвеса: пометки и фото профилей */}
-              {meaning.detailRow && (
-                <div
-                  role="cell"
-                  data-column="detail"
-                  className="py-1.5 px-3 flex flex-wrap items-center justify-start gap-x-4 gap-y-1.5"
-                  style={{
-                    gridRow: "2",
-                    gridColumn: meaning.photosBelow ? "1 / -1" : "type / photo",
-                  }}
-                >
-                  {meaning.badges.length > 0 && (
-                    <div className="flex items-center gap-1.5">
-                      {meaning.badges.map((badge) => (
-                        <span
-                          key={badge.code}
-                          className={`${badge.className} font-bold text-[10px] px-2 py-0.5 rounded whitespace-nowrap inline-block border`}
-                          title={
-                            badge.code === "DEFECT" ? undefined : (hanger.time_warning ?? undefined)
-                          }
-                        >
-                          {badge.label}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {meaning.photosBelow && (
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                      {profilesInfo.map((prof, pIdx) => (
-                        <ProfilePhoto
-                          key={pIdx}
-                          profile={prof}
-                          onPhotoClick={onPhotoClick}
-                          hideText={false}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {data.map((hanger, idx) => (
+          <HangerRow
+            key={`${hanger.number}-${idx}`}
+            hanger={hanger}
+            idx={idx}
+            colors={colors}
+            showEntryExit={showEntryExit}
+            onPhotoClick={onPhotoClick}
+            markShortPhotos={markShortPhotos}
+          />
+        ))}
       </div>
     </div>
   );
@@ -1419,6 +1522,11 @@ export default function Dashboard() {
   const [testRows, setTestRows] = useState<HangerData[]>([]);
   const [testError, setTestError] = useState<string | null>(null);
 
+  // Раскладка на тысяче строк: синтетическая книга для ручной проверки вёрстки.
+  // В интерфейсе её нет — только в dev и только по адресу `?stress=100`.
+  const [stressRows, setStressRows] = useState<HangerData[] | null>(null);
+  const [stressPending, setStressPending] = useState(false);
+
   // Тестовый прогон витрины: подвесы идут по ваннам и уходят в выгрузку
   const run = useTestRun(testMode === "sim" ? testRows : undefined, filters.realtimeLimit);
 
@@ -1442,6 +1550,39 @@ export default function Dashboard() {
   // Справочник цветов: пока он грузится или упал, панель не блокируется —
   // цвета показываются как неизвестные, список остаётся пустым.
   const { data: colors = NO_COLORS } = useColors();
+
+  // Раскладка на синтетических строках: `?stress` подменяет обе таблицы книгой
+  // из `stressRows.ts`, `?stress=500` задаёт их число (по умолчанию 100 — этого
+  // хватает, чтобы увидеть все случаи раскладки). Только dev: на киоске и в
+  // сборке ветка мертва, поэтому оператору этот адрес ничего не меняет.
+  // Собирается один раз и уже с готовым справочником цветов: иначе каждое
+  // обновление справочника тянуло бы каталог заново и пересобирало строки.
+  const stressBuiltRef = useRef(false);
+  useEffect(() => {
+    if (stressBuiltRef.current || colors.length === 0) return;
+    stressBuiltRef.current = true;
+
+    const raw = new URLSearchParams(window.location.search).get("stress");
+    if (raw === null || !import.meta.env.DEV) return;
+    const parsed = Number.parseInt(raw, 10);
+    const count = Number.isFinite(parsed) && parsed > 0 ? parsed : STRESS_DEFAULT_COUNT;
+
+    // Пока каталог едет и строки собираются, таблицы показывают скелетон:
+    // иначе на их месте успевают мигнуть боевые строки.
+    setStressPending(true);
+    void (async () => {
+      try {
+        const res = await fetch("/api/catalog/all?limit=1000");
+        if (!res.ok) throw new Error("Failed to fetch catalog");
+        const profiles: Profile[] = await res.json();
+        setStressRows(buildStressRows(profiles, colors, count));
+      } catch (e) {
+        console.error("Стресс-раскладка: каталог не загрузился:", e);
+      } finally {
+        setStressPending(false);
+      }
+    })();
+  }, [colors]);
 
   // Роли книг — единственное, что задаёт оператор: какую книгу читать сейчас,
   // решает правило `standby_book` по росту строк.
@@ -1549,6 +1690,7 @@ export default function Dashboard() {
 
   // Выгрузка: события линии, а в режиме симуляции — подвесы, сошедшие с линии по прогону.
   const unloadRows = useMemo<HangerData[]>(() => {
+    if (stressRows) return stressRows;
     if (testMode) return testMode === "sim" ? run.unloaded : [];
 
     return (matchedEvents ?? []).map((event) => ({
@@ -1573,7 +1715,7 @@ export default function Dashboard() {
       time_warning_code: event.time_warning_code,
       is_defect: event.is_defect,
     }));
-  }, [testMode, run.unloaded, matchedEvents]);
+  }, [stressRows, testMode, run.unloaded, matchedEvents]);
 
   const leaveTestMode = () => {
     setTestMode(null);
@@ -1751,10 +1893,11 @@ export default function Dashboard() {
   // относится: назначение этих кнопок — показать всё, иначе половина
   // справочника не попадает на экран.
   const loadingRows = useMemo(() => {
+    if (stressRows) return stressRows;
     if (testMode === "sim") return simLoadingRows;
     if (testMode) return testRows;
     return data?.products ?? [];
-  }, [testMode, simLoadingRows, testRows, data?.products]);
+  }, [stressRows, testMode, simLoadingRows, testRows, data?.products]);
 
   const onLineRows = useMemo(() => run.line.map((hanger) => hanger.row), [run]);
 
@@ -1990,13 +2133,23 @@ export default function Dashboard() {
                     СИМУЛЯЦИЯ
                   </span>
                 )}
+                {stressRows && (
+                  <span
+                    className="absolute -top-3 left-3 z-50 rounded-full bg-slate-700 px-3 py-0.5 text-xs font-bold text-white shadow"
+                    title="Красная рамка — снимок сжат по ширине слота: в него влезает только часть кадра"
+                  >
+                    РАСКЛАДКА {stressRows.length} · красная рамка = снимок сжат по ширине
+                  </span>
+                )}
                 {hasNewRows && testMode !== "catalog" && testMode !== "colors" && (
                   <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
                     <span className="text-white text-3xl font-bold">Обновление</span>
                   </div>
                 )}
                 <CardContent className="p-0">
-                  {isLoading && !testMode ? (
+                  {stressPending ? (
+                    <TableSkeleton />
+                  ) : isLoading && !testMode ? (
                     <TableSkeleton />
                   ) : loadingRows?.length ? (
                     <DataTable
@@ -2005,6 +2158,7 @@ export default function Dashboard() {
                       onPhotoClick={handlePhotoClick}
                       isFullscreen={isFullscreen}
                       ariaLabel="Очередь загрузки"
+                      markShortPhotos={Boolean(stressRows)}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -2046,13 +2200,23 @@ export default function Dashboard() {
                       СИМУЛЯЦИЯ
                     </span>
                   )}
+                  {stressRows && (
+                    <span
+                      className="absolute -top-3 left-3 z-50 rounded-full bg-slate-700 px-3 py-0.5 text-xs font-bold text-white shadow"
+                      title="Красная рамка — снимок сжат по ширине слота: в него влезает только часть кадра"
+                    >
+                      РАСКЛАДКА {stressRows.length} · красная рамка = снимок сжат по ширине
+                    </span>
+                  )}
                   {hasNewUnloadEvents && testMode !== "catalog" && testMode !== "colors" && (
                     <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
                       <span className="text-white text-3xl font-bold">Обновление</span>
                     </div>
                   )}
                   <CardContent className="p-0">
-                    {unloadRows.length > 0 ? (
+                    {stressPending ? (
+                      <TableSkeleton />
+                    ) : unloadRows.length > 0 ? (
                       <DataTable
                         data={unloadRows}
                         colors={colors}
@@ -2060,6 +2224,7 @@ export default function Dashboard() {
                         isFullscreen={isFullscreen}
                         showEntryExit
                         ariaLabel="Выгрузка"
+                        markShortPhotos={Boolean(stressRows)}
                       />
                     ) : (
                       <div className="flex flex-col items-center justify-center py-8 text-center">

@@ -69,8 +69,6 @@ export interface RowMeaning {
   sticks: boolean;
   /** Профилей больше двух — фото не помещаются в первую строку. */
   photosBelow: boolean;
-  /** Есть вторая строка: фото на втором ряду или пометка. */
-  detailRow: boolean;
   /** Сколько grid-строк занимает подвес. */
   rowSpan: number;
 }
@@ -173,7 +171,10 @@ export function profileCellInfo(hanger: HangerData): ProfileCellInfo | null {
 export function describeHangerRow(hanger: HangerData, index = 0): RowMeaning {
   const badges = rowBadges(hanger);
   const photosBelow = (hanger.profiles_info?.length ?? 0) > 2;
-  const detailRow = photosBelow || badges.length > 0;
+  // Пометка второй строки не требует: она стоит в ячейке «Тип» рядом с видом
+  // детали. Отдельный трек под неё оставлял под текстом пустую полосу и делал
+  // строку выше соседних, а на киоске это минус подвес на экране.
+  const rowSpan = photosBelow ? 2 : 1;
 
   return {
     tone: rowTone(hanger),
@@ -182,8 +183,7 @@ export function describeHangerRow(hanger: HangerData, index = 0): RowMeaning {
     profileLabel: profileLabel(hanger),
     sticks: isSticksHanger(hanger),
     photosBelow,
-    detailRow,
-    rowSpan: detailRow ? 2 : 1,
+    rowSpan,
   };
 }
 

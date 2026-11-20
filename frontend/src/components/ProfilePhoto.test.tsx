@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ProfilePhoto } from "@/components/ProfilePhoto";
+import {
+  PHOTO_PAIR_MAX_WIDTH,
+  PHOTO_SOLO_MAX_WIDTH,
+  ProfilePhoto,
+} from "@/components/ProfilePhoto";
 import type { ProfileInfo } from "@/types/dashboard";
 
 // Ячейка «Фото» на дашборде: снимок или заглушка, артикул, обработки, длина.
@@ -83,5 +87,45 @@ describe("ProfilePhoto: длина из книги", () => {
     expect(markup).toContain("break-words");
     expect(markup).toContain("max-w-[110px]");
     expect(markup).toContain("2,7 м");
+  });
+});
+
+describe("ProfilePhoto: потолок снимка", () => {
+  it("в паре снимок ограничен 70 px по ширине", () => {
+    const markup = renderToStaticMarkup(<ProfilePhoto profile={profile()} onPhotoClick={noop} />);
+
+    expect(markup).toContain("max-w-[70px]");
+    expect(markup).toContain("max-h-[40px]");
+    expect(markup).not.toContain("max-w-[148px]");
+  });
+
+  it("одиночный снимок занимает всю колонку — 148 px, высота та же 40 px", () => {
+    // Широкие превью каталога (аспект до 8,7:1) при потолке 70 px сжимались до
+    // 70×8: высоту отнимала ширина. Одиночный снимок получает всю колонку.
+    const markup = renderToStaticMarkup(
+      <ProfilePhoto profile={profile()} onPhotoClick={noop} solo />,
+    );
+
+    expect(markup).toContain("max-w-[148px]");
+    expect(markup).toContain("max-h-[40px]");
+    expect(markup).not.toContain("max-w-[70px]");
+  });
+
+  it("пара ровно заполняет колонку: 70 + зазор 8 + 70 = 148", () => {
+    // Инвариант бюджета: если пару расширить, второй снимок уедет под прокрутку.
+    expect(PHOTO_PAIR_MAX_WIDTH * 2 + 8).toBe(PHOTO_SOLO_MAX_WIDTH);
+    // Колонка «Фото» (PHOTO_COLUMN_WIDTH в Dashboard.tsx) — 150 px: одиночный
+    // снимок занимает её целиком, оставляя 2 px на рамку по краям.
+    expect(PHOTO_SOLO_MAX_WIDTH + 2).toBe(150);
+  });
+
+  it("обводка «сжат по ширине» появляется только по факту загрузки, не в разметке", () => {
+    const markup = renderToStaticMarkup(
+      <ProfilePhoto profile={profile()} onPhotoClick={noop} solo markShort />,
+    );
+
+    // SSR не грузит картинку — обводка ставится из onLoad по naturalWidth.
+    expect(markup).not.toContain("ring-rose-500");
+    expect(markup).not.toContain("data-short-photo");
   });
 });
