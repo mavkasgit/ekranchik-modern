@@ -1,0 +1,11 @@
+#!/bin/sh
+# pre-push: полный набор hk (включая knip, tsc, modern-web, reactuse-diff),
+# тот же, что был в .git/hooks до перехода на core.hooksPath.
+if [ "${HK:-1}" = "0" ]; then
+  exit 0
+fi
+
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec -- hk run pre-push --from-hook "$@"
+fi
+exec hk run pre-push --from-hook "$@"

@@ -1,0 +1,14 @@
+#!/bin/sh
+# commit-msg: Conventional Commits через commitlint (hk.pkl → шаг commitlint).
+# Хук лежит в репозитории и включается `mise run hooks`
+# (git config core.hooksPath .githooks) — формат коммита проверяется у всех,
+# а не только у того, кто запускал `hk install`.
+# Хук ничего не правит: только читает файл сообщения.
+if [ "${HK:-1}" = "0" ]; then
+  exit 0
+fi
+
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec -- hk run commit-msg --from-hook "$@"
+fi
+exec hk run commit-msg --from-hook "$@"
