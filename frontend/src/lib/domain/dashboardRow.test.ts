@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { describeHangerRow, isBlankRow, mergeHangerMeta, profileCellInfo } from "./dashboardRow";
+import {
+  describeHangerRow,
+  isBlankRow,
+  mergeHangerMeta,
+  needsPhotoCaption,
+  profileCellInfo,
+  profilesWithPhoto,
+} from "./dashboardRow";
 import type { HangerData, ProfileInfo } from "@/types/dashboard";
 
 function row(overrides: Partial<HangerData> = {}): HangerData {
@@ -53,6 +60,35 @@ function profileInfo(name: string): ProfileInfo {
   return { name, processing: [], has_photo: true };
 }
 
+describe("profilesWithPhoto: кто попадает в «Фото»", () => {
+  it("профиль без файла в колонку не идёт", () => {
+    const profiles = [profileInfo("ЮП-3233"), { ...profileInfo("3416"), has_photo: false }];
+
+    expect(profilesWithPhoto(profiles).map((profile) => profile.name)).toEqual(["ЮП-3233"]);
+  });
+});
+
+describe("needsPhotoCaption: когда у кадра нужен артикул", () => {
+  it("один профиль — подпись не нужна", () => {
+    expect(needsPhotoCaption([profileInfo("ЮП-2083")])).toBe(false);
+  });
+
+  it("снимок есть у каждого профиля — порядок кадров и так совпадает с артикулами", () => {
+    expect(needsPhotoCaption([profileInfo("ЮП-3035"), profileInfo("ЮП-2396")])).toBe(false);
+  });
+
+  it("у части профилей снимка нет — без подписи не понять, чей это кадр", () => {
+    // Строка «3416 + 362»: кадр один, и он не обязательно первый артикул.
+    expect(
+      needsPhotoCaption([{ ...profileInfo("3416"), has_photo: false }, profileInfo("362")]),
+    ).toBe(true);
+  });
+
+  it("снимков нет вовсе — подписывать нечего", () => {
+    expect(needsPhotoCaption([{ ...profileInfo("3416"), has_photo: false }])).toBe(false);
+  });
+});
+
 describe("describeHangerRow: профиль строки", () => {
   it("пустой профиль у клюшек читается словом", () => {
     for (const empty of ["", "—", "   "]) {
@@ -72,22 +108,32 @@ describe("describeHangerRow: профиль строки", () => {
 });
 
 describe("profileCellInfo: ячейка «Профиль» в две строки", () => {
+  // Бейджи остаются в «Профиле» только у профилей без снимка: у остальных они
+  // едут со снимком. Поэтому здесь профили без фото.
   const info = (name: string, lengthText?: string, processing: string[] = []): ProfileInfo => ({
     ...profileInfo(name),
+    has_photo: false,
     length_text: lengthText ?? null,
     processing,
   });
 
-  it("длина уходит из артикула в бейдж", () => {
+  it("длина остаётся в тексте: на киоске — то, что ввёл оператор", () => {
+    // Режем только служебные хвосты, а не запись оператора: «1,8 метра» в
+    // «Профиле» остаётся, бейдж у снимка — дополнение, а не замена текста.
     const cell = profileCellInfo(row({ profiles_info: [info("ЮП-2083 1,8 метра", "1,8 м")] }));
 
-    expect(cell).toEqual({ article: "ЮП-2083", processing: [], lengths: ["1,8 м"] });
+    expect(cell).toEqual({
+      article: "ЮП-2083 1,8 метра",
+      articles: ["ЮП-2083 1,8 метра"],
+      processing: [],
+      lengths: ["1,8 м"],
+    });
   });
 
-  it("длина в скобках с точкой тоже снимается", () => {
+  it("длина в скобках тоже остаётся как в книге", () => {
     const cell = profileCellInfo(row({ profiles_info: [info("ЮП-2083 (1.8)", "1,8 м")] }));
 
-    expect(cell?.article).toBe("ЮП-2083");
+    expect(cell?.article).toBe("ЮП-2083 (1.8)");
   });
 
   it("несколько профилей идут через плюс, обработки не повторяются", () => {
@@ -102,9 +148,27 @@ describe("profileCellInfo: ячейка «Профиль» в две строк�
 
     expect(cell).toEqual({
       article: "АТ-7314 окно + ЮП-2972 паз",
+      articles: ["АТ-7314 окно", "ЮП-2972 паз"],
       processing: ["окно", "паз"],
       lengths: ["2,75 м"],
     });
+  });
+
+  it("у профиля со снимком бейджи остаются при снимке, а не в «Профиле»", () => {
+    // «1,8 м — это который?»: два артикула с фото, длина у второго. В ячейке
+    // «Профиль» бейджа быть не должно, иначе он читается как общий для строки.
+    const cell = profileCellInfo(
+      row({
+        profiles_info: [
+          { name: "ЮП-3233", processing: [], has_photo: true },
+          { name: "ЮП-3361 1,8 метра", processing: [], has_photo: true, length_text: "1,8 м" },
+        ],
+      }),
+    );
+
+    expect(cell?.articles).toEqual(["ЮП-3233", "ЮП-3361 1,8 метра"]);
+    expect(cell?.processing).toEqual([]);
+    expect(cell?.lengths).toEqual([]);
   });
 
   it("профилей нет — ячейка печатает подпись книги", () => {
@@ -119,6 +183,7 @@ describe("describeHangerRow: сколько строк занимает подв
     );
 
     expect(meaning.photosBelow).toBe(true);
+    expect(meaning.profileOwnsPhotoColumn).toBe(false);
     expect(meaning.rowSpan).toBe(2);
   });
 
@@ -129,12 +194,77 @@ describe("describeHangerRow: сколько строк занимает подв
     expect(meaning.rowSpan).toBe(1);
   });
 
+  it("снимков нет — колонка «Фото» отдаётся профилю, заглушки не рисуются", () => {
+    // Три профиля без каталога: раньше это давало вторую строку из трёх серых
+    // квадратов и 150 px пустой колонки, теперь текст занимает всё место.
+    const meaning = describeHangerRow(
+      row({
+        profiles_info: [
+          { name: "0.8x1000x600", processing: [], has_photo: false },
+          { name: "Остнаска", processing: [], has_photo: false },
+          { name: "Панель HOOK-ON H-100 600*1800мм", processing: [], has_photo: false },
+        ],
+      }),
+    );
+
+    expect(meaning.photosBelow).toBe(false);
+    expect(meaning.profileOwnsPhotoColumn).toBe(true);
+    expect(meaning.rowSpan).toBe(1);
+    expect(meaning.badges).toEqual([]);
+  });
+
+  it("снимок есть хотя бы у одного профиля — колонка остаётся", () => {
+    const meaning = describeHangerRow(
+      row({
+        profiles_info: [
+          { name: "a", processing: [], has_photo: false },
+          { name: "b", processing: [], has_photo: true, photo_thumb: "images/b-thumb.jpg" },
+        ],
+      }),
+    );
+
+    expect(meaning.profileOwnsPhotoColumn).toBe(false);
+  });
+
+  it("витрина «Все профили»: фото приходит в строке, колонка не отдаётся тексту", () => {
+    const meaning = describeHangerRow(
+      row({ profiles_info: [], profile_photo_thumb: "images/x-thumb.jpg" }),
+    );
+
+    expect(meaning.profileOwnsPhotoColumn).toBe(false);
+  });
+
+  it("текст профиля не влез в три строки — снимки уезжают под него", () => {
+    // Профиль один и со снимком, но длинная запись не помещается в узкий трек:
+    // строка отдаёт «Фото» тексту, а снимок встаёт вторым рядом с подписью.
+    const meaning = describeHangerRow(row({ profiles_info: [profileInfo("a")] }), 0, {
+      profileOverflows: true,
+    });
+
+    expect(meaning.photosBelow).toBe(true);
+    expect(meaning.rowSpan).toBe(2);
+    expect(meaning.profileOwnsPhotoColumn).toBe(false);
+  });
+
+  it("без снимков замер ничего не меняет: колонка и так у профиля", () => {
+    const meaning = describeHangerRow(
+      row({ profiles_info: [{ name: "Панель HOOK-ON H-100", processing: [], has_photo: false }] }),
+      0,
+      { profileOverflows: true },
+    );
+
+    expect(meaning.photosBelow).toBe(false);
+    expect(meaning.profileOwnsPhotoColumn).toBe(true);
+    expect(meaning.rowSpan).toBe(1);
+  });
+
   it("бейдж причины второго ряда не добавляет: пометка стоит в ячейке «Тип»", () => {
     const meaning = describeHangerRow(
       row({ time_warning: "На линии 9.0ч", time_warning_code: "DELAY" }),
     );
 
     expect(meaning.photosBelow).toBe(false);
+    expect(meaning.profileOwnsPhotoColumn).toBe(true);
     expect(meaning.rowSpan).toBe(1);
     expect(meaning.badges.map((badge) => badge.code)).toEqual(["DELAY"]);
   });

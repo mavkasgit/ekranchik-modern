@@ -53,7 +53,8 @@ describe("buildStressRows", () => {
 
     const shown = new Map<string, number>();
     for (const row of rows) {
-      for (const profile of row.profiles_info) {
+      // Заказы не из каталога идут вне круга: у них нет ни фото, ни артикула.
+      for (const profile of row.profiles_info.filter((info) => info.has_photo)) {
         expect(profile.photo_thumb).toBeTruthy();
         shown.set(profile.canonical_name!, (shown.get(profile.canonical_name!) ?? 0) + 1);
       }
@@ -62,6 +63,23 @@ describe("buildStressRows", () => {
     const counts = [...shown.values()];
     expect(shown.size).toBe(CATALOG.length);
     expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+  });
+
+  it("заказы не из каталога: длинный текст профиля и заглушка вместо фото", () => {
+    // Так выглядит новый сторонний заказ, пока профиль не пришёл из KTM:
+    // текст бывает до 42 символов (живая книга стенда), снимка нет.
+    const rows = buildStressRows(CATALOG, COLORS, 1000, seededRandom(7));
+    const unknownRows = rows.filter((row) => row.profiles_info.some((info) => !info.has_photo));
+    const unknownInfos = unknownRows.flatMap((row) =>
+      row.profiles_info.filter((info) => !info.has_photo),
+    );
+
+    expect(unknownRows.length).toBeGreaterThan(50);
+    expect(unknownInfos.length).toBeGreaterThan(unknownRows.length);
+    expect(unknownInfos.every((info) => !info.photo_thumb && info.name.length > 5)).toBe(true);
+    expect(Math.max(...unknownInfos.map((info) => info.name.length))).toBeGreaterThanOrEqual(42);
+    // Профили идут и по одному, и группами: заглушки должны вставать и во второй ряд.
+    expect(Math.max(...unknownRows.map((row) => row.profiles_info.length))).toBe(3);
   });
 
   it("клюшки идут без профиля: ячейка пустая, как в книге", () => {

@@ -37,6 +37,28 @@ const CLIENTS = ["РП", "КТМ", "ГорКомплекс", "РП", "—"] as c
 
 const TYPES = ["Пороги", "Пороги", "Пороги", "Детали", "Клюшки (растрав)"] as const;
 
+/**
+ * Заказы, которых нет в каталоге: так выглядит новый сторонний заказ, пока его
+ * профиль не пришёл из KTM. Снимка нет, текст в ячейке длинный.
+ *
+ * Тексты взяты из живой книги стенда (`/api/dashboard`, 1000 строк): 316 строк
+ * имеют профиль без фото, уникальных имён — 28. Самые частые и самые длинные
+ * перенесены сюда как есть, включая «Остнаску» (8 символов), запись размерами
+ * без пробелов `0.8x1000x600` и 42-символьное «профиль обрамляющий…» — это и
+ * есть верхняя граница того, что реально приходит в «Профиль».
+ */
+const UNKNOWN_PROFILES: readonly { name: string; processing: string[] }[] = [
+  { name: "Жетоны", processing: [] },
+  { name: "Остнаска", processing: [] },
+  { name: "0.8x1000x600", processing: [] },
+  { name: "торцевой профиль", processing: [] },
+  { name: "профиль обрамляющий 50х50", processing: [] },
+  { name: "Панель потолочная ОП24. 1-2", processing: [] },
+  { name: "Панель HOOK-ON H-100 600*1800мм", processing: [] },
+  { name: "2.0х260х1220 2.0х500х300 1.5х1250х740", processing: [] },
+  { name: "профиль обрамляющий 150х50, 180х25, 100х25", processing: [] },
+];
+
 function shuffle<T>(items: readonly T[], random: () => number): T[] {
   const result = [...items];
   for (let i = result.length - 1; i > 0; i -= 1) {
@@ -93,6 +115,23 @@ function toInfo(profile: Profile, random: () => number): ProfileInfo {
 }
 
 /**
+ * Профиль, которого нет в каталоге: имя как в книге, без снимков и без длины —
+ * ровно то, что бэкенд отдаёт на заказ, не найденный в KTM (`canonical_name`
+ * тогда равен разобранному имени, а фото пустое).
+ */
+function unknownInfo(seed: number): ProfileInfo {
+  const entry = UNKNOWN_PROFILES[seed % UNKNOWN_PROFILES.length];
+  return {
+    name: entry.name,
+    canonical_name: entry.name,
+    processing: entry.processing,
+    length_m: null,
+    length_text: null,
+    has_photo: false,
+  };
+}
+
+/**
  * Строки книги: `count` подвесов, уникальные профили раскладываются по кругу —
  * каждый профиль получает одинаковое число строк, а значит и одинаковую долю
  * показов фото. Профили берутся курсором по переставленному каталогу, поэтому
@@ -120,10 +159,34 @@ export function buildStressRows(
     const type = TYPES[index % TYPES.length];
     const sticks = type.startsWith("Клюшки");
 
+    // «Заказа нет в каталоге»: строки с длинным текстом профиля и без снимка.
+    // Идут с тремя весами — один, два и три профиля, чтобы было видно и ячейку
+    // «Профиль» с бейджами, и второй ряд у 3+.
+    const unknownCount = sticks
+      ? 0
+      : index % 29 === 11
+        ? 3
+        : index % 17 === 7
+          ? 2
+          : index % 6 === 3
+            ? 1
+            : 0;
+
+    // Смешанная строка: длинный заказ без каталога рядом с обычным профилем,
+    // у которого снимок есть. Проверяет правило «текст не влез в три строки»:
+    // снимок в строке есть, но «Фото» всё равно отдаётся тексту.
+    const mixedRow = !sticks && unknownCount === 0 && index % 13 === 6;
+
     // У клюшек профиля нет — как в книге: пустая ячейка и заглушка вместо фото.
     const infos: ProfileInfo[] = sticks
       ? []
-      : Array.from({ length: profileCountFor(random) }, () => toInfo(takeProfile(), random));
+      : mixedRow
+        ? // Самое длинное имя из набора: строка должна упереться в три строки,
+          // иначе правило «текст не влез» нечем проверить.
+          [unknownInfo(UNKNOWN_PROFILES.length - 1), toInfo(takeProfile(), random)]
+        : unknownCount > 0
+          ? Array.from({ length: unknownCount }, (_, offset) => unknownInfo(index + offset))
+          : Array.from({ length: profileCountFor(random) }, () => toInfo(takeProfile(), random));
 
     const profileText = infos.map((info) => info.name).join(" + ");
     const color = colors[Math.floor(random() * colors.length)]?.name ?? NO_VALUE;

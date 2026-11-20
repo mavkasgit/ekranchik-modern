@@ -2,7 +2,7 @@
 // где живут фото и занимает ли подвес вторую строку. Дашборд только рисует
 // готовое описание, поэтому правила строки читаются и проверяются без рендера.
 
-import type { HangerData } from "@/types/dashboard";
+import type { HangerData, ProfileInfo } from "@/types/dashboard";
 import { hangerKey } from "@/lib/domain/hanger";
 
 /** Чем строка отличается от соседей, по убыванию важности. */
@@ -67,8 +67,15 @@ export interface RowMeaning {
   profileLabel: string;
   /** Подвес — клюшки: подпись профиля и тон строки строятся по этому флагу. */
   sticks: boolean;
-  /** Профилей больше двух — фото не помещаются в первую строку. */
+  /** Профилей больше двух (или текст не влез в три строки) — фото уходят ниже. */
   photosBelow: boolean;
+  /**
+   * Снимков в строке нет ни одного: колонка «Фото» ничего не показывает, и её
+   * место отдаётся «Профилю». Заглушки в этом случае не рисуются — пустая
+   * колонка с иконками отнимала 150 px у текста и добавляла вторую строку ради
+   * трёх серых квадратов.
+   */
+  profileOwnsPhotoColumn: boolean;
   /** Сколько grid-строк занимает подвес. */
   rowSpan: number;
 }
@@ -127,8 +134,10 @@ function profileLabel(hanger: HangerData): string {
 
 /** Что показать в ячейке «Профиль»: артикул и бейджи под ним. */
 export interface ProfileCellInfo {
-  /** Артикулы строки без длины: «ЮП-2083» из «ЮП-2083 1,8 метра». */
+  /** Артикулы строки как записаны в книге — вместе с длиной, если её вписал оператор. */
   article: string;
+  /** Те же артикулы по одному: строка на профиль, когда текст занимает всю ширину. */
+  articles: string[];
   /** Обработки всех профилей строки без повторов. */
   processing: string[];
   /** Длины профилей строки в порядке следования. */
@@ -136,41 +145,82 @@ export interface ProfileCellInfo {
 }
 
 /**
- * Длина в книге записана внутри сегмента («ЮП-2083 1,8 метра», «(1.8)»),
- * а бэкенд уже вынес её в `length_text` (ADR 0012). Отрезаем хвост по
- * известному значению, чтобы артикул не повторял бейдж под ним.
+ * Профили строки, у которых есть снимок: только они попадают в «Фото».
+ * Заглушки не рисуются — профиль без файла ничего не показывает, а его
+ * артикул уже стоит в «Профиле».
  */
-function articleName(name: string, lengthText?: string | null): string {
-  if (!lengthText) return name;
-  const number = lengthText.replace(/[^\d,.]/g, "");
-  if (!number) return name;
-  const pattern = new RegExp(
-    `\\s*\\(?\\s*${number.replace(/[.,]/g, "[.,]")}\\s*(?:метр(?:а|ов)?|м)?\\.?\\s*\\)?\\s*$`,
-    "i",
-  );
-  return name.replace(pattern, "").trim() || name;
+export function profilesWithPhoto(profiles: readonly ProfileInfo[]): ProfileInfo[] {
+  return profiles.filter((profile) => profile.has_photo);
+}
+
+/**
+ * Нужна ли подпись у снимка: только когда снимков меньше, чем профилей.
+ *
+ * Если снимок есть у каждого профиля, порядок кадров совпадает с порядком
+ * артикулов в «Профиле» (слева направо), и подпись только добавляет строку
+ * высоты. А вот когда у части профилей снимка нет, по строке «3416 + 362» с
+ * одним кадром не понять, чей он, — подпись отвечает на этот вопрос.
+ */
+export function needsPhotoCaption(profiles: readonly ProfileInfo[]): boolean {
+  const withPhoto = profilesWithPhoto(profiles).length;
+  return withPhoto > 0 && withPhoto < profiles.length;
 }
 
 /**
  * Ячейка «Профиль» по профилям строки. `null` — профилей нет (клюшки или
  * строка без каталога): тогда печатается подпись книги как есть.
+ *
+ * Текст артикула — ровно то, что оператор ввёл в книгу, вместе с длиной
+ * («ЮП-2083 1,8 метра»): на киоске нечего додумывать за книгу. Длина при этом
+ * ещё и бейджем у снимка — бейдж нужен, чтобы выбирать по длине, а не заменяет
+ * текст.
+ *
+ * Бейджи обработок и длины берутся только у профилей **без снимка**: у
+ * остальных они едут со снимком (справа или под ним), и в «Профиле» сводка
+ * дублировала бы их, не говоря, к какому артикулу относится длина.
  */
 export function profileCellInfo(hanger: HangerData): ProfileCellInfo | null {
   const profiles = hanger.profiles_info ?? [];
   if (profiles.length === 0) return null;
 
+  const articles = profiles.map((profile) => profile.name);
+  const detached = profiles.filter((profile) => !profile.has_photo);
   return {
-    article: profiles.map((profile) => articleName(profile.name, profile.length_text)).join(" + "),
-    processing: Array.from(new Set(profiles.flatMap((profile) => profile.processing))),
-    lengths: profiles
+    article: articles.join(" + "),
+    articles,
+    processing: Array.from(new Set(detached.flatMap((profile) => profile.processing))),
+    lengths: detached
       .map((profile) => profile.length_text)
       .filter((length): length is string => Boolean(length)),
   };
 }
 
-export function describeHangerRow(hanger: HangerData, index = 0): RowMeaning {
+/**
+ * Есть ли в строке что показать в «Фото». Боевые строки несут `profiles_info`,
+ * а витрина «Все профили» — одно фото прямо в строке (`profile_photo_thumb`).
+ */
+function hasAnyPhoto(hanger: HangerData): boolean {
+  const profiles = hanger.profiles_info ?? [];
+  if (profiles.length > 0) return profilesWithPhoto(profiles).length > 0;
+  return Boolean(hanger.profile_photo_thumb);
+}
+
+export function describeHangerRow(
+  hanger: HangerData,
+  index = 0,
+  { profileOverflows = false }: { profileOverflows?: boolean } = {},
+): RowMeaning {
   const badges = rowBadges(hanger);
-  const photosBelow = (hanger.profiles_info?.length ?? 0) > 2;
+  const profiles = hanger.profiles_info ?? [];
+  const hasPhoto = hasAnyPhoto(hanger);
+  // Заглушки вместо снимков не рисуются: три серых квадрата в отдельной строке
+  // занимали 150 px по ширине и полстроки по высоте, не давая оператору ничего.
+  const profileOwnsPhotoColumn = !hasPhoto;
+  // Второй ряд нужен, если снимков больше двух — или если текст профиля не
+  // влез в три строки: тогда «Профиль» забирает и трек «Фото», а снимки уезжают
+  // под текст. Длину текста знает только браузер, поэтому флаг приходит замером
+  // из строки, а не считается здесь по числу символов.
+  const photosBelow = hasPhoto && (profiles.length > 2 || profileOverflows);
   // Пометка второй строки не требует: она стоит в ячейке «Тип» рядом с видом
   // детали. Отдельный трек под неё оставлял под текстом пустую полосу и делал
   // строку выше соседних, а на киоске это минус подвес на экране.
@@ -183,6 +233,7 @@ export function describeHangerRow(hanger: HangerData, index = 0): RowMeaning {
     profileLabel: profileLabel(hanger),
     sticks: isSticksHanger(hanger),
     photosBelow,
+    profileOwnsPhotoColumn,
     rowSpan,
   };
 }

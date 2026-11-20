@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   RefreshCw,
@@ -6,7 +6,6 @@ import {
   WifiOff,
   FileSpreadsheet,
   Server,
-  Image,
   Maximize2,
   Minimize2,
   X,
@@ -22,7 +21,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ClickableBookPath } from "@/components/ClickableBookPath";
-import { PhotoImage, ProfilePhoto } from "@/components/ProfilePhoto";
+import {
+  PHOTO_PAIR_MAX_WIDTH,
+  PHOTO_SOLO_MAX_WIDTH,
+  PhotoImage,
+  ProfilePhoto,
+  ProfilePhotoSlot,
+} from "@/components/ProfilePhoto";
 import {
   Table,
   TableBody,
@@ -51,12 +56,14 @@ import { useTestRun } from "@/hooks/useTestRun";
 import { useColors } from "@/hooks/useColors";
 import { DASHBOARD_KEY } from "@/lib/queryKeys";
 import { SIDEBAR_FETCH_LIMIT, SIDEBAR_ROW_LIMIT } from "@/config/limits";
-import { colorHex, colorName, type ColorSpec } from "@/lib/domain/color";
+import { colorCellText, colorHex, colorName, type ColorSpec } from "@/lib/domain/color";
 import {
   describeHangerRow,
   isBlankRow,
   mergeHangerMeta,
+  needsPhotoCaption,
   profileCellInfo,
+  profilesWithPhoto,
   rowClassName,
   type RowMeaning,
 } from "@/lib/domain/dashboardRow";
@@ -64,13 +71,14 @@ import { buildTestRows, type TestMode } from "@/lib/domain/simRows";
 import { buildStressRows } from "@/lib/domain/stressRows";
 import { emptyRun, waitingRows } from "@/lib/domain/testRun";
 import { photoUrl } from "@/lib/domain/photo";
+import { planPhotoSlot, type PhotoSlotPlan } from "@/lib/domain/photoSlot";
 import { profileText } from "@/lib/domain/profile";
 import { fileName, pathHint } from "@/lib/domain/bookPath";
-import type { Profile } from "@/types/profile";
 import { formatClock, formatLocalized } from "@/lib/domain/time";
 import { currentFullscreenElement, useFullscreenElement } from "@/lib/useFullscreenElement";
 import { BathForecast } from "@/components/BathForecastTable";
 import { dashboardApi } from "@/api/dashboard";
+import { catalogApi } from "@/api/catalog";
 import type { HangerData, RecentBookPath } from "@/types/dashboard";
 // App-овский `useFullscreen` — псевдо-фуллскрин киоска (скрыть шапку и меню);
 // браузерный Fullscreen API фото живёт в `@/lib/useFullscreenElement`.
@@ -516,24 +524,78 @@ function PhotoCell({
   markShortPhotos?: boolean;
 }) {
   const profilesInfo = hanger.profiles_info || [];
+  // Заглушки не рисуем: остаются только профили, которым есть что показать.
+  const withPhoto = profilesWithPhoto(profilesInfo);
+  const solo = withPhoto.length === 1;
+  // Подпись у кадра нужна, только когда снимков меньше, чем профилей: тогда по
+  // «Профилю» не понять, чей это снимок. Если кадр есть у каждого, порядок
+  // кадров совпадает с порядком артикулов, и подпись лишь растит строку.
+  const showNames = needsPhotoCaption(profilesInfo);
 
-  if (profilesInfo.length > 0) {
+  // Подпись и бейджи сначала встают сбоку от снимка. Если сбоку чуть не
+  // хватает, кадр поджимается — ужать кадр дешевле, чем вырастить строку.
+  // Под кадр подпись уходит только когда места нет уже совсем. Решение
+  // принимает `planPhotoSlot`; ячейка только меряет ширину подписи.
+  const [plans, setPlans] = useState<PhotoSlotPlan[]>([]);
+  const [sizeRevision, setSizeRevision] = useState(0);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const signature = withPhoto
+    .map((prof) => `${prof.name}|${prof.processing.join("+")}|${prof.length_text ?? ""}`)
+    .join(";");
+  const slotWidth = solo ? PHOTO_SOLO_MAX_WIDTH : PHOTO_PAIR_MAX_WIDTH;
+
+  // Новый набор профилей — новое решение по каждому слоту.
+  useLayoutEffect(() => setPlans([]), [signature]);
+
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const slots = [...row.querySelectorAll<HTMLElement>("[data-photo-slot]")];
+    const measurements = slots.map((slot) => {
+      const image = slot.querySelector("img");
+      const side = slot.querySelector<HTMLElement>("[data-photo-side]");
+      if (!image?.naturalWidth || !side) return null;
+      return planPhotoSlot({
+        naturalWidth: image.naturalWidth,
+        naturalHeight: image.naturalHeight,
+        sideWidth: side.getBoundingClientRect().width,
+        slotWidth,
+      });
+    });
+    setPlans((prev) =>
+      measurements.map((plan, index) =>
+        // Решение «вниз» не пересматриваем: иначе раскладка зациклится
+        // (под кадром подпись уже, снова «влезает», снова вниз).
+        prev[index]?.compact || !plan ? (prev[index] ?? { compact: false }) : plan,
+      ),
+    );
+  }, [signature, sizeRevision, slotWidth]);
+
+  if (withPhoto.length > 0) {
+    // Профиль, снимок и бейджи — один слот. Снимок стоит в полосе фиксированной
+    // высоты (пара прижата к низу, одиночный — по центру полосы), подпись и
+    // бейджи — сбоку, поэтому снимки строки стоят на одной линии, а подпись не
+    // растягивает кадр по высоте.
     return (
       // Центрируем содержимое в колонке: иначе узкий снимок липнет к левому
       // краю под центрированным заголовком «Фото». Обрезки по ширине здесь нет
       // намеренно: пара (148 px) и одиночный снимок (148 px) влезают целиком, а
       // `overflow-x` съедал бы 6 px под полосу прокрутки от hover:scale.
-      <div className="flex w-full flex-nowrap items-center justify-center gap-2 py-1">
-        {/* Артикул и длина уже стоят в «Профиле»: подпись под фото только
-            дублировала их и обрезалась первой, когда колонка узкая. */}
-        {profilesInfo.map((prof, idx) => (
-          <ProfilePhoto
-            key={idx}
+      <div ref={rowRef} className="flex w-full items-start justify-center gap-2 px-0.5 py-1">
+        {/* Артикул и длина уже стоят в «Профиле»: подпись дублировала бы их.
+            Исключение — подвес, где снимок есть не у каждого профиля: там она
+            отвечает, чей это кадр. */}
+        {withPhoto.map((prof, index) => (
+          <ProfilePhotoSlot
+            key={index}
             profile={prof}
             onPhotoClick={onPhotoClick}
-            hideText
-            solo={profilesInfo.length === 1}
+            solo={solo}
             markShort={markShortPhotos}
+            showName={showNames}
+            compact={plans[index]?.compact ?? false}
+            photoMax={plans[index]?.photoMax}
+            onSized={() => setSizeRevision((count) => count + 1)}
           />
         ))}
       </div>
@@ -541,38 +603,32 @@ function PhotoCell({
   }
 
   const thumbUrl = photoUrl(hanger.profile_photo_thumb, hanger.profile_photo_thumb_version);
-  if (thumbUrl) {
-    return (
-      <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: "800px" }}>
-        <div className="flex items-center">
-          <PhotoImage
-            src={thumbUrl}
-            alt={hanger.profile}
-            solo
-            markShort={markShortPhotos}
-            onClick={() =>
-              onPhotoClick(
-                photoUrl(
-                  hanger.profile_photo_full || hanger.profile_photo_thumb,
-                  hanger.profile_photo_full
-                    ? hanger.profile_photo_full_version
-                    : hanger.profile_photo_thumb_version,
-                ) || "",
-                hanger.profile,
-              )
-            }
-          />
-        </div>
-      </div>
-    );
+  if (!thumbUrl) {
+    // Заглушки здесь не бывает: строку без единого снимка правило отдаёт
+    // профилю (`profileOwnsPhotoColumn`), и ячейка «Фото» не рисуется вовсе.
+    return null;
   }
 
   return (
     <div className="flex items-center justify-center gap-1.5" style={{ maxWidth: "800px" }}>
       <div className="flex items-center">
-        <div className="w-12 h-12 bg-muted rounded flex items-center justify-center flex-shrink-0">
-          <Image className="w-5 h-5 text-muted-foreground" />
-        </div>
+        <PhotoImage
+          src={thumbUrl}
+          alt={hanger.profile}
+          solo
+          markShort={markShortPhotos}
+          onClick={() =>
+            onPhotoClick(
+              photoUrl(
+                hanger.profile_photo_full || hanger.profile_photo_thumb,
+                hanger.profile_photo_full
+                  ? hanger.profile_photo_full_version
+                  : hanger.profile_photo_thumb_version,
+              ) || "",
+              hanger.profile,
+            )
+          }
+        />
       </div>
     </div>
   );
@@ -707,24 +763,56 @@ function ClockInline() {
 
 // Data table
 /**
- * Содержимое ячейки «Профиль»: артикул строкой, под ним длина и обработки
- * бейджами. Профилей нет (клюшки, старая строка) — печатаем подпись книги и
- * переносим её, а не обрезаем: на киоске нет наведения, спрятанный хвост
- * оператор не восстановит.
+ * Содержимое ячейки «Профиль»: артикул строкой, рядом — длина и обработки
+ * бейджами. Бейджи садятся справа от текста, пока влезают: короткая запись
+ * остаётся одной строкой, а не двумя. Длинный текст их не пускает — тогда
+ * бейджи переносятся под текст. Профилей нет (клюшки, старая строка) —
+ * печатаем подпись книги и переносим её, а не обрезаем: на киоске нет
+ * наведения, спрятанный хвост оператор не восстановит.
  */
-function ProfileCell({ hanger, label }: { hanger: HangerData; label: string }) {
+function ProfileCell({
+  hanger,
+  label,
+  fullWidthProfile = false,
+  textRef,
+}: {
+  hanger: HangerData;
+  label: string;
+  /** Колонка «Фото» отдана профилю: артикулы идут по строке на каждый. */
+  fullWidthProfile?: boolean;
+  /** Блок текста — для замера: влез ли профиль в три строки. */
+  textRef?: React.Ref<HTMLDivElement>;
+}) {
   const info = profileCellInfo(hanger);
   if (!info) {
     return <span className="min-w-0 break-words">{label}</span>;
   }
 
   return (
-    <div className="flex min-w-0 flex-col justify-center leading-tight">
-      <span className="break-words font-semibold" title={label}>
-        {info.article}
-      </span>
+    // Текст и бейджи — одна строка с переносом: сначала пробуем поставить
+    // бейджи справа (короткая запись остаётся одной строкой), и только когда
+    // текст их не пускает — переносим под него.
+    <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <div ref={textRef} className="flex min-w-0 flex-col justify-center leading-tight">
+        {fullWidthProfile && info.articles.length > 1 && info.articles.length <= 3 ? (
+          // До трёх артикулов на широкой ячейке читаются как записи — по строке
+          // на каждую. Плюс остаётся в конце строки, чтобы текст читался как
+          // одна запись, а не список, и чтобы e2e видел тот же разделитель, что
+          // в книге. Четыре и больше — сплошной текст: по строке на каждый
+          // выходит слишком высоко, а справа места хватает.
+          info.articles.map((article, index) => (
+            <span key={`${article}-${index}`} className="break-words font-semibold" title={label}>
+              {index < info.articles.length - 1 ? `${article} +` : article}
+            </span>
+          ))
+        ) : (
+          <span className="break-words font-semibold" title={label}>
+            {info.article}
+          </span>
+        )}
+      </div>
       {(info.processing.length > 0 || info.lengths.length > 0) && (
-        <div className="mt-0.5 flex flex-wrap items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {info.processing.map((proc) => (
             <Badge
               key={proc}
@@ -769,6 +857,30 @@ function RowBadges({ badges, hanger }: { badges: RowMeaning["badges"]; hanger: H
   );
 }
 
+/** Сколько строк профиля считаем нормой: дальше колонка «Фото» отдаётся тексту. */
+const PROFILE_LINES_BEFORE_WIDE = 3;
+
+/**
+ * С какого текста вообще стоит мерить: короткая запись в три строки не влезет
+ * только в вырожденном случае, а ref на каждой строке — лишняя работа.
+ */
+const PROFILE_CHARS_TO_MEASURE = 24;
+
+/**
+ * Плашка режима раскладки на карточке таблицы: говорит, что строки
+ * синтетические и как читать красную рамку вокруг снимка.
+ */
+function StressBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="absolute -top-3 left-3 z-50 rounded-full bg-slate-700 px-3 py-0.5 text-xs font-bold text-white shadow"
+      title="Красная рамка — снимок сжат по ширине слота: в него влезает только часть кадра"
+    >
+      РАСКЛАДКА {count} · красная рамка = снимок сжат по ширине
+    </span>
+  );
+}
+
 function HangerRow({
   hanger,
   idx,
@@ -776,6 +888,7 @@ function HangerRow({
   showEntryExit,
   onPhotoClick,
   markShortPhotos = false,
+  layoutKey = "",
 }: {
   hanger: HangerData;
   idx: number;
@@ -784,12 +897,43 @@ function HangerRow({
   onPhotoClick: (url: string, name: string) => void;
   /** ?stress: обводить снимки, у которых ширина слота отняла высоту. */
   markShortPhotos?: boolean;
+  /** Смена раскладки (полный экран): ширина треков другая — перемерить текст. */
+  layoutKey?: string;
 }) {
-  const meaning = describeHangerRow(hanger, idx);
+  // Профиль не влез в три строки — строке нужен широкий текст. Замер даёт
+  // только браузер, поэтому флаг живёт здесь и уходит в правило строки.
+  // Защёлка обязательна: без неё раскладка зациклится (расширили → текст влез
+  // в две строки → сжали → снова четыре строки).
+  const [profileOverflows, setProfileOverflows] = useState(false);
+  const profileTextRef = useRef<HTMLDivElement>(null);
+  const meaning = describeHangerRow(hanger, idx, { profileOverflows });
   const profilesInfo = hanger.profiles_info || [];
+  // Второй ряд показывает только снимки: профиль без фото там повторял свой же
+  // артикул подписью и занимал полстроки. Считаем и якорь группы по ним же.
+  const photoProfiles = profilesWithPhoto(profilesInfo);
   // Четыре и больше снимков не влезают в симметричный запас вокруг
   // центра «Фото»: такие группы раскладываются от правого края колонки.
-  const widePhotos = profilesInfo.length > 3;
+  const widePhotos = photoProfiles.length > 3;
+
+  useLayoutEffect(() => {
+    if (profileOverflows || meaning.photosBelow || meaning.profileOwnsPhotoColumn) return;
+    if ((hanger.profile?.length ?? 0) < PROFILE_CHARS_TO_MEASURE) return;
+    const text = profileTextRef.current;
+    if (!text) return;
+    const lineHeight = Number.parseFloat(getComputedStyle(text).lineHeight) || 16;
+    if (text.scrollHeight > lineHeight * PROFILE_LINES_BEFORE_WIDE + 1) {
+      setProfileOverflows(true);
+    }
+    // Пересчёт по смене раскладки: на киоске ширина трека меняется только при
+    // переходе в полный экран. Следить за каждым resize пришлось бы через
+    // ResizeObserver, а ручные примитивы в проекте запрещены гейтом.
+  }, [
+    hanger.profile,
+    profileOverflows,
+    meaning.photosBelow,
+    meaning.profileOwnsPhotoColumn,
+    layoutKey,
+  ]);
 
   return (
     <div
@@ -890,8 +1034,9 @@ function HangerRow({
         {hanger.client}
       </div>
 
-      {/* Профиль и Фото: много профилей — фото уходят на второй ряд */}
-      {meaning.photosBelow ? (
+      {/* Профиль и Фото: много профилей — фото уходят на второй ряд; снимков
+          нет — колонка «Фото» отдаётся тексту, заглушки не рисуются. */}
+      {meaning.photosBelow || meaning.profileOwnsPhotoColumn ? (
         <div
           role="cell"
           data-column="profile"
@@ -899,7 +1044,11 @@ function HangerRow({
           style={{ gridColumn: "profile / lamels", gridRow: "1" }}
           title={hanger.profile}
         >
-          <ProfileCell hanger={hanger} label={meaning.profileLabel} />
+          <ProfileCell
+            hanger={hanger}
+            label={meaning.profileLabel}
+            fullWidthProfile={meaning.profileOwnsPhotoColumn}
+          />
         </div>
       ) : (
         <>
@@ -910,7 +1059,7 @@ function HangerRow({
             style={{ gridColumn: "profile", gridRow: "1" }}
             title={hanger.profile}
           >
-            <ProfileCell hanger={hanger} label={meaning.profileLabel} />
+            <ProfileCell hanger={hanger} label={meaning.profileLabel} textRef={profileTextRef} />
           </div>
           <div
             role="cell"
@@ -950,8 +1099,16 @@ function HangerRow({
           gridRow: meaning.photosBelow ? "1" : `span ${meaning.rowSpan}`,
         }}
       >
-        <div className="inline-flex flex-col items-center max-w-[150px]" title={hanger.color}>
-          <span className="text-sm leading-tight text-center break-words">{hanger.color}</span>
+        {/* В ячейке — код справочника: оператор сверяет строку с книгой по
+            коду, а полное название («Тёмная бронза») остаётся алиасом и
+            показывается в подсказке. */}
+        <div
+          className="inline-flex flex-col items-center max-w-[150px]"
+          title={colorName(colors, hanger.color)}
+        >
+          <span className="text-sm leading-tight text-center break-words">
+            {colorCellText(colors, hanger.color)}
+          </span>
           {/* Обводка держит край светлых цветов (серебро, шампань) на
                       светлой строке: без неё полоска сливается с фоном. */}
           <div
@@ -990,20 +1147,25 @@ function HangerRow({
             className="flex w-max flex-wrap items-center gap-x-4 gap-y-1.5"
             style={{
               gridColumn: "photo",
-              // 4+ снимков в симметричный запас не влезают: группа
-              // упирается правым краем в правый край колонки и уходит
-              // влево, а пометки переезжают на строку выше, чтобы
-              // снимки не наезжали на них.
+              // Снимки второго ряда прижаты правым краем к правому краю
+              // колонки и уходят влево: текст профиля уже занял верхнюю
+              // строку, и группа читается как продолжение колонки «Фото».
+              // 4+ снимков в симметричный запас не влезают — они переезжают
+              // на строку ниже пометок, чтобы не наезжать на них.
               gridRow: widePhotos ? "2" : "1",
-              justifySelf: widePhotos ? "end" : "center",
+              justifySelf: "end",
+              // Потолок группы: без него длинные имена (сторонний заказ без
+              // каталога, «Панель HOOK-ON H-100 600*1800мм») растягивали
+              // группу на 530 px и упирались в край таблицы. Лишнее
+              // переносится, а не режется.
+              maxWidth: widePhotos ? 700 : 440,
             }}
           >
-            {profilesInfo.map((prof, pIdx) => (
+            {photoProfiles.map((prof, pIdx) => (
               <ProfilePhoto
                 key={pIdx}
                 profile={prof}
                 onPhotoClick={onPhotoClick}
-                hideText={false}
                 markShort={markShortPhotos}
               />
             ))}
@@ -1149,6 +1311,7 @@ function DataTable({
             showEntryExit={showEntryExit}
             onPhotoClick={onPhotoClick}
             markShortPhotos={markShortPhotos}
+            layoutKey={isFullscreen ? "fullscreen" : "window"}
           />
         ))}
       </div>
@@ -1572,9 +1735,7 @@ export default function Dashboard() {
     setStressPending(true);
     void (async () => {
       try {
-        const res = await fetch("/api/catalog/all?limit=1000");
-        if (!res.ok) throw new Error("Failed to fetch catalog");
-        const profiles: Profile[] = await res.json();
+        const profiles = await catalogApi.getAll(1000);
         setStressRows(buildStressRows(profiles, colors, count));
       } catch (e) {
         console.error("Стресс-раскладка: каталог не загрузился:", e);
@@ -1767,9 +1928,7 @@ export default function Dashboard() {
     }
 
     try {
-      const res = await fetch("/api/catalog/all?limit=1000");
-      if (!res.ok) throw new Error("Failed to fetch catalog");
-      const profiles: Profile[] = await res.json();
+      const profiles = await catalogApi.getAll(1000);
 
       const rows = buildTestRows(profiles, mode, colors);
       if (rows.length === 0) {
@@ -2133,14 +2292,7 @@ export default function Dashboard() {
                     СИМУЛЯЦИЯ
                   </span>
                 )}
-                {stressRows && (
-                  <span
-                    className="absolute -top-3 left-3 z-50 rounded-full bg-slate-700 px-3 py-0.5 text-xs font-bold text-white shadow"
-                    title="Красная рамка — снимок сжат по ширине слота: в него влезает только часть кадра"
-                  >
-                    РАСКЛАДКА {stressRows.length} · красная рамка = снимок сжат по ширине
-                  </span>
-                )}
+                {stressRows && <StressBadge count={stressRows.length} />}
                 {hasNewRows && testMode !== "catalog" && testMode !== "colors" && (
                   <div className="absolute inset-0 bg-blue-500 z-50 rounded-md flex items-center justify-center">
                     <span className="text-white text-3xl font-bold">Обновление</span>
@@ -2200,14 +2352,7 @@ export default function Dashboard() {
                       СИМУЛЯЦИЯ
                     </span>
                   )}
-                  {stressRows && (
-                    <span
-                      className="absolute -top-3 left-3 z-50 rounded-full bg-slate-700 px-3 py-0.5 text-xs font-bold text-white shadow"
-                      title="Красная рамка — снимок сжат по ширине слота: в него влезает только часть кадра"
-                    >
-                      РАСКЛАДКА {stressRows.length} · красная рамка = снимок сжат по ширине
-                    </span>
-                  )}
+                  {stressRows && <StressBadge count={stressRows.length} />}
                   {hasNewUnloadEvents && testMode !== "catalog" && testMode !== "colors" && (
                     <div className="absolute inset-0 bg-green-500 z-50 rounded-md flex items-center justify-center">
                       <span className="text-white text-3xl font-bold">Обновление</span>
