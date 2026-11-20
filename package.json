@@ -26,6 +26,8 @@
     "gate:fast": "node scripts/gate.mjs --tier fast",
     "gate:e2e": "node scripts/gate.mjs --tier e2e",
     "check:docs": "node scripts/check-docs.mjs",
+    "check:registry": "node scripts/check-registry.mjs",
+    "prove-checks": "node scripts/prove-checks.mjs",
     "doctor": "node scripts/gate.mjs --doctor",
     "fix": "hk fix --all",
     "report:photos": "node scripts/run-python.js ../scripts/photo-match-report.py",

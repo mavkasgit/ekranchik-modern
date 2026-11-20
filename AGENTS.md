@@ -59,13 +59,14 @@ E2E (`npm run test:e2e`) требует запуска фронтенда и Chr
 ```bash
 npm run gate       # полный гейт; то же запускает CI (.github/workflows/check.yml)
 npm run gate:fast  # быстрый ярус: статика по репозиторию, офлайн, ≤ 60 с
+npm run prove-checks  # доказать красный ход шагов: нарушение → fail → откат дерева
 npm run fix        # безопасные автофиксы, затем перечитать дифф
-mise run hooks     # один раз на клон: git-хуки pre-commit/pre-push/commit-msg
+mise run hooks     # один раз на клон: core.hooksPath=.githooks (pre-commit/pre-push/commit-msg)
 ```
 
 `npm run gate` должен быть зелёным до конца работы — это условие «изменение
 готово», а не пожелание. Детали, бейзлайны и исключения — в
-[`docs/quality-gates.md`](docs/quality-gates.md).
+[`docs/quality/gates.md`](docs/quality/gates.md).
 
 - Правила линтеров **не отключаются**, чтобы изменение прошло. Исключение —
   один файл и одно правило, с причиной; для рисков ещё и с датой ревизии, и

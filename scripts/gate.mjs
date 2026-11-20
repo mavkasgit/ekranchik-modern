@@ -13,7 +13,7 @@
 // шагов hk, и разъехаться с hk.pkl нельзя: неизвестное имя упадёт в hk.
 //
 // Шаг — это данные, а не проза. Контракт полей (harness/rules/quality-gates.md):
-//   name — ключ для docs/quality-gates.md и docs/quality/proven-checks.json;
+//   name — ключ для docs/quality/gates.md и docs/quality/proven-checks.json;
 //   tier — fast|gate|e2e;
 //   command — точная команда, одна и та же локально и в CI;
 //   ci — где шаг живёт в CI (workflow или `npm run gate`, если отдельного нет);
@@ -55,6 +55,13 @@ export const STEPS = [
     command: "node scripts/check-docs.mjs",
     ci: "check.yml",
     what: "шаг в STEPS без строки в карте защит, строка без шага, или шаг без доказательства",
+  },
+  {
+    name: "registry-check",
+    tier: "fast",
+    command: "node scripts/check-registry.mjs",
+    ci: "check.yml",
+    what: "версия в tools.json ≠ пин, шаг с инструментом без записи в реестре, blocking без места запуска",
   },
   {
     name: "ruff",

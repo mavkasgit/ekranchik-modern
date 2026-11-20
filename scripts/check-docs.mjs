@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Держит карту защит честной. Между маркерами в docs/quality-gates.md набор
+// Держит карту защит честной. Между маркерами в docs/quality/gates.md набор
 // шагов обязан совпадать с STEPS из scripts/gate.mjs (имя, ярус, CI), а у
 // каждого шага должно быть доказательство: запись в docs/quality/proven-checks.json
 // либо явный exempt с причиной и датой пересмотра.
@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { STEPS } from "./gate.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DOC = path.join(ROOT, "docs/quality-gates.md");
+const DOC = path.join(ROOT, "docs/quality/gates.md");
 const PROVEN = path.join(ROOT, "docs/quality/proven-checks.json");
 const START = "<!-- gate-steps:start -->";
 const END = "<!-- gate-steps:end -->";
@@ -31,7 +31,7 @@ function parseDoc(text, errors) {
   const start = text.indexOf(START);
   const end = text.indexOf(END);
   if (start === -1 || end === -1 || end < start) {
-    errors.push(`docs/quality-gates.md: не найдены маркеры ${START} … ${END}`);
+    errors.push(`docs/quality/gates.md: не найдены маркеры ${START} … ${END}`);
     return new Map();
   }
   const block = text.slice(start + START.length, end);
@@ -41,7 +41,7 @@ function parseDoc(text, errors) {
     const match = /^\|\s*`([^`]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|/.exec(line);
     if (!match) continue;
     const [, name, tier, what, ci, blocks, proof] = match;
-    if (rows.has(name)) errors.push(`docs/quality-gates.md: шаг \`${name}\` описан дважды`);
+    if (rows.has(name)) errors.push(`docs/quality/gates.md: шаг \`${name}\` описан дважды`);
     rows.set(name, {
       tier: tier.trim(),
       what: what.trim(),
@@ -116,7 +116,7 @@ function readProofs(errors) {
 
 function main() {
   if (!fs.existsSync(DOC)) {
-    reportFail("docs/quality-gates.md отсутствует");
+    reportFail("docs/quality/gates.md отсутствует");
     process.exit(1);
   }
 
@@ -180,7 +180,7 @@ function main() {
   if (errors.length) {
     for (const error of errors) reportFail(error);
     console.error(
-      "   исправьте docs/quality-gates.md, docs/quality/proven-checks.json или STEPS в scripts/gate.mjs",
+      "   исправьте docs/quality/gates.md, docs/quality/proven-checks.json или STEPS в scripts/gate.mjs",
     );
     process.exit(1);
   }

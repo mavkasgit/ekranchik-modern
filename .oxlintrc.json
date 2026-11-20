@@ -7,7 +7,7 @@
   "rules": {
     // Не off, а error: новые файлы проверяются. Старые экраны с известными
     // срабатываниями перечислены в overrides ниже — бейзлайн по файлу и
-    // правилу, review 2027-05-01 (docs/quality-gates.md).
+    // правилу, review 2027-05-01 (docs/quality/gates.md).
     "react-hooks/exhaustive-deps": "error",
     "react/set-state-in-effect": "error",
     "react/static-components": "error",
