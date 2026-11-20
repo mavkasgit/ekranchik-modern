@@ -1,6 +1,6 @@
 # AGENTS.md — ekranchik-modern
 
-Инструкции для ИИ-агентов. Детали проекта — в [`CONTEXT.md`](CONTEXT.md) и `docs/`.
+Инструкции для ИИ-агентов. Детали проекта — в [`GLOSSARY.md`](GLOSSARY.md) и `docs/`.
 
 ## Команды
 

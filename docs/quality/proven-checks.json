@@ -29,11 +29,11 @@
     },
     {
       "step": "oxfmt",
-      "violation": "неформатированная markdown-таблица в конце CONTEXT.md",
+      "violation": "неформатированная markdown-таблица в конце GLOSSARY.md",
       "apply": [
         {
           "append": {
-            "path": "CONTEXT.md",
+            "path": "GLOSSARY.md",
             "content": "\n|a|b|\n|-|-|\n|1|2|\n"
           }
         }

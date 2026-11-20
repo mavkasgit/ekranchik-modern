@@ -171,9 +171,9 @@ npm run gate:fast          # betterleaks: leaks found: 1 → exit 1
 git checkout -- VERSION
 
 # формат: oxfmt
-printf '\n|a|b|\n|-|-|\n|1|2|\n' >> CONTEXT.md
+printf '\n|a|b|\n|-|-|\n|1|2|\n' >> GLOSSARY.md
 npm run gate:fast          # oxfmt: format issues found → exit 1
-git checkout -- CONTEXT.md
+git checkout -- GLOSSARY.md
 
 # линтер: ruff
 printf 'import os\n' >> backend/app/main.py
