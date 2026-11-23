@@ -39,8 +39,8 @@
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.4",
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "concurrently": "^10.0.7",
-    "knip": "^6.44.2"
+    "knip": "^6.45.1"
   }
 }
